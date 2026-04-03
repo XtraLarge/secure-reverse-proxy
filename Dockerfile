@@ -39,6 +39,8 @@ COPY conf/sites-available/ /etc/apache2/sites-available/
 
 COPY conf/ports.conf /etc/apache2/ports.conf
 
+RUN a2enconf server-security
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
@@ -59,7 +61,9 @@ VOLUME ["/etc/apache2/ssl", "/etc/apache2/sites-enabled", "/etc/apache2/AddOn"]
 EXPOSE 80 443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
-    CMD apache2ctl status 2>/dev/null | grep -q "Server uptime" || exit 1
+    CMD test -f /var/run/apache2/apache2.pid \
+        && kill -0 "$(cat /var/run/apache2/apache2.pid)" 2>/dev/null \
+        || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["apache2ctl", "-D", "FOREGROUND"]

@@ -2,7 +2,7 @@ services:
 
   proxy:
     build: .
-    # image: ghcr.io/XtraLarge/apache-oidc-proxy:latest
+    # image: xtralarge71/apache-oidc-proxy:latest
     restart: unless-stopped
     ports:
       - "80:80"
@@ -22,6 +22,15 @@ services:
       # Optional per-vhost Apache include snippets, e.g.:
       #   AddOn/example.com/mysite.pre.conf
       - ./AddOn:/etc/apache2/AddOn:ro
+    networks:
+      - frontend
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
     depends_on:
       redis:
         condition: service_healthy
@@ -31,9 +40,35 @@ services:
     restart: unless-stopped
     # No persistence needed — Redis is used as OIDC session cache only.
     # Sessions are re-created on restart via re-authentication.
-    command: redis-server --save "" --appendonly no --maxmemory 128mb --maxmemory-policy allkeys-lru
+    #
+    # REDIS_PASSWORD: set in .env to enable password authentication.
+    # If unset, Redis runs without authentication (only accessible via the
+    # internal Docker network — not exposed to the host).
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    command: >
+      sh -c "exec redis-server --save '' --appendonly no
+      --maxmemory 128mb --maxmemory-policy allkeys-lru
+      $${REDIS_PASSWORD:+--requirepass $$REDIS_PASSWORD}"
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli $${REDIS_PASSWORD:+-a $$REDIS_PASSWORD} ping"]
       interval: 10s
       timeout: 3s
       retries: 5
+
+networks:
+  # frontend: accepts inbound connections on ports 80/443
+  frontend:
+    driver: bridge
+
+  # backend: internal-only network for proxy↔redis communication.
+  # Containers on this network cannot reach the internet.
+  backend:
+    driver: bridge
+    internal: true

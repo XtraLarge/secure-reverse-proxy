@@ -25,6 +25,7 @@ export OIDC_DEFAULT_LOGOUT_URL="${OIDC_DEFAULT_LOGOUT_URL:-https://logout.${OIDC
 export REDIS_HOST="${REDIS_HOST:-redis}"
 export REDIS_PORT="${REDIS_PORT:-6379}"
 export REDIS_DB="${REDIS_DB:-1}"
+export REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 
 # Pipe-separated ISO country codes for GeoIP allow-list (used as regex alternation)
 # Example: DE|AT|CH  →  allows Germany, Austria, Switzerland
@@ -41,8 +42,19 @@ log "Generating internal networks include: ${INTERNAL_NETWORKS}"
 IFS=',' read -ra NETS <<< "$INTERNAL_NETWORKS"
 for net in "${NETS[@]}"; do
     net="$(echo "$net" | tr -d ' ')"
+    [[ "$net" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/([0-9]|[1-2][0-9]|3[0-2]))?$ ]] \
+        || die "Invalid CIDR in INTERNAL_NETWORKS: '${net}'"
     echo "      Require ip ${net}" >> "$NETWORKS_FILE"
 done
+
+# ── Generate Redis password include ──────────────────────────────────────────
+REDIS_AUTH_FILE="/etc/apache2/conf-runtime/redis-auth.conf"
+if [[ -n "${REDIS_PASSWORD}" ]]; then
+    log "Configuring Redis password authentication"
+    printf 'OIDCRedisCachePassword  %s\n' "${REDIS_PASSWORD}" > "$REDIS_AUTH_FILE"
+else
+    > "$REDIS_AUTH_FILE"
+fi
 
 # ── Process config templates ──────────────────────────────────────────────────
 # envsubst receives an explicit variable list so that Apache mod_macro syntax

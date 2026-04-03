@@ -19,10 +19,11 @@
 #
 # Internal network CIDRs are written to /etc/apache2/conf-runtime/internal-networks.conf
 # by the entrypoint script from the INTERNAL_NETWORKS env var.
+# The Redis password (if set) is written to /etc/apache2/conf-runtime/redis-auth.conf.
 
 # OIDCBASE $(SITENAME) $(DOMAINNAME)
 # Sets global mod_auth_openidc directives for one vhost.
-# Used internally by CLIENTOIDC — you rarely need this directly.
+# Used internally by CLIENTOIDC_* — you rarely need this directly.
 <Macro OIDCBASE $(SITENAME) $(DOMAINNAME)>
   OIDCProviderMetadataURL         ${OIDC_PROVIDER_METADATA_URL}
   OIDCProviderTokenEndpointAuth   ${OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH}
@@ -40,6 +41,7 @@
   OIDCCookieDomain                ${OIDC_COOKIE_DOMAIN}
   OIDCCookie                      ${OIDC_COOKIE_DOMAIN}-Auth-Session
   OIDCCookieSameSite              On
+  OIDCCookieHTTPOnly              On
   OIDCStateCookiePrefix           ${OIDC_COOKIE_DOMAIN}-Auth-State-
 
   # Redis session cache
@@ -47,19 +49,16 @@
   OIDCCacheType                   redis
   OIDCRedisCacheServer            ${REDIS_HOST}:${REDIS_PORT}
   OIDCRedisCacheDatabase          ${REDIS_DB}
+  # Redis password — written by entrypoint.sh from REDIS_PASSWORD env var
+  Include /etc/apache2/conf-runtime/redis-auth.conf
 
   OIDCProviderBackChannelLogoutSupported On
 </Macro>
 
-# CLIENTOIDC $(SITENAME) $(DOMAINNAME) $(AUTHORTYPE) $(AUTHORENTRY)
-# Protects a vhost with OIDC authentication + GeoIP country check.
-# Internal networks (from INTERNAL_NETWORKS) bypass both checks.
-#
-# $(AUTHORTYPE)  : "valid-user" or "claim"
-# $(AUTHORENTRY) : For claim: regex matched against preferred_username,
-#                  e.g. 'alice|bob' matches users alice or bob (case-insensitive)
-#                  For valid-user: pass "" (empty)
-<Macro CLIENTOIDC $(SITENAME) $(DOMAINNAME) $(AUTHORTYPE) $(AUTHORENTRY)>
+# CLIENTOIDC_VALIDUSER $(SITENAME) $(DOMAINNAME)
+# Protects a vhost with OIDC — any authenticated user is allowed.
+# GeoIP country check applies; internal networks bypass both checks.
+<Macro CLIENTOIDC_VALIDUSER $(SITENAME) $(DOMAINNAME)>
   USE OIDCBASE $(SITENAME) $(DOMAINNAME)
 
   GeoIPEnable On
@@ -77,7 +76,6 @@
       <RequireAll>
         Require env AllowCountry
         Require valid-user
-        Require $(AUTHORTYPE) "preferred_username~^(?i)$(AUTHORENTRY)$"
       </RequireAll>
     </RequireAny>
   </Location>
@@ -87,18 +85,55 @@
     AuthType openid-connect
     <RequireAny>
       Require valid-user
-      Require ip 10.0.0.0/8
+      Include /etc/apache2/conf-runtime/internal-networks.conf
     </RequireAny>
   </Location>
 </Macro>
 
-# VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(AUTHORTYPE) $(AUTHORENTRY)
-# Full vhost with OIDC auth + reverse proxy. This is the main building block.
+# CLIENTOIDC_CLAIM $(SITENAME) $(DOMAINNAME) $(AUTHORENTRY)
+# Protects a vhost with OIDC — only users matching $(AUTHORENTRY) are allowed.
+# $(AUTHORENTRY) is a pipe-separated list matched case-insensitively against
+# the preferred_username claim, e.g. 'alice|bob'.
+# GeoIP country check applies; internal networks bypass both checks.
+<Macro CLIENTOIDC_CLAIM $(SITENAME) $(DOMAINNAME) $(AUTHORENTRY)>
+  USE OIDCBASE $(SITENAME) $(DOMAINNAME)
+
+  GeoIPEnable On
+  SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
+
+  <Location />
+    AuthType openid-connect
+    OIDCUnAutzAction auth
+
+    <RequireAny>
+      # Internal networks always pass through
+      Include /etc/apache2/conf-runtime/internal-networks.conf
+
+      # External: must be from an allowed country AND match the allowed user list
+      <RequireAll>
+        Require env AllowCountry
+        Require claim "preferred_username~^(?i)$(AUTHORENTRY)$"
+      </RequireAll>
+    </RequireAny>
+  </Location>
+
+  # OIDC redirect URI — must be accessible but serves no real content
+  <Location ${OIDC_REDIRECT_PATH}>
+    AuthType openid-connect
+    <RequireAny>
+      Require valid-user
+      Include /etc/apache2/conf-runtime/internal-networks.conf
+    </RequireAny>
+  </Location>
+</Macro>
+
+# VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION)
+# Full vhost with OIDC auth + reverse proxy.
+# Any authenticated user is allowed (GeoIP still applies).
 #
-# Examples:
-#   Use VHost_Proxy_OIDC  monitor  example.com  http://10.0.0.5:3000/  claim  'alice|bob'
-#   Use VHost_Proxy_OIDC  jenkins  example.com  http://10.0.0.6:8080/  valid-user  ''
-<Macro VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(AUTHORTYPE) $(AUTHORENTRY)>
+# Example:
+#   Use VHost_Proxy_OIDC  monitor  example.com  http://10.0.0.5:3000/
+<Macro VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
   <VirtualHost *:80>
     ServerName $(SITENAME).$(DOMAINNAME)
     USE LOGGING $(SITENAME) $(DOMAINNAME)
@@ -111,7 +146,36 @@
     USE LOGGING $(SITENAME) $(DOMAINNAME)
     USE DEFAULTS
     USE SSL $(DOMAINNAME)
-    USE CLIENTOIDC $(SITENAME) $(DOMAINNAME) $(AUTHORTYPE) '$(AUTHORENTRY)'
+    USE SECURITY_HEADERS
+    USE CLIENTOIDC_VALIDUSER $(SITENAME) $(DOMAINNAME)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    USE PROXY $(DESTINATION)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+  </VirtualHost>
+</Macro>
+
+# VHost_Proxy_OIDC_Claim $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS)
+# Full vhost with OIDC auth + reverse proxy.
+# Only users matching $(USERS) (pipe-separated, case-insensitive regex) are allowed.
+#
+# Examples:
+#   Use VHost_Proxy_OIDC_Claim  mgmt  example.com  http://10.0.0.6:9000/  'alice|bob'
+#   Use VHost_Proxy_OIDC_Claim  dms  example.com  http://10.0.0.7:8000/  'alice'
+<Macro VHost_Proxy_OIDC_Claim $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS)>
+  <VirtualHost *:80>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE REWRITE2URL "https://$(SITENAME).$(DOMAINNAME)"
+  </VirtualHost>
+
+  <VirtualHost *:443>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE SSL $(DOMAINNAME)
+    USE SECURITY_HEADERS
+    USE CLIENTOIDC_CLAIM $(SITENAME) $(DOMAINNAME) '$(USERS)'
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
     USE PROXY $(DESTINATION)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
@@ -135,6 +199,7 @@
     USE LOGGING $(SITENAME) $(DOMAINNAME)
     USE DEFAULTS
     USE SSL $(DOMAINNAME)
+    USE SECURITY_HEADERS
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
     USE PROXY $(DESTINATION)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*

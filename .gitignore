@@ -3,7 +3,8 @@
 ssl/
 
 # Runtime generated configs
-sites-enabled/*.conf
+sites-enabled/
+AddOn/
 
 # OS
 .DS_Store
