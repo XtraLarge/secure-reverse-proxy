@@ -1,0 +1,142 @@
+# ── OpenID Connect macros ─────────────────────────────────────────────────────
+#
+# Template variables substituted at container start (from environment):
+#
+#   ${OIDC_PROVIDER_METADATA_URL}       OIDC discovery endpoint URL
+#   ${OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH} Token endpoint auth method
+#   ${OIDC_CLIENT_ID}                   Client ID registered in your IdP
+#   ${OIDC_CLIENT_SECRET}               Client secret (keep secret!)
+#   ${OIDC_REMOTE_USER_CLAIM}           Claim mapped to REMOTE_USER
+#   ${OIDC_SCOPE}                       OAuth2 scopes (must include "openid")
+#   ${OIDC_REDIRECT_PATH}               OIDC redirect URI path (no real content)
+#   ${OIDC_CRYPTO_PASSPHRASE}           Session encryption passphrase
+#   ${OIDC_DEFAULT_LOGOUT_URL}          Post-logout redirect URL
+#   ${OIDC_COOKIE_DOMAIN}               Base domain for session cookies
+#   ${REDIS_HOST}                       Redis hostname
+#   ${REDIS_PORT}                       Redis port
+#   ${REDIS_DB}                         Redis database index
+#   ${GEOIP_ALLOW_COUNTRIES}            Pipe-separated country codes (e.g. DE|AT|CH)
+#
+# Internal network CIDRs are written to /etc/apache2/conf-runtime/internal-networks.conf
+# by the entrypoint script from the INTERNAL_NETWORKS env var.
+
+# OIDCBASE $(SITENAME) $(DOMAINNAME)
+# Sets global mod_auth_openidc directives for one vhost.
+# Used internally by CLIENTOIDC — you rarely need this directly.
+<Macro OIDCBASE $(SITENAME) $(DOMAINNAME)>
+  OIDCProviderMetadataURL         ${OIDC_PROVIDER_METADATA_URL}
+  OIDCProviderTokenEndpointAuth   ${OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH}
+  OIDCClientID                    ${OIDC_CLIENT_ID}
+  OIDCClientSecret                ${OIDC_CLIENT_SECRET}
+
+  OIDCRemoteUserClaim             ${OIDC_REMOTE_USER_CLAIM}
+  OIDCScope                       "${OIDC_SCOPE}"
+
+  OIDCRedirectURI                 https://$(SITENAME).$(DOMAINNAME)${OIDC_REDIRECT_PATH}
+  OIDCCryptoPassphrase            ${OIDC_CRYPTO_PASSPHRASE}
+  OIDCDefaultLoggedOutURL         ${OIDC_DEFAULT_LOGOUT_URL}
+
+  # Domain-wide session cookie shared across all subdomains
+  OIDCCookieDomain                ${OIDC_COOKIE_DOMAIN}
+  OIDCCookie                      ${OIDC_COOKIE_DOMAIN}-Auth-Session
+  OIDCCookieSameSite              On
+  OIDCStateCookiePrefix           ${OIDC_COOKIE_DOMAIN}-Auth-State-
+
+  # Redis session cache
+  OIDCSessionCacheFallbackToCookie On
+  OIDCCacheType                   redis
+  OIDCRedisCacheServer            ${REDIS_HOST}:${REDIS_PORT}
+  OIDCRedisCacheDatabase          ${REDIS_DB}
+
+  OIDCProviderBackChannelLogoutSupported On
+</Macro>
+
+# CLIENTOIDC $(SITENAME) $(DOMAINNAME) $(AUTHORTYPE) $(AUTHORENTRY)
+# Protects a vhost with OIDC authentication + GeoIP country check.
+# Internal networks (from INTERNAL_NETWORKS) bypass both checks.
+#
+# $(AUTHORTYPE)  : "valid-user" or "claim"
+# $(AUTHORENTRY) : For claim: regex matched against preferred_username,
+#                  e.g. 'alice|bob' matches users alice or bob (case-insensitive)
+#                  For valid-user: pass "" (empty)
+<Macro CLIENTOIDC $(SITENAME) $(DOMAINNAME) $(AUTHORTYPE) $(AUTHORENTRY)>
+  USE OIDCBASE $(SITENAME) $(DOMAINNAME)
+
+  GeoIPEnable On
+  SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
+
+  <Location />
+    AuthType openid-connect
+    OIDCUnAutzAction auth
+
+    <RequireAny>
+      # Internal networks always pass through
+      Include /etc/apache2/conf-runtime/internal-networks.conf
+
+      # External: must be from an allowed country AND authenticated
+      <RequireAll>
+        Require env AllowCountry
+        Require valid-user
+        Require $(AUTHORTYPE) "preferred_username~^(?i)$(AUTHORENTRY)$"
+      </RequireAll>
+    </RequireAny>
+  </Location>
+
+  # OIDC redirect URI — must be accessible but serves no real content
+  <Location ${OIDC_REDIRECT_PATH}>
+    AuthType openid-connect
+    <RequireAny>
+      Require valid-user
+      Require ip 10.0.0.0/8
+    </RequireAny>
+  </Location>
+</Macro>
+
+# VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(AUTHORTYPE) $(AUTHORENTRY)
+# Full vhost with OIDC auth + reverse proxy. This is the main building block.
+#
+# Examples:
+#   Use VHost_Proxy_OIDC  monitor  example.com  http://10.0.0.5:3000/  claim  'alice|bob'
+#   Use VHost_Proxy_OIDC  jenkins  example.com  http://10.0.0.6:8080/  valid-user  ''
+<Macro VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(AUTHORTYPE) $(AUTHORENTRY)>
+  <VirtualHost *:80>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE REWRITE2URL "https://$(SITENAME).$(DOMAINNAME)"
+  </VirtualHost>
+
+  <VirtualHost *:443>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE SSL $(DOMAINNAME)
+    USE CLIENTOIDC $(SITENAME) $(DOMAINNAME) $(AUTHORTYPE) '$(AUTHORENTRY)'
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    USE PROXY $(DESTINATION)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+  </VirtualHost>
+</Macro>
+
+# VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(AUTHORTYPE) $(AUTHORENTRY)
+# Full vhost with reverse proxy and NO authentication.
+# Use for services that handle their own auth (Nextcloud, Keycloak, etc.)
+# or that are only accessible from internal networks.
+<Macro VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(AUTHORTYPE) $(AUTHORENTRY)>
+  <VirtualHost *:80>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE REWRITE2URL "https://$(SITENAME).$(DOMAINNAME)"
+  </VirtualHost>
+
+  <VirtualHost *:443>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE SSL $(DOMAINNAME)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    USE PROXY $(DESTINATION)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+  </VirtualHost>
+</Macro>

@@ -1,0 +1,59 @@
+# ── HTTP Basic Auth macros ────────────────────────────────────────────────────
+#
+# Template variables substituted at container start:
+#   ${GEOIP_ALLOW_COUNTRIES}  — pipe-separated ISO country codes (e.g. DE|AT|CH)
+#   ${INTERNAL_NETWORKS}      — written to /etc/apache2/conf-runtime/internal-networks.conf
+#                               by the entrypoint as individual "Require ip" lines
+
+# CLIENTBASIC $(AUTHORTYPE) $(AUTHORENTRY)
+# Protects a vhost with HTTP Basic auth + GeoIP country check.
+# Internal networks (from INTERNAL_NETWORKS env var) bypass both checks.
+#
+# $(AUTHORTYPE)  : Apache Require directive type, e.g. "user" or "group"
+# $(AUTHORENTRY) : Allowed user(s)/group(s), e.g. 'alice bob'
+<Macro CLIENTBASIC $(AUTHORTYPE) $(AUTHORENTRY)>
+  GeoIPEnable On
+  SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
+
+  <Location />
+    AuthType Basic
+    AuthName "Protected Area"
+    AuthUserFile /etc/apache2/basic.htpasswd
+
+    <RequireAny>
+      # Internal networks always pass through (generated from INTERNAL_NETWORKS env var)
+      Include /etc/apache2/conf-runtime/internal-networks.conf
+
+      # External: must be from an allowed country AND match the auth entry
+      <RequireAll>
+        Require env AllowCountry
+        Require $(AUTHORTYPE) $(AUTHORENTRY)
+      </RequireAll>
+    </RequireAny>
+  </Location>
+</Macro>
+
+# VHost_Proxy_Basic $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(AUTHORTYPE) $(AUTHORENTRY)
+# Full vhost with Basic auth + reverse proxy.
+#
+# Example:
+#   Use VHost_Proxy_Basic camera example.com http://10.0.0.9:10090/ user 'alice bob'
+<Macro VHost_Proxy_Basic $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(AUTHORTYPE) $(AUTHORENTRY)>
+  <VirtualHost *:80>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE REWRITE2URL "https://$(SITENAME).$(DOMAINNAME)"
+  </VirtualHost>
+
+  <VirtualHost *:443>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE SSL $(DOMAINNAME)
+    USE CLIENTBASIC $(AUTHORTYPE) '$(AUTHORENTRY)'
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    USE PROXY $(DESTINATION)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+  </VirtualHost>
+</Macro>

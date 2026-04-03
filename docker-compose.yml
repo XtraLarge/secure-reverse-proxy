@@ -1,0 +1,39 @@
+services:
+
+  proxy:
+    build: .
+    # image: ghcr.io/XtraLarge/apache-oidc-proxy:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file: .env
+    volumes:
+      # TLS certificates — one subdirectory per domain:
+      #   ssl/<domain>/cert.pem
+      #   ssl/<domain>/key.pem
+      #   ssl/<domain>/fullchain.pem
+      - ./ssl:/etc/apache2/ssl:ro
+
+      # Your vhost definitions — copy from conf/sites-available/example.conf
+      # and adapt. See .env for available environment variables.
+      - ./sites-enabled:/etc/apache2/sites-enabled:ro
+
+      # Optional per-vhost Apache include snippets, e.g.:
+      #   AddOn/example.com/mysite.pre.conf
+      - ./AddOn:/etc/apache2/AddOn:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # No persistence needed — Redis is used as OIDC session cache only.
+    # Sessions are re-created on restart via re-authentication.
+    command: redis-server --save "" --appendonly no --maxmemory 128mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
