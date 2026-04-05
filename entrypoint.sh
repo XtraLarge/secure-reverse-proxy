@@ -72,9 +72,10 @@ SUBST_VARS='${OIDC_PROVIDER_METADATA_URL}'\
 '${REDIS_HOST}'\
 '${REDIS_PORT}'\
 '${REDIS_DB}'\
-'${GEOIP_ALLOW_COUNTRIES}'
+'${GEOIP_ALLOW_COUNTRIES}'\
+'${OIDC_COOKIE_DOMAIN}'
 
-for tmpl in /etc/apache2/macro/*.template /etc/apache2/conf-available/*.template; do
+for tmpl in /etc/apache2/macro/*.template /etc/apache2/conf-available/*.template /var/www/**/*.template; do
     [ -f "$tmpl" ] || continue
     out="${tmpl%.template}"
     log "Processing template: $(basename "$tmpl") -> $(basename "$out")"

@@ -8,9 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     apache2 \
     libapache2-mod-auth-openidc \
     libapache2-mod-geoip \
+    libapache2-mod-lua \
     geoip-database \
     gettext-base \
     ca-certificates \
+    lua-socket \
+    perl \
     && rm -rf /var/lib/apt/lists/*
 
 # Enable required Apache modules
@@ -18,6 +21,8 @@ RUN a2enmod \
     macro \
     auth_openidc \
     geoip \
+    lua \
+    cgid \
     proxy \
     proxy_http \
     proxy_wstunnel \
@@ -26,6 +31,7 @@ RUN a2enmod \
     headers \
     remoteip \
     socache_shmcb \
+    substitute \
     && a2dissite 000-default default-ssl 2>/dev/null || true
 
 # Macro definitions — static base macros (LOGGING, SSL, PROXY, etc.)
@@ -40,6 +46,13 @@ COPY conf/sites-available/ /etc/apache2/sites-available/
 COPY conf/ports.conf /etc/apache2/ports.conf
 
 RUN a2enconf server-security macro
+
+# TOC page (Lua), logout animation page, CGI env-dump, TableFilter JS library
+COPY www/toc.lua       /var/www/html/toc.lua
+COPY www/help/         /var/www/help/
+COPY www/cgi/          /var/www/cgi/
+COPY www/res/          /var/www/res/
+RUN chmod +x /var/www/cgi/echo.pl
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
