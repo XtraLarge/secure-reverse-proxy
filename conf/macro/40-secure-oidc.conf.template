@@ -9,7 +9,6 @@
 #   ${OIDC_REMOTE_USER_CLAIM}           Claim mapped to REMOTE_USER
 #   ${OIDC_SCOPE}                       OAuth2 scopes (must include "openid")
 #   ${OIDC_REDIRECT_PATH}               OIDC redirect URI path (no real content)
-#   ${OIDC_CRYPTO_PASSPHRASE}           Session encryption passphrase
 #   ${OIDC_DEFAULT_LOGOUT_URL}          Post-logout redirect URL
 #   ${OIDC_COOKIE_DOMAIN}               Base domain for session cookies
 #   ${REDIS_HOST}                       Redis hostname
@@ -20,6 +19,8 @@
 # Internal network CIDRs are written to /etc/apache2/conf-runtime/internal-networks.conf
 # by the entrypoint script from the INTERNAL_NETWORKS env var.
 # The Redis password (if set) is written to /etc/apache2/conf-runtime/redis-auth.conf.
+# The OIDC crypto passphrase is written to /etc/apache2/conf-runtime/oidc-passphrase.conf
+# at startup (auto-generated if OIDC_CRYPTO_PASSPHRASE is not set) and rotated daily.
 
 # OIDCBASE $(SITENAME) $(DOMAINNAME)
 # Sets global mod_auth_openidc directives for one vhost.
@@ -34,7 +35,8 @@
   OIDCScope                       "${OIDC_SCOPE}"
 
   OIDCRedirectURI                 https://$(SITENAME).$(DOMAINNAME)${OIDC_REDIRECT_PATH}
-  OIDCCryptoPassphrase            ${OIDC_CRYPTO_PASSPHRASE}
+  # Passphrase written at startup + rotated daily — see /etc/apache2/conf-runtime/oidc-passphrase.conf
+  Include /etc/apache2/conf-runtime/oidc-passphrase.conf
   OIDCDefaultLoggedOutURL         ${OIDC_DEFAULT_LOGOUT_URL}
 
   # Domain-wide session cookie shared across all subdomains

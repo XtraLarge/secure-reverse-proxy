@@ -9,8 +9,6 @@ die() { echo "[entrypoint] ERROR: $*" >&2; exit 1; }
     || die "OIDC_PROVIDER_METADATA_URL is required (e.g. https://keycloak/realms/master/.well-known/openid-configuration)"
 [[ -n "${OIDC_CLIENT_SECRET:-}" ]] \
     || die "OIDC_CLIENT_SECRET is required"
-[[ -n "${OIDC_CRYPTO_PASSPHRASE:-}" ]] \
-    || die "OIDC_CRYPTO_PASSPHRASE is required — generate with: openssl rand -hex 32"
 [[ -n "${OIDC_COOKIE_DOMAIN:-}" ]] \
     || die "OIDC_COOKIE_DOMAIN is required (e.g. example.com)"
 
@@ -47,6 +45,24 @@ for net in "${NETS[@]}"; do
     echo "      Require ip ${net}" >> "$NETWORKS_FILE"
 done
 
+# ── Generate OIDC crypto passphrase include ───────────────────────────────────
+# If OIDC_CRYPTO_PASSPHRASE is set, use it as the initial key.
+# Otherwise auto-generate a random 32-byte hex key.
+# The rotate-oidc-key.sh cron job (03:00 daily) shifts current → previous
+# and generates a fresh key, so existing sessions keep working for one day.
+PASSPHRASE_FILE="/etc/apache2/conf-runtime/oidc-passphrase.key"
+PASSPHRASE_CONF="/etc/apache2/conf-runtime/oidc-passphrase.conf"
+
+if [[ -n "${OIDC_CRYPTO_PASSPHRASE:-}" ]]; then
+    log "Using provided OIDC_CRYPTO_PASSPHRASE as initial crypto key"
+    CURRENT_KEY="${OIDC_CRYPTO_PASSPHRASE}"
+else
+    log "Auto-generating OIDC crypto passphrase (rotates daily at 03:00)"
+    CURRENT_KEY="$(openssl rand -hex 32)"
+fi
+echo "${CURRENT_KEY}" > "$PASSPHRASE_FILE"
+printf 'OIDCCryptoPassphrase  "%s"\n' "${CURRENT_KEY}" > "$PASSPHRASE_CONF"
+
 # ── Generate Redis password include ──────────────────────────────────────────
 REDIS_AUTH_FILE="/etc/apache2/conf-runtime/redis-auth.conf"
 if [[ -n "${REDIS_PASSWORD}" ]]; then
@@ -66,14 +82,12 @@ SUBST_VARS='${OIDC_PROVIDER_METADATA_URL}'\
 '${OIDC_REMOTE_USER_CLAIM}'\
 '${OIDC_SCOPE}'\
 '${OIDC_REDIRECT_PATH}'\
-'${OIDC_CRYPTO_PASSPHRASE}'\
 '${OIDC_DEFAULT_LOGOUT_URL}'\
 '${OIDC_COOKIE_DOMAIN}'\
 '${REDIS_HOST}'\
 '${REDIS_PORT}'\
 '${REDIS_DB}'\
-'${GEOIP_ALLOW_COUNTRIES}'\
-'${OIDC_COOKIE_DOMAIN}'
+'${GEOIP_ALLOW_COUNTRIES}'
 
 for tmpl in /etc/apache2/macro/*.template /etc/apache2/conf-available/*.template /var/www/**/*.template; do
     [ -f "$tmpl" ] || continue
@@ -84,6 +98,10 @@ done
 
 # Enable the auth_openidc conf (generated from template above)
 a2enconf auth_openidc 2>/dev/null || true
+
+# ── Start cron for daily key rotation ────────────────────────────────────────
+/usr/sbin/cron -f &
+log "cron daemon started (rotate-oidc-key.sh runs at 03:00 daily)"
 
 # ── Validate Apache config ────────────────────────────────────────────────────
 log "Testing Apache configuration..."

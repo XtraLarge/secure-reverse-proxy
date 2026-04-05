@@ -1,0 +1,6 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Daily OIDC crypto passphrase rotation at 03:00 UTC
+# Logs go to container stdout (visible via: docker compose logs proxy)
+0 3 * * * root /usr/local/bin/rotate-oidc-key.sh >> /proc/1/fd/1 2>&1

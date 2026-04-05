@@ -12,7 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     geoip-database \
     gettext-base \
     ca-certificates \
+    cron \
     lua-socket \
+    openssl \
     perl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -56,6 +58,12 @@ RUN chmod +x /var/www/cgi/echo.pl
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+# Daily OIDC passphrase rotation
+COPY rotate-oidc-key.sh /usr/local/bin/rotate-oidc-key.sh
+RUN chmod +x /usr/local/bin/rotate-oidc-key.sh
+COPY cron.d/rotate-oidc-key /etc/cron.d/rotate-oidc-key
+RUN chmod 0644 /etc/cron.d/rotate-oidc-key
 
 # Runtime directory for generated configs (internal networks include, etc.)
 RUN mkdir -p /etc/apache2/conf-runtime
