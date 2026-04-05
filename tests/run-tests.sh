@@ -3,7 +3,12 @@
 # Usage: ./tests/run-tests.sh [image-name]
 # Default image: apache-oidc-proxy:test
 
-set -euo pipefail
+set -euo
+# Note: pipefail is intentionally NOT set here.
+# Many tests use:  run ... 2>&1 | grep -q "pattern"
+# grep -q exits immediately on first match, giving docker run a SIGPIPE (exit 141).
+# With pipefail the pipeline exit would be 141 even though grep found the pattern.
+# Without pipefail the exit status is grep's exit code (0=found, 1=not found).
 
 IMAGE="${1:-apache-oidc-proxy:test}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
