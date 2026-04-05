@@ -104,7 +104,7 @@ a2enconf auth_openidc 2>/dev/null || true
 # fails (AH02291) when those directories are missing.
 # Search the directory (not a glob) so the command works even when no conf
 # files are present; || true prevents pipefail from aborting on no matches.
-grep -rh '^\s*Use\s' /etc/apache2/sites-enabled/ 2>/dev/null \
+grep -rh '^[[:space:]]*Use[[:space:]]' /etc/apache2/sites-enabled/ 2>/dev/null \
     | awk '{print $3}' \
     | grep -E '^[A-Za-z0-9]([A-Za-z0-9-]*\.)+[A-Za-z]{2,}$' \
     | sort -u \
