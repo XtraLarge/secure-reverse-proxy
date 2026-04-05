@@ -99,6 +99,19 @@ done
 # Enable the auth_openidc conf (generated from template above)
 a2enconf auth_openidc 2>/dev/null || true
 
+# ── Create per-domain Apache log directories ──────────────────────────────────
+# The LOGGING macro writes to ${APACHE_LOG_DIR}/<domain>/  Apache configtest
+# will fail (AH02291) if those directories do not exist yet.
+# Scan every "Use VHost_*/Domain_*" line in sites-enabled; the 3rd field is
+# always the DOMAINNAME argument (e.g. "Use VHost_Proxy_OIDC monitor example.com ...").
+grep -rh '^\s*Use\s' /etc/apache2/sites-enabled/*.conf 2>/dev/null \
+    | awk '{print $3}' \
+    | grep -E '^[A-Za-z0-9]([A-Za-z0-9-]*\.)+[A-Za-z]{2,}$' \
+    | sort -u \
+    | while IFS= read -r domain; do
+        mkdir -p "${APACHE_LOG_DIR}/${domain}"
+    done
+
 # ── Start cron for daily key rotation ────────────────────────────────────────
 /usr/sbin/cron -f &
 log "cron daemon started (rotate-oidc-key.sh runs at 03:00 daily)"
