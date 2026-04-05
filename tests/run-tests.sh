@@ -7,7 +7,6 @@ set -euo pipefail
 
 IMAGE="${1:-apache-oidc-proxy:test}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
 PASS=0
 FAIL=0
@@ -15,126 +14,44 @@ FAIL=0
 pass() { echo "  PASS: $*"; ((PASS++)) || true; }
 fail() { echo "  FAIL: $*"; ((FAIL++)) || true; }
 
-run_container() {
-    # $1 = test name, remaining = extra docker run args
-    local name="$1"; shift
-    docker run --rm \
-        -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" \
-        -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro" \
-        -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro" \
-        -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/realms/master/.well-known/openid-configuration \
-        -e OIDC_CLIENT_ID=Proxy \
-        -e OIDC_CLIENT_SECRET=test-secret-not-real \
-        -e OIDC_CRYPTO_PASSPHRASE=test-passphrase-not-real \
-        -e OIDC_COOKIE_DOMAIN=test.example.com \
-        -e REDIS_HOST=127.0.0.1 \
-        -e INTERNAL_NETWORKS=10.0.0.0/8 \
-        "$@" \
-        "$IMAGE" \
-        apache2ctl configtest 2>&1
-}
+# Standard env + volume mounts used by most tests
+BASE_ARGS=(
+    -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro"
+    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro"
+    -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro"
+    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/realms/master/.well-known/openid-configuration
+    -e OIDC_CLIENT_ID=Proxy
+    -e OIDC_CLIENT_SECRET=test-secret-not-real
+    -e OIDC_CRYPTO_PASSPHRASE=test-passphrase-not-real
+    -e OIDC_COOKIE_DOMAIN=test.example.com
+    -e REDIS_HOST=127.0.0.1
+    -e INTERNAL_NETWORKS=10.0.0.0/8
+    -e TOC_TITLE=Test-Inhaltsverzeichnis
+)
+
+run() { docker run --rm "${BASE_ARGS[@]}" "$@" "$IMAGE"; }
 
 echo "============================================"
 echo "apache-oidc-proxy integration tests"
 echo "Image: $IMAGE"
 echo "============================================"
 
-# ── Test 1: configtest passes with test site config ───────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP 1: Apache config syntax
+# ══════════════════════════════════════════════════════════════════════════════
+
 echo ""
 echo "[1] Apache configtest with all VHost macro types"
-if run_container "configtest" 2>&1 | grep -q "Syntax OK"; then
+if run apache2ctl configtest 2>&1 | grep -q "Syntax OK"; then
     pass "apache2ctl configtest: Syntax OK"
 else
     fail "apache2ctl configtest failed"
-    run_container "configtest" 2>&1 || true
-fi
-
-# ── Test 2: Required env vars enforced ───────────────────────────────────────
-echo ""
-echo "[2] Entrypoint rejects missing OIDC_PROVIDER_METADATA_URL"
-if docker run --rm \
-    -e OIDC_CLIENT_SECRET=x \
-    -e OIDC_CRYPTO_PASSPHRASE=x \
-    -e OIDC_COOKIE_DOMAIN=x \
-    "$IMAGE" apache2ctl configtest 2>&1 | grep -q "OIDC_PROVIDER_METADATA_URL is required"; then
-    pass "Missing OIDC_PROVIDER_METADATA_URL is rejected"
-else
-    fail "Missing OIDC_PROVIDER_METADATA_URL was not caught"
+    run apache2ctl configtest 2>&1 || true
 fi
 
 echo ""
-echo "[3] Entrypoint rejects missing OIDC_CLIENT_SECRET"
-if docker run --rm \
-    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
-    -e OIDC_CRYPTO_PASSPHRASE=x \
-    -e OIDC_COOKIE_DOMAIN=x \
-    "$IMAGE" apache2ctl configtest 2>&1 | grep -q "OIDC_CLIENT_SECRET is required"; then
-    pass "Missing OIDC_CLIENT_SECRET is rejected"
-else
-    fail "Missing OIDC_CLIENT_SECRET was not caught"
-fi
-
-echo ""
-echo "[4] Entrypoint rejects missing OIDC_CRYPTO_PASSPHRASE"
-if docker run --rm \
-    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
-    -e OIDC_CLIENT_SECRET=x \
-    -e OIDC_COOKIE_DOMAIN=x \
-    "$IMAGE" apache2ctl configtest 2>&1 | grep -q "OIDC_CRYPTO_PASSPHRASE is required"; then
-    pass "Missing OIDC_CRYPTO_PASSPHRASE is rejected"
-else
-    fail "Missing OIDC_CRYPTO_PASSPHRASE was not caught"
-fi
-
-echo ""
-echo "[5] Entrypoint rejects missing OIDC_COOKIE_DOMAIN"
-if docker run --rm \
-    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
-    -e OIDC_CLIENT_SECRET=x \
-    -e OIDC_CRYPTO_PASSPHRASE=x \
-    "$IMAGE" apache2ctl configtest 2>&1 | grep -q "OIDC_COOKIE_DOMAIN is required"; then
-    pass "Missing OIDC_COOKIE_DOMAIN is rejected"
-else
-    fail "Missing OIDC_COOKIE_DOMAIN was not caught"
-fi
-
-# ── Test 3: Invalid CIDR rejected ────────────────────────────────────────────
-echo ""
-echo "[6] Entrypoint rejects invalid CIDR in INTERNAL_NETWORKS"
-if docker run --rm \
-    -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" \
-    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro" \
-    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
-    -e OIDC_CLIENT_SECRET=x \
-    -e OIDC_CRYPTO_PASSPHRASE=x \
-    -e OIDC_COOKIE_DOMAIN=test.example.com \
-    -e INTERNAL_NETWORKS="not-a-cidr,10.0.0.0/8" \
-    "$IMAGE" apache2ctl configtest 2>&1 | grep -q "Invalid CIDR"; then
-    pass "Invalid CIDR 'not-a-cidr' is rejected"
-else
-    fail "Invalid CIDR was not caught"
-fi
-
-echo ""
-echo "[7] Entrypoint accepts valid CIDR list"
-if docker run --rm \
-    -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" \
-    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro" \
-    -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro" \
-    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
-    -e OIDC_CLIENT_SECRET=x \
-    -e OIDC_CRYPTO_PASSPHRASE=x \
-    -e OIDC_COOKIE_DOMAIN=test.example.com \
-    -e INTERNAL_NETWORKS="10.0.0.0/8,192.168.0.0/16,172.16.0.0/12" \
-    "$IMAGE" apache2ctl configtest 2>&1 | grep -q "Syntax OK"; then
-    pass "Multiple valid CIDRs accepted"
-else
-    fail "Valid CIDR list was rejected"
-fi
-
-# ── Test 4: configtest passes without any sites (empty sites-enabled) ─────────
-echo ""
-echo "[8] Apache configtest with empty sites-enabled"
+echo "[2] Apache configtest with empty sites-enabled"
 EMPTY_DIR=$(mktemp -d)
 if docker run --rm \
     -v "$EMPTY_DIR:/etc/apache2/sites-enabled:ro" \
@@ -149,7 +66,184 @@ else
 fi
 rm -rf "$EMPTY_DIR"
 
-# ── Summary ───────────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP 2: Required env var validation
+# ══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo "[3] Entrypoint rejects missing OIDC_PROVIDER_METADATA_URL"
+if docker run --rm \
+    -e OIDC_CLIENT_SECRET=x -e OIDC_CRYPTO_PASSPHRASE=x -e OIDC_COOKIE_DOMAIN=x \
+    "$IMAGE" apache2ctl configtest 2>&1 | grep -q "OIDC_PROVIDER_METADATA_URL is required"; then
+    pass "Missing OIDC_PROVIDER_METADATA_URL is rejected"
+else
+    fail "Missing OIDC_PROVIDER_METADATA_URL was not caught"
+fi
+
+echo ""
+echo "[4] Entrypoint rejects missing OIDC_CLIENT_SECRET"
+if docker run --rm \
+    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
+    -e OIDC_CRYPTO_PASSPHRASE=x -e OIDC_COOKIE_DOMAIN=x \
+    "$IMAGE" apache2ctl configtest 2>&1 | grep -q "OIDC_CLIENT_SECRET is required"; then
+    pass "Missing OIDC_CLIENT_SECRET is rejected"
+else
+    fail "Missing OIDC_CLIENT_SECRET was not caught"
+fi
+
+echo ""
+echo "[5] Entrypoint rejects missing OIDC_CRYPTO_PASSPHRASE"
+if docker run --rm \
+    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
+    -e OIDC_CLIENT_SECRET=x -e OIDC_COOKIE_DOMAIN=x \
+    "$IMAGE" apache2ctl configtest 2>&1 | grep -q "OIDC_CRYPTO_PASSPHRASE is required"; then
+    pass "Missing OIDC_CRYPTO_PASSPHRASE is rejected"
+else
+    fail "Missing OIDC_CRYPTO_PASSPHRASE was not caught"
+fi
+
+echo ""
+echo "[6] Entrypoint rejects missing OIDC_COOKIE_DOMAIN"
+if docker run --rm \
+    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
+    -e OIDC_CLIENT_SECRET=x -e OIDC_CRYPTO_PASSPHRASE=x \
+    "$IMAGE" apache2ctl configtest 2>&1 | grep -q "OIDC_COOKIE_DOMAIN is required"; then
+    pass "Missing OIDC_COOKIE_DOMAIN is rejected"
+else
+    fail "Missing OIDC_COOKIE_DOMAIN was not caught"
+fi
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP 3: INTERNAL_NETWORKS CIDR validation
+# ══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo "[7] Entrypoint rejects invalid CIDR in INTERNAL_NETWORKS"
+if docker run --rm \
+    -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" \
+    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro" \
+    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
+    -e OIDC_CLIENT_SECRET=x -e OIDC_CRYPTO_PASSPHRASE=x -e OIDC_COOKIE_DOMAIN=test.example.com \
+    -e INTERNAL_NETWORKS="not-a-cidr,10.0.0.0/8" \
+    "$IMAGE" apache2ctl configtest 2>&1 | grep -q "Invalid CIDR"; then
+    pass "Invalid CIDR 'not-a-cidr' is rejected"
+else
+    fail "Invalid CIDR was not caught"
+fi
+
+echo ""
+echo "[8] Entrypoint accepts valid multi-CIDR list"
+if run -e INTERNAL_NETWORKS="10.0.0.0/8,192.168.0.0/16,172.16.0.0/12" \
+    apache2ctl configtest 2>&1 | grep -q "Syntax OK"; then
+    pass "Multiple valid CIDRs accepted"
+else
+    fail "Valid CIDR list was rejected"
+fi
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP 4: TOC page (toc.lua)
+# ══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo "[9] toc.lua is present in image at /var/www/html/toc.lua"
+if run sh -c "test -f /var/www/html/toc.lua && echo FOUND" 2>&1 | grep -q "FOUND"; then
+    pass "toc.lua exists in image"
+else
+    fail "toc.lua missing from image"
+fi
+
+echo ""
+echo "[10] toc.lua is valid Lua syntax"
+if run sh -c "luac -p /var/www/html/toc.lua && echo LUA_OK" 2>&1 | grep -q "LUA_OK"; then
+    pass "toc.lua passes Lua syntax check"
+else
+    fail "toc.lua has Lua syntax errors"
+    run sh -c "luac -p /var/www/html/toc.lua" 2>&1 || true
+fi
+
+echo ""
+echo "[11] mod_lua is enabled in Apache"
+if run sh -c "apache2ctl -M 2>/dev/null | grep -q lua_module && echo MOD_LUA" 2>&1 | grep -q "MOD_LUA"; then
+    pass "mod_lua is enabled"
+else
+    fail "mod_lua is not enabled"
+fi
+
+echo ""
+echo "[12] TableFilter JS library is present"
+if run sh -c "test -f /var/www/res/tablefilter/dist/tablefilter/tablefilter.js && echo FOUND" 2>&1 | grep -q "FOUND"; then
+    pass "tablefilter.js exists in image"
+else
+    fail "tablefilter.js missing from image"
+fi
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP 5: Logout animation page
+# ══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo "[13] Logout help page index.html is present"
+if run sh -c "test -f /var/www/help/index.html && echo FOUND" 2>&1 | grep -q "FOUND"; then
+    pass "help/index.html exists in image"
+else
+    fail "help/index.html missing from image"
+fi
+
+echo ""
+echo "[14] help4_terminal.js is generated from template on startup"
+if run sh -c "test -f /var/www/help/js/help4_terminal.js && echo FOUND" 2>&1 | grep -q "FOUND"; then
+    pass "help4_terminal.js generated from template"
+else
+    fail "help4_terminal.js not generated (template substitution failed?)"
+fi
+
+echo ""
+echo "[15] help4_terminal.js contains correct OIDC_COOKIE_DOMAIN (not raw placeholder)"
+if run sh -c "grep -q 'test.example.com' /var/www/help/js/help4_terminal.js && echo DOMAIN_OK" 2>&1 | grep -q "DOMAIN_OK"; then
+    pass "OIDC_COOKIE_DOMAIN substituted correctly in help4_terminal.js"
+else
+    fail "OIDC_COOKIE_DOMAIN not substituted in help4_terminal.js"
+    run sh -c "grep 'redirect' /var/www/help/js/help4_terminal.js" 2>&1 || true
+fi
+
+echo ""
+echo "[16] help4_terminal.js does not contain raw \${OIDC_COOKIE_DOMAIN} placeholder"
+if run sh -c "grep -q '\${OIDC_COOKIE_DOMAIN}' /var/www/help/js/help4_terminal.js 2>/dev/null && echo RAW || echo CLEAN" 2>&1 | grep -q "CLEAN"; then
+    pass "No raw template placeholders left in help4_terminal.js"
+else
+    fail "Raw placeholder \${OIDC_COOKIE_DOMAIN} still present in help4_terminal.js"
+fi
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP 6: CGI env-dump script
+# ══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo "[17] CGI script echo.pl is present and executable"
+if run sh -c "test -x /var/www/cgi/echo.pl && echo FOUND" 2>&1 | grep -q "FOUND"; then
+    pass "cgi/echo.pl exists and is executable"
+else
+    fail "cgi/echo.pl missing or not executable"
+fi
+
+echo ""
+echo "[18] mod_cgid is enabled in Apache"
+if run sh -c "apache2ctl -M 2>/dev/null | grep -q cgid_module && echo MOD_CGID" 2>&1 | grep -q "MOD_CGID"; then
+    pass "mod_cgid is enabled"
+else
+    fail "mod_cgid is not enabled"
+fi
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Summary
+# ══════════════════════════════════════════════════════════════════════════════
+
 echo ""
 echo "============================================"
 echo "Results: $PASS passed, $FAIL failed"
