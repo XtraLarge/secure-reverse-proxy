@@ -29,7 +29,7 @@ BASE_ARGS=(
     -e TOC_TITLE=Test-Inhaltsverzeichnis
 )
 
-run() { docker run --rm "${BASE_ARGS[@]}" "$@" "$IMAGE"; }
+run() { docker run --rm "${BASE_ARGS[@]}" "$IMAGE" "$@"; }
 
 echo "============================================"
 echo "apache-oidc-proxy integration tests"
@@ -138,8 +138,9 @@ fi
 
 echo ""
 echo "[8] Entrypoint accepts valid multi-CIDR list"
-if run -e INTERNAL_NETWORKS="10.0.0.0/8,192.168.0.0/16,172.16.0.0/12" \
-    apache2ctl configtest 2>&1 | grep -q "Syntax OK"; then
+if docker run --rm "${BASE_ARGS[@]}" \
+    -e INTERNAL_NETWORKS="10.0.0.0/8,192.168.0.0/16,172.16.0.0/12" \
+    "$IMAGE" apache2ctl configtest 2>&1 | grep -q "Syntax OK"; then
     pass "Multiple valid CIDRs accepted"
 else
     fail "Valid CIDR list was rejected"

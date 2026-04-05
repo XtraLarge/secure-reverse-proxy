@@ -8,7 +8,7 @@
 # Installed to /usr/local/bin/rotate-oidc-key.sh
 # Invoked by cron at 03:00 daily (see /etc/cron.d/rotate-oidc-key)
 
-set -euo pipefail
+set -uo pipefail
 
 PASSPHRASE_FILE="/etc/apache2/conf-runtime/oidc-passphrase.key"
 PASSPHRASE_CONF="/etc/apache2/conf-runtime/oidc-passphrase.conf"
@@ -26,5 +26,8 @@ echo "${NEW_KEY}" > "$PASSPHRASE_FILE"
 # the first encrypts new sessions, the second still decrypts old ones.
 printf 'OIDCCryptoPassphrase  "%s" "%s"\n' "${NEW_KEY}" "${PREV_KEY}" > "$PASSPHRASE_CONF"
 
-apache2ctl graceful
-echo "[rotate-oidc-key] Passphrase rotated — graceful reload done ($(date -u +%FT%TZ))"
+if apache2ctl graceful 2>/dev/null; then
+    echo "[rotate-oidc-key] Passphrase rotated — graceful reload done ($(date -u +%FT%TZ))"
+else
+    echo "[rotate-oidc-key] WARNING: apache2ctl graceful failed (Apache not running?) — passphrase file updated anyway" >&2
+fi
