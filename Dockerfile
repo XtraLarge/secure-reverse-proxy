@@ -39,7 +39,7 @@ COPY conf/sites-available/ /etc/apache2/sites-available/
 
 COPY conf/ports.conf /etc/apache2/ports.conf
 
-RUN a2enconf server-security
+RUN a2enconf server-security macro
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
