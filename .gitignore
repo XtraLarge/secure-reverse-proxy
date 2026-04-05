@@ -6,6 +6,11 @@ ssl/
 sites-enabled/
 AddOn/
 
+# Test fixtures are committed (self-signed certs, dummy configs)
+!tests/ssl/
+!tests/sites-enabled/
+!tests/AddOn/
+
 # OS
 .DS_Store
 Thumbs.db
