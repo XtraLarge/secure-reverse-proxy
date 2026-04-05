@@ -1,5 +1,6 @@
 #!/bin/bash
-set -euo pipefail
+set -euo
+shopt -s globstar  # enables ** glob for recursive template scanning pipefail
 
 log() { echo "[entrypoint] $*"; }
 die() { echo "[entrypoint] ERROR: $*" >&2; exit 1; }

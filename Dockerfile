@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gettext-base \
     ca-certificates \
     cron \
+    lua5.4 \
     lua-socket \
     openssl \
     perl \
