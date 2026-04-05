@@ -102,10 +102,12 @@ a2enconf auth_openidc 2>/dev/null || true
 # ── Create per-domain Apache log directories ──────────────────────────────────
 # The LOGGING macro writes to /var/log/apache2/<domain>/  Apache configtest
 # fails (AH02291) when those directories are missing.
-# Search the directory (not a glob) so the command works even when no conf
-# files are present; || true prevents pipefail from aborting on no matches.
-grep -rh '^[[:space:]]*Use[[:space:]]' /etc/apache2/sites-enabled/ 2>/dev/null \
-    | awk '{print $3}' \
+# Domain_Init/Final: domain is $3.  VHost_*: domain is $4 (after sitename).
+# Split both fields, filter for valid domain patterns, mkdir all found ones.
+# Case-insensitive grep (-i) handles both "Use" and "USE" variants.
+# || true prevents pipefail from aborting when no conf files are found.
+grep -rih '^[[:space:]]*use[[:space:]]' /etc/apache2/sites-enabled/ 2>/dev/null \
+    | awk '{print $3; print $4}' \
     | grep -E '^[A-Za-z0-9]([A-Za-z0-9-]*\.)+[A-Za-z]{2,}$' \
     | sort -u \
     | while IFS= read -r domain; do
