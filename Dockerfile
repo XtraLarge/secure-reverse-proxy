@@ -8,7 +8,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     apache2 \
     libapache2-mod-auth-openidc \
     libapache2-mod-geoip \
-    libapache2-mod-lua \
     geoip-database \
     gettext-base \
     ca-certificates \
