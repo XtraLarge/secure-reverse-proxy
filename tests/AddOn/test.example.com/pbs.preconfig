@@ -13,3 +13,6 @@ RewriteEngine On
 RewriteCond %{HTTP:Connection} Upgrade [NC]
 RewriteCond %{HTTP:Upgrade} websocket [NC]
 RewriteRule /(.*) wss://127.0.0.2:8007/$1 [P,L]
+
+# PBS sometimes sends a status line before headers — this tolerates it
+ProxyBadHeader StartBody
