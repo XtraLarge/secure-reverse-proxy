@@ -1,52 +1,61 @@
-// geting canvas by Boujjou Achraf
-        var c = document.getElementById("c");
-        var ctx = c.getContext("2d");
+/**
+ * Matrix rain canvas animation
+ * Original implementation — no third-party code.
+ *
+ * Draws falling character columns on a canvas element with id="c".
+ * Adapts to window resize.
+ */
+(function () {
+    "use strict";
 
-        //making the canvas full screen
-        c.height = window.innerHeight;
-        c.width = window.innerWidth;
+    var FONT_SIZE   = 14;
+    var COLOR_TEXT  = "#26B019";
+    var COLOR_TRAIL = "rgba(0,0,0,0.05)";
+    var CHARS       = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*<>[]{}+-=/\\|";
+    var RESET_PROB  = 0.975;   // probability a column resets after reaching bottom
+    var INTERVAL_MS = 40;
 
-        //chinese characters - taken from the unicode charset
-        var matrix = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ123456789@#$%^&*()*&^%+-/~{[|`]}";
-        //converting the string into an array of single characters
-        matrix = matrix.split("");
+    var canvas = document.getElementById("c");
+    var ctx    = canvas.getContext("2d");
+    var drops  = [];
+    var cols   = 0;
 
-        var font_size = 10;
-        var columns = c.width/font_size; //number of columns for the rain
-        //an array of drops - one per column
-        var drops = [];
-        //x below is the x coordinate
-        //1 = y co-ordinate of the drop(same for every drop initially)
-        for(var x = 0; x < columns; x++)
-            drops[x] = 1; 
+    function resize() {
+        canvas.width  = window.innerWidth;
+        canvas.height = window.innerHeight;
+        cols  = Math.floor(canvas.width / FONT_SIZE);
+        drops = [];
+        for (var i = 0; i < cols; i++) {
+            // stagger starting positions so columns don't all start at top
+            drops[i] = Math.floor(Math.random() * -(canvas.height / FONT_SIZE));
+        }
+    }
 
-        //drawing the characters
-        function draw()
-        {
-            //Black BG for the canvas
-            //translucent BG to show trail
-            ctx.fillStyle = "rgba(0, 0, 0, 0.04)";
-            ctx.fillRect(0, 0, c.width, c.height);
+    function randomChar() {
+        return CHARS[Math.floor(Math.random() * CHARS.length)];
+    }
 
-            //ctx.fillStyle = "#f4427d";//green text
-            ctx.fillStyle = "#26B019";//green text
-            ctx.font = font_size + "px arial";
-            //looping over drops
-            for(var i = 0; i < drops.length; i++)
-            {
-                //a random chinese character to print
-                var text = matrix[Math.floor(Math.random()*matrix.length)];
-                //x = i*font_size, y = value of drops[i]*font_size
-                ctx.fillText(text, i*font_size, drops[i]*font_size);
+    function draw() {
+        // semi-transparent fill creates the fading trail effect
+        ctx.fillStyle = COLOR_TRAIL;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                //sending the drop back to the top randomly after it has crossed the screen
-                //adding a randomness to the reset to make the drops scattered on the Y axis
-                if(drops[i]*font_size > c.height && Math.random() > 0.975)
-                    drops[i] = 0;
+        ctx.fillStyle = COLOR_TEXT;
+        ctx.font      = FONT_SIZE + "px monospace";
 
-                //incrementing Y coordinate
-                drops[i]++;
+        for (var i = 0; i < cols; i++) {
+            var y = drops[i] * FONT_SIZE;
+            if (y > 0 && y < canvas.height) {
+                ctx.fillText(randomChar(), i * FONT_SIZE, y);
+            }
+            drops[i]++;
+            if (y > canvas.height && Math.random() > RESET_PROB) {
+                drops[i] = 0;
             }
         }
+    }
 
-        setInterval(draw, 35);
+    window.addEventListener("resize", resize);
+    resize();
+    setInterval(draw, INTERVAL_MS);
+}());
