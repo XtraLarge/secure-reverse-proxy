@@ -39,12 +39,15 @@
   Include /etc/apache2/conf-runtime/oidc-passphrase.conf
   OIDCDefaultLoggedOutURL         ${OIDC_DEFAULT_LOGOUT_URL}
 
-  # Domain-wide session cookie shared across all subdomains
-  OIDCCookieDomain                ${OIDC_COOKIE_DOMAIN}
-  OIDCCookie                      ${OIDC_COOKIE_DOMAIN}-Auth-Session
+  # Session cookie domain matches the vhost domain (macro parameter).
+  # This allows Domain_Init to work for any domain without OIDCCookieDomain
+  # mismatches. For example.com subdomains the value is "example.com" so
+  # the session cookie is shared across all subdomains as before.
+  OIDCCookieDomain                $(DOMAINNAME)
+  OIDCCookie                      $(DOMAINNAME)-Auth-Session
   OIDCCookieSameSite              On
   OIDCCookieHTTPOnly              On
-  OIDCStateCookiePrefix           ${OIDC_COOKIE_DOMAIN}-Auth-State-
+  OIDCStateCookiePrefix           $(DOMAINNAME)-Auth-State-
 
   # Redis session cache
   OIDCSessionCacheFallbackToCookie On
@@ -184,10 +187,11 @@
   </VirtualHost>
 </Macro>
 
-# VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(AUTHORTYPE) $(AUTHORENTRY)
-# Full vhost with reverse proxy and NO authentication.
+# VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION)
+# Full vhost with reverse proxy and GeoIP country lock — no OIDC.
 # Use for services that handle their own auth (Nextcloud, Keycloak, etc.)
-# or that are only accessible from internal networks.
+# Internal networks always pass through; external traffic must come from
+# an allowed country (${GEOIP_ALLOW_COUNTRIES}).
 <Macro VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
   <VirtualHost *:80>
     ServerName $(SITENAME).$(DOMAINNAME)
@@ -202,6 +206,17 @@
     USE DEFAULTS
     USE SSL $(DOMAINNAME)
     USE SECURITY_HEADERS
+
+    GeoIPEnable On
+    SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
+
+    <Location />
+      <RequireAny>
+        Include /etc/apache2/conf-runtime/internal-networks.conf
+        Require env AllowCountry
+      </RequireAny>
+    </Location>
+
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
     USE PROXY $(DESTINATION)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
