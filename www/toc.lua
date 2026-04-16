@@ -541,13 +541,15 @@ function input (FILE, DOMAIN)
 
   -- Nur die Rahmeneinträg erzeugen, wenn die Konfiguration Einträge erzeugt hat
   if #A > VORHER then
+    -- Derive domain from first parsed entry (reliable even when filename lacks .de)
+    local D = A[VORHER + 1]["DOMAIN"]
     table.insert(A,{
          ["NAME"]    = "TOC",
-         ["DOMAIN"]  = DOMAIN,
+         ["DOMAIN"]  = D,
          ["TYP"]     = "WebHost",
-         ["DEST"]    = "https://toc." .. DOMAIN,
+         ["DEST"]    = "https://toc." .. D,
          ["IPROT"]   = "https",
-         ["IIP"]     = siip("https://toc.example.com"),
+         ["IIP"]     = siip("https://toc." .. D),
          ["IPORT"]   = "443",
          ["SECURE"]  = "OpenID Connect",
          ["USERS"]   = "- ALL -",
@@ -555,11 +557,11 @@ function input (FILE, DOMAIN)
 
     table.insert(A,{
          ["NAME"]    = "LOGOUT",
-         ["DOMAIN"]  = DOMAIN,
+         ["DOMAIN"]  = D,
          ["TYP"]     = "Redirect",
-         ["DEST"]    = "https://logout." .. DOMAIN,
+         ["DEST"]    = "https://logout." .. D,
          ["IPROT"]   = "https",
-         ["IIP"]     = siip("https://logout.example.com"),
+         ["IIP"]     = siip("https://logout." .. D),
          ["IPORT"]   = "443",
          ["SECURE"]  = "OpenID Connect",
          ["USERS"]   = "- ALL -",
