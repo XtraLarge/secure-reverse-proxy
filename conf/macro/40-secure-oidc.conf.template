@@ -27,6 +27,11 @@
 # Used internally by CLIENTOIDC_* — you rarely need this directly.
 <Macro OIDCBASE $(SITENAME) $(DOMAINNAME)>
   OIDCProviderMetadataURL         ${OIDC_PROVIDER_METADATA_URL}
+  # The OIDC provider (Keycloak) may use a self-signed or internal CA certificate
+  # when accessed directly via its internal IP (extra_hosts bypass of hairpin NAT).
+  # Disable SSL verification for the provider metadata fetch only — the user-facing
+  # TLS is still fully validated by the client's browser.
+  OIDCSSLValidateServer           Off
   OIDCProviderTokenEndpointAuth   ${OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH}
   OIDCClientID                    ${OIDC_CLIENT_ID}
   OIDCClientSecret                ${OIDC_CLIENT_SECRET}
