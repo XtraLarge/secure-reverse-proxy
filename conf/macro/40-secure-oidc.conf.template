@@ -188,7 +188,7 @@
 # Full vhost with reverse proxy and NO authentication.
 # Use for services that handle their own auth (Nextcloud, Keycloak, etc.)
 # or that are only accessible from internal networks.
-<Macro VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(AUTHORTYPE) $(AUTHORENTRY)>
+<Macro VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
   <VirtualHost *:80>
     ServerName $(SITENAME).$(DOMAINNAME)
     USE LOGGING $(SITENAME) $(DOMAINNAME)

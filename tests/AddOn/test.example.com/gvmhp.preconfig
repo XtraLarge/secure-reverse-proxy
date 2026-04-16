@@ -1,0 +1,8 @@
+ProxyRequests Off
+ProxyPreserveHost On
+AllowEncodedSlashes NoDecode
+
+RewriteEngine On
+RewriteCond %{HTTP:Connection} Upgrade [NC]
+RewriteCond %{HTTP:Upgrade} websocket [NC]
+RewriteRule /(.*) wss://127.0.0.2:8006/$1 [P,L]

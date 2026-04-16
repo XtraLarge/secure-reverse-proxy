@@ -1,0 +1,10 @@
+ProxyRequests Off
+ProxyPreserveHost On
+
+RewriteEngine On
+RewriteCond %{HTTP:Connection} Upgrade [NC]
+RewriteCond %{HTTP:Upgrade} websocket [NC]
+RewriteRule /(.*) "wss://cluster.internal.example.com/$1" [P,L]
+
+RequestHeader set X-Forwarded-Proto "https"
+RequestHeader set X-Forwarded-Port "443"

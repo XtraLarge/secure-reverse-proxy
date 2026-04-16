@@ -1,0 +1,17 @@
+AllowEncodedSlashes NoDecode
+ProxyPreserveHost On
+
+ProxyPass        /browser              https://127.0.0.2:9980/browser retry=0
+ProxyPassReverse /browser              https://127.0.0.2:9980/browser
+
+ProxyPass        /hosting/discovery    https://127.0.0.2:9980/hosting/discovery retry=0
+ProxyPassReverse /hosting/discovery    https://127.0.0.2:9980/hosting/discovery
+
+ProxyPassMatch   "/cool/(.*)/ws$"      wss://127.0.0.2:9980/cool/$1/ws nocanon
+ProxyPass        /cool/adminws         wss://127.0.0.2:9980/cool/adminws
+
+ProxyPass        /cool                 https://127.0.0.2:9980/cool
+ProxyPassReverse /cool                 https://127.0.0.2:9980/cool
+
+ProxyPass        /hosting/capabilities https://127.0.0.2:9980/hosting/capabilities retry=0
+ProxyPassReverse /hosting/capabilities https://127.0.0.2:9980/hosting/capabilities

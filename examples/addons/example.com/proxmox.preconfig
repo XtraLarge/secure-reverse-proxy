@@ -1,0 +1,16 @@
+ProxyRequests Off
+ProxyPreserveHost On
+AllowEncodedSlashes NoDecode
+
+SSLProxyVerify none
+SSLProxyCheckPeerCN off
+SSLProxyCheckPeerName off
+SSLProxyCheckPeerExpire off
+
+RewriteEngine On
+RewriteCond %{HTTP:Connection} Upgrade [NC]
+RewriteCond %{HTTP:Upgrade} websocket [NC]
+RewriteRule /(.*) wss://backup.internal.example.com:8006/$1 [P,L]
+
+RequestHeader set X-Forwarded-Proto "https"
+RequestHeader set X-Forwarded-Port "443"

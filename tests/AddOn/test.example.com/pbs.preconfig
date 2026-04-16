@@ -1,0 +1,15 @@
+SSLProxyVerify none
+SSLProxyCheckPeerCN off
+SSLProxyCheckPeerName off
+SSLProxyCheckPeerExpire off
+
+ProxyPreserveHost On
+AllowEncodedSlashes NoDecode
+Protocols h2 http/1.1
+RequestHeader set X-Forwarded-Proto "https"
+RequestHeader set X-Forwarded-Port "443"
+
+RewriteEngine On
+RewriteCond %{HTTP:Connection} Upgrade [NC]
+RewriteCond %{HTTP:Upgrade} websocket [NC]
+RewriteRule /(.*) wss://127.0.0.2:8007/$1 [P,L]

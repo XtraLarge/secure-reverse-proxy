@@ -23,6 +23,7 @@ RUN a2enmod \
     macro \
     auth_openidc \
     geoip \
+    http2 \
     lua \
     cgid \
     proxy \
@@ -47,7 +48,7 @@ COPY conf/sites-available/ /etc/apache2/sites-available/
 
 COPY conf/ports.conf /etc/apache2/ports.conf
 
-RUN a2enconf server-security macro
+RUN a2enconf server-security macro cgid-runtime
 
 # TOC page (Lua), logout animation page, CGI env-dump, TableFilter JS library
 COPY www/toc.lua       /var/www/html/toc.lua

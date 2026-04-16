@@ -3,7 +3,7 @@
 # Usage: ./tests/run-tests.sh [image-name]
 # Default image: apache-oidc-proxy:test
 
-set -euo
+set -eu
 # Note: pipefail is intentionally NOT set here.
 # Many tests use:  run ... 2>&1 | grep -q "pattern"
 # grep -q exits immediately on first match, giving docker run a SIGPIPE (exit 141).
@@ -306,6 +306,69 @@ if run sh -c "test -f /etc/cron.d/rotate-oidc-key && echo FOUND" 2>&1 | grep -q 
 else
     fail "/etc/cron.d/rotate-oidc-key missing"
 fi
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP 8: Real startup behaviour
+# ══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo "[25] Container stays running with default APACHE_SERVER_NAME"
+START_CID="$(docker run -d --rm \
+    -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" \
+    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro" \
+    -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro" \
+    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
+    -e OIDC_CLIENT_SECRET=x \
+    -e OIDC_CRYPTO_PASSPHRASE=x \
+    -e OIDC_COOKIE_DOMAIN=test.example.com \
+    -e REDIS_HOST=127.0.0.1 \
+    "$IMAGE")"
+sleep 2
+if [ "$(docker inspect -f '{{.State.Running}}' "$START_CID" 2>/dev/null || echo false)" = "true" ]; then
+    pass "Container starts and stays running"
+else
+    fail "Container did not stay running"
+    docker logs "$START_CID" 2>&1 || true
+fi
+
+echo ""
+echo "[26] Startup logs do not contain AH00558 when APACHE_SERVER_NAME is unset"
+if docker logs "$START_CID" 2>&1 | grep -q "AH00558"; then
+    fail "AH00558 still present in startup logs"
+    docker logs "$START_CID" 2>&1 || true
+else
+    pass "No AH00558 warning in startup logs"
+fi
+
+docker rm -f "$START_CID" >/dev/null 2>&1 || true
+
+echo ""
+echo "[27] Compose-like capabilities allow clean cgid startup"
+CAP_CID="$(docker run -d --rm \
+    --cap-drop ALL \
+    --cap-add CHOWN \
+    --cap-add NET_BIND_SERVICE \
+    --cap-add SETGID \
+    --cap-add SETUID \
+    -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" \
+    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro" \
+    -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro" \
+    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
+    -e OIDC_CLIENT_SECRET=x \
+    -e OIDC_CRYPTO_PASSPHRASE=x \
+    -e OIDC_COOKIE_DOMAIN=test.example.com \
+    -e REDIS_HOST=127.0.0.1 \
+    "$IMAGE")"
+sleep 2
+if docker logs "$CAP_CID" 2>&1 | grep -Eq 'AH01238|AH01243|AH02156'; then
+    fail "Compose-like startup still logs cgid/setgid errors"
+    docker logs "$CAP_CID" 2>&1 || true
+else
+    pass "Compose-like startup is free of cgid/setgid errors"
+fi
+
+docker rm -f "$CAP_CID" >/dev/null 2>&1 || true
 
 
 # ══════════════════════════════════════════════════════════════════════════════

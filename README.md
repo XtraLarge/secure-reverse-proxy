@@ -34,6 +34,10 @@ mkdir -p ssl/<yourdomain> sites-enabled AddOn/<yourdomain>
 docker compose up -d
 ```
 
+For a full local OIDC demo including Keycloak, see [`examples/keycloak/`](examples/keycloak/).
+If you want Keycloak directly in the root compose stack, start with
+`docker compose --profile keycloak up -d`.
+
 ---
 
 ## Directory layout
@@ -105,12 +109,13 @@ Copy `.env.example` to `.env` and fill in your values.
 | `OIDC_PROVIDER_METADATA_URL` | ✓ | OIDC discovery endpoint (`/.well-known/openid-configuration`) |
 | `OIDC_CLIENT_ID` | — | Client ID registered in your IdP (default: `Proxy`) |
 | `OIDC_CLIENT_SECRET` | ✓ | Client secret |
-| `OIDC_CRYPTO_PASSPHRASE` | ✓ | Session encryption key — generate: `openssl rand -hex 32` |
+| `OIDC_CRYPTO_PASSPHRASE` | — | Optional session encryption key; if unset, the container auto-generates and rotates it daily |
 | `OIDC_COOKIE_DOMAIN` | ✓ | Base domain for session cookies, e.g. `example.com` |
 | `OIDC_DEFAULT_LOGOUT_URL` | — | Post-logout redirect (default: `https://logout.<DOMAIN>/help?text=Logout%20successful!`) |
 | `OIDC_REMOTE_USER_CLAIM` | — | Claim mapped to `REMOTE_USER` (default: `email`) |
 | `OIDC_SCOPE` | — | OAuth2 scopes (default: `openid email`) |
 | `OIDC_REDIRECT_PATH` | — | OIDC callback path (default: `/protected`) |
+| `APACHE_SERVER_NAME` | — | Global Apache `ServerName` used to suppress `AH00558` (default: `localhost`) |
 | `REDIS_HOST` | — | Redis hostname (default: `redis`) |
 | `REDIS_PORT` | — | Redis port (default: `6379`) |
 | `REDIS_DB` | — | Redis database index (default: `1`) |
@@ -118,6 +123,10 @@ Copy `.env.example` to `.env` and fill in your values.
 | `GEOIP_ALLOW_COUNTRIES` | — | Pipe-separated ISO codes (default: `DE`) |
 | `INTERNAL_NETWORKS` | — | Comma-separated CIDRs that bypass GeoIP + auth |
 | `TOC_TITLE` | — | Title shown on the TOC page |
+| `KEYCLOAK_IMAGE` | — | Optional bundled Keycloak image when using `--profile keycloak` |
+| `KEYCLOAK_ADMIN` | — | Optional bundled Keycloak admin user |
+| `KEYCLOAK_ADMIN_PASSWORD` | — | Optional bundled Keycloak admin password |
+| `KEYCLOAK_HOST` | — | Public hostname bundled Keycloak should advertise |
 
 ---
 
@@ -129,7 +138,7 @@ Create one `.conf` file per domain in `sites-enabled/`. Use the macros provided 
 
 ```apache
 # Redirect alias (no auth)
-Use VHost_Alias  <site>  <domain>  <target-url>  '' ''
+Use VHost_Alias  <site>  <domain>  <target-url>
 
 # Reverse proxy — any authenticated OIDC user
 Use VHost_Proxy_OIDC  <site>  <domain>  <backend-url>/
@@ -141,7 +150,7 @@ Use VHost_Proxy_OIDC_Claim  <site>  <domain>  <backend-url>/  'alice|bob'
 Use VHost_Proxy_Basic  <site>  <domain>  <backend-url>/  user  'username'
 
 # Reverse proxy — no auth (backend handles it, e.g. Keycloak, Nextcloud)
-Use VHost_Proxy  <site>  <domain>  <backend-url>/  '' ''
+Use VHost_Proxy  <site>  <domain>  <backend-url>/
 ```
 
 Every domain needs `Domain_Init` at the top and `Domain_Final` at the bottom:
@@ -150,7 +159,7 @@ Every domain needs `Domain_Init` at the top and `Domain_Final` at the bottom:
 USE Domain_Init example.com www
 
 Use VHost_Proxy_OIDC_Claim  monitor  example.com  http://10.0.0.5:3000/  'alice|bob'
-Use VHost_Proxy  files  example.com  http://10.0.0.6/  '' ''
+Use VHost_Proxy  files  example.com  http://10.0.0.6/
 
 USE Domain_Final example.com www
 ```
@@ -187,6 +196,14 @@ RewriteCond %{HTTP:Upgrade} !=websocket [NC]
 RewriteRule /(.*)  http://10.0.0.7:8123/$1 [P,L]
 ```
 
+For more production-like patterns, see the anonymized examples in
+[`examples/addons/`](examples/addons/README.md), including:
+
+- Collabora / CODE
+- Nextcloud websocket tuning
+- Keycloak-style forwarded headers
+- Proxmox / Rancher websocket HTTPS backends
+
 ---
 
 ## OIDC provider setup (Keycloak example)
@@ -196,6 +213,29 @@ RewriteRule /(.*)  http://10.0.0.7:8123/$1 [P,L]
 3. Add redirect URIs: `https://*.example.com/protected`
 4. Copy the client secret to `OIDC_CLIENT_SECRET` in `.env`
 5. The `preferred_username` claim is used for user matching in `VHost_Proxy_OIDC_Claim`
+
+For a fully prepared local Keycloak stack with realm import, test user and sample
+proxy config, see [`examples/keycloak/README.md`](examples/keycloak/README.md).
+
+## Optional bundled Keycloak in root compose
+
+The root [`docker-compose.yml`](/root/codex/apache-oidc-proxy/repo/docker-compose.yml)
+also contains a `keycloak` service behind the optional `keycloak` profile.
+This keeps the default deployment slim, but makes Keycloak part of the same stack
+when you want it there.
+
+Start it with:
+
+```bash
+docker compose --profile keycloak up -d
+```
+
+The bundled service:
+
+- imports realm files from [`keycloak/`](/root/codex/apache-oidc-proxy/repo/keycloak/)
+- uses `KEYCLOAK_HOST` as its public browser-facing hostname
+- stays on the internal `backend` network, so you would usually expose it through
+  a normal `Use VHost_Proxy keycloak <domain> http://keycloak:8080/` vhost
 
 ---
 
@@ -243,7 +283,16 @@ Set `image:` instead of `build:` in `docker-compose.yml` to use the pre-built im
 services:
   proxy:
     image: xtralarge71/apache-oidc-proxy:latest
+    cap_add:
+      - CHOWN
+      - NET_BIND_SERVICE
+      - SETGID
+      - SETUID
 ```
+
+`CHOWN`, `SETGID` and `SETUID` are required so Apache can switch from `root` to
+`www-data` and start `mod_cgid` cleanly. Without them, the proxy may still start,
+but CGI-based debug endpoints such as `toc.<domain>/cgi/echo.pl` can fail at runtime.
 
 ---
 

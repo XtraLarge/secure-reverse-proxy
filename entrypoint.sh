@@ -1,9 +1,16 @@
 #!/bin/bash
-set -euo
-shopt -s globstar  # enables ** glob for recursive template scanning pipefail
+set -euo pipefail
+shopt -s globstar  # enables ** glob for recursive template scanning
 
 log() { echo "[entrypoint] $*"; }
 die() { echo "[entrypoint] ERROR: $*" >&2; exit 1; }
+
+# Debian's Apache packaging expects runtime vars such as APACHE_RUN_DIR from
+# /etc/apache2/envvars. Shell logic in this script still uses hardcoded paths
+# where appropriate instead of relying on APACHE_LOG_DIR.
+export APACHE_CONFDIR="${APACHE_CONFDIR:-/etc/apache2}"
+[ -f /etc/apache2/envvars ] && . /etc/apache2/envvars
+mkdir -p "${APACHE_RUN_DIR}"
 
 # ── Required variables ────────────────────────────────────────────────────────
 [[ -n "${OIDC_PROVIDER_METADATA_URL:-}" ]] \
@@ -20,6 +27,7 @@ export OIDC_REMOTE_USER_CLAIM="${OIDC_REMOTE_USER_CLAIM:-email}"
 export OIDC_SCOPE="${OIDC_SCOPE:-openid email}"
 export OIDC_REDIRECT_PATH="${OIDC_REDIRECT_PATH:-/protected}"
 export OIDC_DEFAULT_LOGOUT_URL="${OIDC_DEFAULT_LOGOUT_URL:-https://logout.${OIDC_COOKIE_DOMAIN}/help?text=Logout%20successful!}"
+export APACHE_SERVER_NAME="${APACHE_SERVER_NAME:-localhost}"
 
 export REDIS_HOST="${REDIS_HOST:-redis}"
 export REDIS_PORT="${REDIS_PORT:-6379}"
@@ -72,6 +80,11 @@ if [[ -n "${REDIS_PASSWORD}" ]]; then
 else
     > "$REDIS_AUTH_FILE"
 fi
+
+# ── Generate Apache ServerName include ───────────────────────────────────────
+SERVERNAME_FILE="/etc/apache2/conf-runtime/servername.conf"
+log "Configuring Apache ServerName: ${APACHE_SERVER_NAME}"
+printf 'ServerName %s\n' "${APACHE_SERVER_NAME}" > "$SERVERNAME_FILE"
 
 # ── Process config templates ──────────────────────────────────────────────────
 # envsubst receives an explicit variable list so that Apache mod_macro syntax

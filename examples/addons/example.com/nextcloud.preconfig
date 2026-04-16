@@ -1,0 +1,21 @@
+RewriteEngine On
+ProxyPreserveHost On
+RequestHeader set X-Real-IP %{REMOTE_ADDR}s
+AllowEncodedSlashes NoDecode
+
+RewriteCond %{HTTP:Upgrade} websocket [NC]
+RewriteCond %{HTTP:Connection} upgrade [NC]
+RewriteCond %{THE_REQUEST} "^[A-Za-z]+ /(.*) HTTP/\\d+(\\.\\d+)?$"
+RewriteRule .? "ws://files.internal.example.com:11000/%1" [P,L,UnsafeAllow3F]
+
+Protocols h2 h2c http/1.1
+H2WindowSize 5242880
+
+TraceEnable off
+<Files ".ht*">
+Require all denied
+</Files>
+
+LimitRequestBody 0
+Timeout 86400
+ProxyTimeout 86400
