@@ -9,9 +9,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libapache2-mod-auth-openidc \
     libapache2-mod-geoip \
     geoip-database \
+    libapache2-mod-evasive \
     gettext-base \
     ca-certificates \
     cron \
+    curl \
+    geoipupdate \
     lua5.4 \
     lua-socket \
     openssl \
@@ -22,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN a2enmod \
     macro \
     auth_openidc \
+    evasive \
     geoip \
     http2 \
     lua \
@@ -48,7 +52,7 @@ COPY conf/sites-available/ /etc/apache2/sites-available/
 
 COPY conf/ports.conf /etc/apache2/ports.conf
 
-RUN a2enconf server-security macro cgid-runtime
+RUN a2enconf server-security macro cgid-runtime evasive
 
 # TOC page (Lua), logout animation page, CGI env-dump, TableFilter JS library
 COPY www/toc.lua       /var/www/html/toc.lua
@@ -64,7 +68,13 @@ RUN chmod +x /entrypoint.sh
 COPY rotate-oidc-key.sh /usr/local/bin/rotate-oidc-key.sh
 RUN chmod +x /usr/local/bin/rotate-oidc-key.sh
 COPY cron.d/rotate-oidc-key /etc/cron.d/rotate-oidc-key
-RUN chmod 0644 /etc/cron.d/rotate-oidc-key
+COPY cron.d/geoip-update    /etc/cron.d/geoip-update
+RUN chmod 0644 /etc/cron.d/rotate-oidc-key /etc/cron.d/geoip-update
+
+# Placeholder GeoIP.conf so geoipupdate does not complain about missing file.
+# Overwritten at startup if GEOIP_ACCOUNT_ID / GEOIP_LICENSE_KEY are set.
+RUN printf 'AccountID 0\nLicenseKey 000000000000\nEditionIDs GeoLite2-Country\nDatabaseDirectory /usr/share/GeoIP\n' \
+    > /etc/GeoIP.conf
 
 # Runtime directory for generated configs (internal networks include, etc.)
 RUN mkdir -p /etc/apache2/conf-runtime
@@ -83,9 +93,7 @@ VOLUME ["/etc/apache2/ssl", "/etc/apache2/sites-enabled", "/etc/apache2/AddOn"]
 EXPOSE 80 443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
-    CMD test -f /var/run/apache2/apache2.pid \
-        && kill -0 "$(cat /var/run/apache2/apache2.pid)" 2>/dev/null \
-        || exit 1
+    CMD curl -fsS http://localhost/ -o /dev/null || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["apache2ctl", "-D", "FOREGROUND"]

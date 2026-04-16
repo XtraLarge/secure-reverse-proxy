@@ -1,0 +1,11 @@
+# GeoIP2 database update configuration
+# Generated at container start from environment variables.
+#
+# Set these environment variables to enable automatic database updates:
+#   GEOIP_ACCOUNT_ID    MaxMind account ID
+#   GEOIP_LICENSE_KEY   MaxMind license key
+#
+# Without a license key, the container uses the legacy GeoLite database
+# bundled in the geoip-database package (no updates, may be stale).
+#
+# Get a free account + license key at: https://www.maxmind.com/en/geolite2/signup

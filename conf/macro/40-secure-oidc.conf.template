@@ -68,7 +68,7 @@
 
   <Location />
     AuthType openid-connect
-    OIDCUnAutzAction auth
+    OIDCUnAutzAction 403
 
     <RequireAny>
       # Internal networks always pass through
@@ -105,7 +105,7 @@
 
   <Location />
     AuthType openid-connect
-    OIDCUnAutzAction auth
+    OIDCUnAutzAction 403
 
     <RequireAny>
       # Internal networks always pass through

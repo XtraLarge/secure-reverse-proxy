@@ -1,0 +1,16 @@
+# monitor.preconfig — Grafana reverse proxy headers
+#
+# Grafana needs to know its public URL to generate correct absolute links,
+# redirects, and cookie paths. Without these headers, Grafana redirects the
+# browser to its internal backend address (e.g. http://10.0.0.4:3000/).
+#
+# Required Grafana configuration (monitor.ini or environment variables):
+#   GF_SERVER_ROOT_URL=https://monitor.example.com/
+#   GF_SERVER_SERVE_FROM_SUB_PATH=false
+#
+# The proxy passes the public hostname and protocol to Grafana so it can
+# build correct URLs even if GF_SERVER_ROOT_URL is not explicitly configured.
+
+RequestHeader set X-Forwarded-Proto "https"
+RequestHeader set X-Forwarded-Host  "%{HTTP_HOST}s"
+ProxyPreserveHost On

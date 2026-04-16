@@ -12,6 +12,29 @@ export APACHE_CONFDIR="${APACHE_CONFDIR:-/etc/apache2}"
 [ -f /etc/apache2/envvars ] && . /etc/apache2/envvars
 mkdir -p "${APACHE_RUN_DIR}"
 
+# ── Docker Secrets / _FILE fallback ──────────────────────────────────────────
+# For each sensitive variable, if VAR is unset but VAR_FILE points to a file,
+# read the value from that file. This supports Docker Swarm secrets and any
+# secret management system that mounts secrets as files (e.g. /run/secrets/).
+#
+# Usage in docker-compose.yml:
+#   secrets:
+#     - oidc_client_secret
+#   environment:
+#     - OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc_client_secret
+#
+_read_secret() {
+    local var="$1" file_var="${1}_FILE"
+    if [[ -z "${!var:-}" && -n "${!file_var:-}" ]]; then
+        [[ -f "${!file_var}" ]] || die "${file_var} is set but '${!file_var}' does not exist"
+        export "$var"="$(cat "${!file_var}")"
+        log "Loaded ${var} from ${!file_var}"
+    fi
+}
+_read_secret OIDC_CLIENT_SECRET
+_read_secret REDIS_PASSWORD
+_read_secret OIDC_CRYPTO_PASSPHRASE
+
 # ── Required variables ────────────────────────────────────────────────────────
 [[ -n "${OIDC_PROVIDER_METADATA_URL:-}" ]] \
     || die "OIDC_PROVIDER_METADATA_URL is required (e.g. https://keycloak/realms/master/.well-known/openid-configuration)"
@@ -79,6 +102,24 @@ if [[ -n "${REDIS_PASSWORD}" ]]; then
     printf 'OIDCRedisCachePassword  %s\n' "${REDIS_PASSWORD}" > "$REDIS_AUTH_FILE"
 else
     > "$REDIS_AUTH_FILE"
+fi
+
+# ── GeoIP2 database update ───────────────────────────────────────────────────
+# If GEOIP_ACCOUNT_ID and GEOIP_LICENSE_KEY are set, write /etc/GeoIP.conf and
+# run geoipupdate once at startup (weekly cron continues from cron.d/geoip-update).
+# Without credentials, the bundled legacy GeoLite database is used as-is.
+_read_secret GEOIP_LICENSE_KEY
+if [[ -n "${GEOIP_ACCOUNT_ID:-}" && -n "${GEOIP_LICENSE_KEY:-}" ]]; then
+    log "Configuring GeoIP2 auto-update (account ${GEOIP_ACCOUNT_ID})"
+    cat > /etc/GeoIP.conf <<EOF
+AccountID ${GEOIP_ACCOUNT_ID}
+LicenseKey ${GEOIP_LICENSE_KEY}
+EditionIDs GeoLite2-Country
+DatabaseDirectory /usr/share/GeoIP
+EOF
+    geoipupdate -v 2>&1 | logger -t geoipupdate || log "WARNING: geoipupdate failed — using existing database"
+else
+    log "GeoIP: no GEOIP_ACCOUNT_ID/GEOIP_LICENSE_KEY set — using bundled legacy database (may be stale)"
 fi
 
 # ── Generate Apache ServerName include ───────────────────────────────────────
