@@ -105,21 +105,34 @@ else
 fi
 
 # ── GeoIP2 database update ───────────────────────────────────────────────────
-# If GEOIP_ACCOUNT_ID and GEOIP_LICENSE_KEY are set, write /etc/GeoIP.conf and
-# run geoipupdate once at startup (weekly cron continues from cron.d/geoip-update).
+# If GEOIP_ACCOUNT_ID and GEOIP_LICENSE_KEY are set, download the current
+# GeoLite2-Country database from MaxMind on startup (and via weekly cron).
 # Without credentials, the bundled legacy GeoLite database is used as-is.
+#
+# Free account + license key: https://www.maxmind.com/en/geolite2/signup
 _read_secret GEOIP_LICENSE_KEY
+GEOIP_DB_DIR="/usr/share/GeoIP"
+GEOIP_DB="${GEOIP_DB_DIR}/GeoLite2-Country.mmdb"
+_geoip_download() {
+    local url="https://download.maxmind.com/app/geoip_download"
+    url+="?edition_id=GeoLite2-Country&license_key=${GEOIP_LICENSE_KEY}&suffix=tar.gz"
+    local tmp; tmp="$(mktemp -d)"
+    if curl -fsSL --retry 3 "$url" | tar -xz -C "$tmp" --wildcards '*.mmdb' 2>/dev/null; then
+        find "$tmp" -name '*.mmdb' -exec mv {} "${GEOIP_DB}" \;
+        log "GeoIP2 database updated: ${GEOIP_DB}"
+    else
+        log "WARNING: GeoIP2 download failed — using existing database"
+    fi
+    rm -rf "$tmp"
+}
 if [[ -n "${GEOIP_ACCOUNT_ID:-}" && -n "${GEOIP_LICENSE_KEY:-}" ]]; then
-    log "Configuring GeoIP2 auto-update (account ${GEOIP_ACCOUNT_ID})"
-    cat > /etc/GeoIP.conf <<EOF
-AccountID ${GEOIP_ACCOUNT_ID}
-LicenseKey ${GEOIP_LICENSE_KEY}
-EditionIDs GeoLite2-Country
-DatabaseDirectory /usr/share/GeoIP
-EOF
-    geoipupdate -v 2>&1 | logger -t geoipupdate || log "WARNING: geoipupdate failed — using existing database"
+    log "GeoIP2: downloading GeoLite2-Country (account ${GEOIP_ACCOUNT_ID})"
+    mkdir -p "$GEOIP_DB_DIR"
+    # Write env for weekly cron (cron.d/geoip-update sources this file)
+    printf 'GEOIP_LICENSE_KEY=%s\n' "${GEOIP_LICENSE_KEY}" > /etc/apache2/conf-runtime/geoip-creds.env
+    _geoip_download
 else
-    log "GeoIP: no GEOIP_ACCOUNT_ID/GEOIP_LICENSE_KEY set — using bundled legacy database (may be stale)"
+    log "GeoIP: GEOIP_ACCOUNT_ID/GEOIP_LICENSE_KEY not set — using bundled legacy database (may be stale)"
 fi
 
 # ── Generate Apache ServerName include ───────────────────────────────────────

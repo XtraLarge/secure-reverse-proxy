@@ -1,4 +1,10 @@
 # Weekly GeoIP2 database update (every Wednesday at 04:30)
-# Only runs if GEOIP_ACCOUNT_ID and GEOIP_LICENSE_KEY are configured.
-# See /etc/GeoIP.conf for configuration.
-30 4 * * 3 root test -f /etc/GeoIP.conf && grep -q "^AccountID [^0]" /etc/GeoIP.conf && geoipupdate -v 2>&1 | logger -t geoipupdate
+# Credentials are written to /etc/apache2/conf-runtime/geoip-creds.env at startup
+# when GEOIP_ACCOUNT_ID and GEOIP_LICENSE_KEY are set.
+30 4 * * 3 root test -f /etc/apache2/conf-runtime/geoip-creds.env && \
+  . /etc/apache2/conf-runtime/geoip-creds.env && \
+  test -n "${GEOIP_LICENSE_KEY:-}" && \
+  curl -fsSL --retry 3 "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=${GEOIP_LICENSE_KEY}&suffix=tar.gz" \
+  | tar -xz -C /tmp --wildcards '*.mmdb' \
+  && find /tmp -name '*.mmdb' -exec mv {} /usr/share/GeoIP/GeoLite2-Country.mmdb \; \
+  && logger -t geoip-update "GeoLite2-Country database updated successfully"

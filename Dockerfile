@@ -14,7 +14,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     cron \
     curl \
-    geoipupdate \
     lua5.4 \
     lua-socket \
     openssl \
@@ -70,11 +69,6 @@ RUN chmod +x /usr/local/bin/rotate-oidc-key.sh
 COPY cron.d/rotate-oidc-key /etc/cron.d/rotate-oidc-key
 COPY cron.d/geoip-update    /etc/cron.d/geoip-update
 RUN chmod 0644 /etc/cron.d/rotate-oidc-key /etc/cron.d/geoip-update
-
-# Placeholder GeoIP.conf so geoipupdate does not complain about missing file.
-# Overwritten at startup if GEOIP_ACCOUNT_ID / GEOIP_LICENSE_KEY are set.
-RUN printf 'AccountID 0\nLicenseKey 000000000000\nEditionIDs GeoLite2-Country\nDatabaseDirectory /usr/share/GeoIP\n' \
-    > /etc/GeoIP.conf
 
 # Runtime directory for generated configs (internal networks include, etc.)
 RUN mkdir -p /etc/apache2/conf-runtime
