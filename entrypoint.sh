@@ -34,6 +34,7 @@ _read_secret() {
 _read_secret OIDC_CLIENT_SECRET
 _read_secret REDIS_PASSWORD
 _read_secret OIDC_CRYPTO_PASSPHRASE
+_read_secret ACME_EMAIL
 
 # ── Required variables ────────────────────────────────────────────────────────
 [[ -n "${OIDC_PROVIDER_METADATA_URL:-}" ]] \
@@ -167,6 +168,51 @@ done
 # Enable the auth_openidc conf (generated from template above)
 a2enconf auth_openidc 2>/dev/null || true
 
+# ── ACME (Let's Encrypt) setup ────────────────────────────────────────────────
+# Optional: set ACME_EMAIL to enable automatic certificate management.
+# ACME_DOMAINS: comma-separated root domains (default: auto-detected from conf files).
+#
+# On first start, if no cert exists yet for a domain, a temporary self-signed
+# cert is created so Apache can start.  The real LE cert is obtained in the
+# background ~10 s after Apache starts via acme-init.sh, then Apache is
+# gracefully reloaded.  Weekly cron (Sun 04:30) handles renewals.
+if [[ -n "${ACME_EMAIL:-}" ]]; then
+    log "ACME enabled (${ACME_EMAIL})"
+
+    # Save to runtime env so the weekly cron can source it
+    printf 'ACME_EMAIL=%s\n' "${ACME_EMAIL}" > /etc/apache2/conf-runtime/acme.env
+    [[ -n "${ACME_DOMAINS:-}" ]] && printf 'ACME_DOMAINS=%s\n' "${ACME_DOMAINS}" >> /etc/apache2/conf-runtime/acme.env
+
+    # Detect root domains for the self-signed fallback
+    if [[ -n "${ACME_DOMAINS:-}" ]]; then
+        IFS=',' read -ra _ACME_ROOTS <<< "$ACME_DOMAINS"
+    else
+        mapfile -t _ACME_ROOTS < <(
+            grep -rih "^[[:space:]]*use[[:space:]]\+domain_init" \
+                /etc/apache2/sites-admin/ /etc/apache2/sites-enabled/ 2>/dev/null \
+            | awk '{print $3}' | tr -d "'" | sort -u
+        )
+    fi
+
+    for _acme_dom in "${_ACME_ROOTS[@]:-}"; do
+        _acme_dom="${_acme_dom// /}"
+        [[ -z "$_acme_dom" ]] && continue
+        # Skip if LE cert already present (mounted volume)
+        [[ -f "/etc/letsencrypt/live/${_acme_dom}/cert.pem" ]] && continue
+        # Skip if manually mounted cert already present (ssl/ volume)
+        [[ -f "${APACHE_CONFDIR}/ssl/${_acme_dom}/cert.pem" ]] && continue
+        log "ACME: no cert for ${_acme_dom} — creating self-signed placeholder"
+        _ssl="${APACHE_CONFDIR}/ssl/${_acme_dom}"
+        mkdir -p "$_ssl"
+        openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
+            -keyout "${_ssl}/key.pem" \
+            -out    "${_ssl}/cert.pem" \
+            -subj   "/CN=${_acme_dom}" 2>/dev/null
+        cp "${_ssl}/cert.pem" "${_ssl}/fullchain.pem"
+        log "ACME: self-signed placeholder for ${_acme_dom} (replaced by LE cert in ~10 s)"
+    done
+fi
+
 # ── Create per-domain Apache log directories ──────────────────────────────────
 # The LOGGING macro writes to /var/log/apache2/<domain>/  Apache configtest
 # fails (AH02291) when those directories are missing.
@@ -189,6 +235,13 @@ log "cron daemon started (rotate-oidc-key.sh runs at 03:00 daily)"
 # ── Validate Apache config ────────────────────────────────────────────────────
 log "Testing Apache configuration..."
 apache2ctl configtest || die "Apache config test failed — check your site configs and env vars"
+
+# ── ACME: obtain real cert after Apache starts ────────────────────────────────
+# The self-signed placeholder above lets Apache start; now request the real
+# cert in the background.  The 10 s delay gives Apache time to become ready.
+if [[ -n "${ACME_EMAIL:-}" ]]; then
+    (sleep 10 && /usr/local/bin/acme-init.sh) &
+fi
 
 log "Starting Apache..."
 exec "$@"

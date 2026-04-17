@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libapache2-mod-geoip \
     geoip-database \
     libapache2-mod-evasive \
+    certbot \
     gettext-base \
     ca-certificates \
     cron \
@@ -51,7 +52,7 @@ COPY conf/sites-available/ /etc/apache2/sites-available/
 
 COPY conf/ports.conf /etc/apache2/ports.conf
 
-RUN a2enconf server-security macro cgid-runtime evasive sites-admin
+RUN a2enconf server-security macro cgid-runtime evasive sites-admin acme-webroot
 
 # TOC page (Lua), logout animation page, CGI env-dump, TableFilter JS library
 COPY www/toc.lua       /var/www/html/toc.lua
@@ -64,26 +65,40 @@ RUN chmod +x /var/www/cgi/echo.pl
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Daily OIDC passphrase rotation
+# Daily OIDC passphrase rotation + weekly ACME renewal
 COPY rotate-oidc-key.sh /usr/local/bin/rotate-oidc-key.sh
 RUN chmod +x /usr/local/bin/rotate-oidc-key.sh
+COPY acme-init.sh /usr/local/bin/acme-init.sh
+RUN chmod +x /usr/local/bin/acme-init.sh
 COPY cron.d/rotate-oidc-key /etc/cron.d/rotate-oidc-key
 COPY cron.d/geoip-update    /etc/cron.d/geoip-update
-RUN chmod 0644 /etc/cron.d/rotate-oidc-key /etc/cron.d/geoip-update
+COPY cron.d/acme-renew      /etc/cron.d/acme-renew
+RUN chmod 0644 /etc/cron.d/rotate-oidc-key /etc/cron.d/geoip-update /etc/cron.d/acme-renew
 
 # Runtime directory for generated configs; sites-admin/ for admin-managed domain configs
-RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites-admin
+# acme-webroot/ serves ACME HTTP-01 challenge tokens (certbot --webroot -w /var/www/acme-webroot)
+RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites-admin /var/www/acme-webroot
 
 # ── Volumes ──────────────────────────────────────────────────────────────────
-# ssl/          TLS certificates, one subdir per domain:
-#               ssl/<domain>/{cert.pem, key.pem, fullchain.pem}
+# ssl/              Manual TLS certificates, one subdir per domain:
+#                   ssl/<domain>/{cert.pem, key.pem, fullchain.pem}
+#                   Not needed when ACME_EMAIL is set (LE certs used instead).
 #
-# sites-enabled/ Apache vhost configs using the provided macros.
-#               Mount your own — see conf/sites-available/example.conf
+# letsencrypt/      Let's Encrypt certificate store (certbot).
+#                   Populated automatically when ACME_EMAIL is set.
+#                   Maps to /etc/letsencrypt inside the container.
 #
-# AddOn/        Optional per-vhost include snippets referenced via
-#               IncludeOptional /etc/apache2/AddOn/<domain>/<site>.pre*
-VOLUME ["/etc/apache2/ssl", "/etc/apache2/sites-enabled", "/etc/apache2/sites-admin", "/etc/apache2/AddOn"]
+# sites-enabled/    Apache vhost configs using the provided macros.
+#                   Mount your own — see conf/sites-available/example.conf
+#
+# sites-admin/      Domain configs managed via the admin web UI.
+#
+# AddOn/            Optional per-vhost include snippets.
+#
+# acme-webroot/     ACME challenge token directory — must be writable by the
+#                   container.  certbot writes tokens here; Apache serves them
+#                   at /.well-known/acme-challenge/ on port 80.
+VOLUME ["/etc/apache2/ssl", "/etc/letsencrypt", "/etc/apache2/sites-enabled", "/etc/apache2/sites-admin", "/etc/apache2/AddOn", "/var/www/acme-webroot"]
 
 EXPOSE 80 443
 

@@ -1,0 +1,5 @@
+# ACME certificate renewal — runs every Sunday at 04:30
+# acme-init.sh reads ACME_EMAIL / ACME_DOMAINS from the runtime env file
+# written by entrypoint.sh at container start.
+# certbot --keep-until-expiring makes this a no-op when certs are still valid.
+30 4 * * 0 root [ -f /etc/apache2/conf-runtime/acme.env ] && . /etc/apache2/conf-runtime/acme.env && /usr/local/bin/acme-init.sh >> /var/log/apache2/acme-renew.log 2>&1
