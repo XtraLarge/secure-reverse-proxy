@@ -1,9 +1,0 @@
-# Refresh Apache config dump every 5 minutes (needs root to read SSL cert files).
-# admin.lua reads /var/cache/apache2/dump-config.cache instead of running DUMP_CONFIG live.
-# Write /var/cache/apache2/dump-config.trigger for immediate refresh (done by do_apply in admin.lua).
-
-# Periodic refresh
-*/5 * * * * root /bin/sh -c '/usr/sbin/apache2ctl -t -DDUMP_CONFIG >/var/cache/apache2/dump-config.cache 2>/dev/null; chmod 644 /var/cache/apache2/dump-config.cache 2>/dev/null'
-
-# Immediate refresh when admin.lua signals via trigger file
-* * * * * root /bin/sh -c 'if [ -f /var/cache/apache2/dump-config.trigger ]; then rm -f /var/cache/apache2/dump-config.trigger; /usr/sbin/apache2ctl -t -DDUMP_CONFIG >/var/cache/apache2/dump-config.cache 2>/dev/null; chmod 644 /var/cache/apache2/dump-config.cache 2>/dev/null; fi'

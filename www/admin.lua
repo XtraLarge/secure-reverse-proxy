@@ -573,8 +573,6 @@ end
 local function do_apply(r)
   -- apache2ctl graceful sends SIGUSR1 to the running master process
   local ret = os.execute("/usr/sbin/apache2ctl graceful 2>/dev/null")
-  -- Request immediate config dump refresh (cron.d/refresh-dump-config picks this up within 1 min)
-  os.execute("touch /var/cache/apache2/dump-config.trigger 2>/dev/null")
   if ret == 0 or ret == true then
     show_list(r, "OK: Apache graceful reload ausgeführt")
   else
@@ -853,94 +851,186 @@ local function do_domain_create(r, p)
   show_list(r, "OK: Domain " .. domain .. " angelegt — Konfiguration noch anwenden!")
 end
 
--- ── VHost config view ────────────────────────────────────────────────────────
+-- ── Macro expansion (for config view) ───────────────────────────────────────
 
--- Extract all <VirtualHost> blocks whose ServerName matches fqdn (case-insensitive).
--- Uses apache2ctl -t -DDUMP_CONFIG which outputs the fully macro-expanded config.
-local function extract_vhost_blocks(full_config, fqdn)
-  local blocks = {}
-  local fqdn_pat = fqdn:lower():gsub("%-", "%%-"):gsub("%.", "%%.")
-  local pos = 1
-  while true do
-    local s = full_config:find("<VirtualHost", pos, true)
-    if not s then break end
-    local e = full_config:find("</VirtualHost>", s, true)
-    if not e then break end
-    e = e + #"</VirtualHost>" - 1
-    local block = full_config:sub(s, e)
-    -- Match ServerName directive in this block
-    if block:lower():match("servername%s+" .. fqdn_pat .. "%s") or
-       block:lower():match("servername%s+" .. fqdn_pat .. "$") then
-      table.insert(blocks, block)
+-- Load all macro definitions from /etc/apache2/macro/*.conf (rendered templates).
+-- Returns macros[NAME_UPPER] = { params = {"P1","P2",...}, body = "..." }
+local function load_macros()
+  local macros = {}
+  local dir = "/etc/apache2/macro/"
+  local files = {
+    "01-frame-domain.conf",
+    "05-common.conf",
+    "30-secure-basic.conf",
+    "40-secure-oidc.conf",
+  }
+  local function parse_file(content)
+    local lines = {}
+    for ln in (content .. "\n"):gmatch("([^\n]*)\n") do
+      table.insert(lines, ln)
     end
-    pos = e + 1
+    local i = 1
+    while i <= #lines do
+      -- Match opening <Macro NAME $(P1) $(P2) ...> (case-insensitive)
+      local hdr = lines[i]:match("^%s*<[Mm]acro%s+(.-)%s*>%s*$")
+      if hdr then
+        local name = hdr:match("^(%S+)")
+        local plist = {}
+        for p in hdr:gmatch("%$%((%u[%u_]*)%)") do
+          table.insert(plist, p)
+        end
+        local body = {}
+        i = i + 1
+        while i <= #lines do
+          if lines[i]:match("^%s*</[Mm]acro>") then break end
+          table.insert(body, lines[i])
+          i = i + 1
+        end
+        if name then
+          macros[name:upper()] = { params = plist, body = table.concat(body, "\n") }
+        end
+      end
+      i = i + 1
+    end
   end
-  return blocks
+  for _, fname in ipairs(files) do
+    local f = io.open(dir .. fname, "r")
+    if f then parse_file(f:read("*a")); f:close() end
+  end
+  return macros
 end
 
+-- Parse space-separated args from a USE argument string.
+-- Single-quoted strings are treated as one token (quotes stripped).
+local function parse_use_args(s)
+  s = (s or ""):match("^%s*(.-)%s*$")
+  local args = {}
+  while s ~= "" do
+    if s:sub(1,1) == "'" then
+      local q, rest = s:match("^'([^']*)'(.*)")
+      if q then table.insert(args, q); s = rest:match("^%s*(.-)%s*$") or ""
+      else break end
+    else
+      local w, rest = s:match("^(%S+)(.*)")
+      if w then table.insert(args, w); s = rest:match("^%s*(.-)%s*$") or ""
+      else break end
+    end
+  end
+  return args
+end
+
+-- Recursively expand a USE call.  depth guards against infinite loops.
+local _expand_use  -- forward declaration
+_expand_use = function(name, args, macros, depth)
+  if depth > 15 then return "  <!-- max recursion depth -->\n" end
+  local m = macros[name:upper()]
+  if not m then
+    return ("  <!-- macro %s not found -->\n"):format(name)
+  end
+  -- Map positional params → values
+  local env = {}
+  for i, p in ipairs(m.params) do env[p] = args[i] or "" end
+  -- Substitute $(PARAM) in body
+  local body = m.body:gsub("%$%((%u[%u_]*)%)", function(p)
+    return env[p] or ("$(" .. p .. ")")
+  end)
+  -- Recursively expand nested USE directives
+  local out = {}
+  for line in (body .. "\n"):gmatch("([^\n]*)\n") do
+    local indent, uname, urest = line:match("^(%s*)[Uu][Ss][Ee]%s+(%S+)%s*(.*)")
+    if uname then
+      local sub_args = parse_use_args(urest)
+      local expanded = _expand_use(uname, sub_args, macros, depth + 1)
+      -- Re-indent each expanded line
+      for eline in (expanded .. "\n"):gmatch("([^\n]*)\n") do
+        if eline ~= "" then
+          table.insert(out, indent .. eline)
+        else
+          table.insert(out, "")
+        end
+      end
+    else
+      table.insert(out, line)
+    end
+  end
+  return table.concat(out, "\n")
+end
+
+-- ── VHost config view ────────────────────────────────────────────────────────
 local function show_vhost_config_view(r, name, domain, rawline)
   local vhost_fqdn = name .. "." .. domain
   r:puts(page_head("Config: " .. vhost_fqdn))
   r:puts('<div class="main"><div class="card">')
   r:puts('<h2>Konfiguration — <code>' .. h(vhost_fqdn) .. '</code></h2>')
 
-  -- Macro call line (source reference)
+  -- Show the raw macro call from sites-admin
   r:puts('<p style="color:#aaa;font-size:.85em;margin-bottom:.4em">Macro-Aufruf in sites-admin:</p>')
   r:puts('<pre style="background:#060614;color:#7ecfff;padding:.7em;border-radius:3px;'
     .. 'font-size:.85em;margin-bottom:1.2em;overflow-x:auto">' .. h(rawline) .. '</pre>')
 
-  -- Read pre-generated config dump (produced at startup and refreshed every 5 min by
-  -- cron.d/refresh-dump-config as root, since SSL cert files are root-readable only).
-  local DUMP_CACHE = "/var/cache/apache2/dump-config.cache"
-  local cf = io.open(DUMP_CACHE, "r")
-  local full_config = cf and cf:read("*a") or ""
-  if cf then cf:close() end
-
-  -- Cache age hint
-  local cache_note = ""
-  if full_config == "" then
-    cache_note = '<p style="color:#aa6600;font-size:.82em;margin-bottom:.8em">'
-      .. 'Konfigurationsdump nicht verf\xC3\xBCgbar — wird beim n\xC3\xA4chsten Container-Start erzeugt.</p>'
-  else
-    local age_p = io.popen("stat -c '%Y' " .. DUMP_CACHE .. " 2>/dev/null")
-    local mtime = age_p and tonumber(age_p:read("*l") or "") or nil
-    if age_p then age_p:close() end
-    if mtime then
-      local now_p = io.popen("date +%s")
-      local now   = now_p and tonumber(now_p:read("*l") or "") or nil
-      if now_p then now_p:close() end
-      if now then
-        local age = now - mtime
-        local age_str = age < 60 and "gerade eben"
-          or (age < 3600 and (tostring(math.floor(age/60)) .. " Min. her") or "> 1 Std. her")
-        cache_note = '<p style="color:#555;font-size:.78em;margin-bottom:.6em">'
-          .. 'Dump-Cache zuletzt aktualisiert: ' .. age_str
-          .. ' \xE2\x80\x94 wird automatisch alle 5 Min. erneuert.</p>'
-      end
-    end
+  -- Expand the macro call by reading the macro definition files.
+  -- This works purely in Lua without requiring DUMP_CONFIG or root access.
+  local v = parse_vhost_line(rawline)
+  if not v then
+    r:puts('<p style="color:#aa6600">Macro-Aufruf nicht parsebar.</p>')
+    r:puts('<a class="btn b-cancel" href="/">&#8592;&nbsp;Zur\xC3\xBCck</a>')
+    r:puts('</div></div></body></html>')
+    return
   end
-  r:puts(cache_note)
 
-  local blocks = extract_vhost_blocks(full_config, vhost_fqdn)
+  local macros = load_macros()
+  local args = parse_use_args(
+    v.name .. "  " .. v.domain
+    .. (v.dest ~= "" and ("  " .. v.dest) or "")
+    .. (v.authtype ~= "" and ("  " .. v.authtype) or "")
+    .. (v.users ~= "" and ("  '" .. v.users .. "'") or "")
+  )
+  -- args[1]=name, args[2]=domain, args[3]=dest, args[4...]=extra
+  -- rebuild from parsed fields for correctness
+  args = { v.name, v.domain }
+  if v.dest ~= "" then table.insert(args, v.dest) end
+  if v.authtype ~= "" then table.insert(args, v.authtype) end
+  if v.users ~= "" then table.insert(args, v.users) end
+
+  local expanded = _expand_use(v.macro, args, macros, 0)
+
+  -- Extract <VirtualHost> blocks from the expanded text
+  local blocks = {}
+  local pos = 1
+  while true do
+    local s = expanded:find("<VirtualHost", pos, true)
+    if not s then break end
+    local e = expanded:find("</VirtualHost>", s, true)
+    if not e then break end
+    e = e + #"</VirtualHost>" - 1
+    table.insert(blocks, expanded:sub(s, e))
+    pos = e + 1
+  end
+
   if #blocks > 0 then
     r:puts('<p style="color:#aaa;font-size:.85em;margin-bottom:.4em">'
-      .. 'Expandierte Apache-Konfiguration (' .. #blocks
-      .. ' VirtualHost-Block' .. (#blocks > 1 and "s" or "") .. '):</p>')
-    for i, block in ipairs(blocks) do
-      if #blocks > 1 then
-        -- Port hint from opening tag, e.g. <VirtualHost *:443>
-        local port = block:match("<VirtualHost[^>]*:(%d+)") or tostring(i)
-        r:puts('<p style="color:#666;font-size:.78em;margin:.6em 0 .2em">— Port ' .. port .. ' —</p>')
-      end
+      .. 'Expandierte Konfiguration (Macro-Expansion, '
+      .. #blocks .. ' VirtualHost-Block'
+      .. (#blocks > 1 and "s" or "") .. '):</p>')
+    r:puts('<p style="color:#555;font-size:.78em;margin-bottom:.8em">'
+      .. 'Dargestellt sind die Direktiven aus den Macro-Definitionen. '
+      .. 'Platzhalter wie <code>${VAR}</code> stammen aus den Container-Umgebungsvariablen.</p>')
+    for _, block in ipairs(blocks) do
+      local port = block:match("<VirtualHost[^>]*:(%d+)") or "?"
+      r:puts('<p style="color:#666;font-size:.78em;margin:.6em 0 .2em">— Port ' .. port .. ' —</p>')
       r:puts('<pre style="background:#060614;color:#ddd;padding:.7em;border-radius:3px;'
         .. 'font-size:.82em;margin-bottom:1em;overflow-x:auto;white-space:pre-wrap">'
         .. h(block) .. '</pre>')
     end
-  elseif full_config ~= "" then
-    r:puts('<p style="color:#aa6600;font-size:.85em;margin-bottom:1.2em">'
-      .. 'Kein VirtualHost-Block f\xC3\xBCr <strong>' .. h(vhost_fqdn) .. '</strong> gefunden.<br>'
-      .. 'M\xC3\xB6glicherweise wurde die Konfiguration noch nicht angewendet '
-      .. 'oder der Macro-Aufruf enth\xC3\xA4lt einen Fehler.</p>')
+  else
+    -- Macro not found or produced no VirtualHost blocks — show raw expansion
+    r:puts('<p style="color:#aa6600;font-size:.85em;margin-bottom:.6em">'
+      .. 'Kein VirtualHost-Block in der Macro-Expansion gefunden.</p>')
+    if expanded ~= "" then
+      r:puts('<pre style="background:#060614;color:#ddd;padding:.7em;border-radius:3px;'
+        .. 'font-size:.82em;margin-bottom:1em;overflow-x:auto;white-space:pre-wrap">'
+        .. h(expanded) .. '</pre>')
+    end
   end
 
   r:puts('<a class="btn b-cancel" href="/">&#8592;&nbsp;Zur\xC3\xBCck zur \xC3\x9Cbersicht</a>')

@@ -74,8 +74,7 @@ RUN chmod +x /usr/local/bin/acme-init.sh
 COPY cron.d/rotate-oidc-key       /etc/cron.d/rotate-oidc-key
 COPY cron.d/geoip-update          /etc/cron.d/geoip-update
 COPY cron.d/acme-renew            /etc/cron.d/acme-renew
-COPY cron.d/refresh-dump-config   /etc/cron.d/refresh-dump-config
-RUN chmod 0644 /etc/cron.d/rotate-oidc-key /etc/cron.d/geoip-update /etc/cron.d/acme-renew /etc/cron.d/refresh-dump-config
+RUN chmod 0644 /etc/cron.d/rotate-oidc-key /etc/cron.d/geoip-update /etc/cron.d/acme-renew
 
 # Runtime directory for generated configs; sites-admin/ for admin-managed domain configs
 # acme-webroot/ serves ACME HTTP-01 challenge tokens (certbot --webroot -w /var/www/acme-webroot)
