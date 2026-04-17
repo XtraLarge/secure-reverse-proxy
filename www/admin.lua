@@ -2,11 +2,13 @@
 -- admin.lua — Proxy VHost Admin Interface
 --
 -- Served on admin.DOMAIN — OIDC-protected via CLIENTOIDC_CLAIM.
--- Reads/writes /etc/apache2/sites-enabled/*.conf files.
--- sites-enabled volume must be mounted read-write.
+-- Reads/writes /etc/apache2/sites-admin/*.conf (domain configs) and
+-- /etc/apache2/AddOn/<domain>/<site>.preconfig|postconfig (AddOn snippets).
+-- Both volumes must be mounted read-write.
 --
 
 local SITES_DIR = "/etc/apache2/sites-admin/"
+local ADDON_DIR = "/etc/apache2/AddOn/"
 
 local MACRO_TYPES = {
   "VHost_Proxy",
@@ -100,6 +102,45 @@ local function write_lines(fpath, lines)
   return true, nil
 end
 
+-- ── AddOn helpers ────────────────────────────────────────────────────────────
+
+local function addon_path(domain, site, suffix)
+  -- suffix: "preconfig" or "postconfig"
+  return ADDON_DIR .. domain .. "/" .. site .. "." .. suffix
+end
+
+local function read_file(fpath)
+  local f = io.open(fpath, "r")
+  if not f then return "" end
+  local s = f:read("*a")
+  f:close()
+  return s or ""
+end
+
+local function write_file(fpath, content)
+  -- Ensure parent directory exists
+  local dir = fpath:match("^(.*)/[^/]+$")
+  if dir then os.execute("mkdir -p " .. dir) end
+  if content == "" then
+    os.remove(fpath)
+    return true, nil
+  end
+  local f = io.open(fpath, "w")
+  if not f then return false, "Nicht schreibbar: " .. fpath end
+  f:write(content)
+  f:close()
+  return true, nil
+end
+
+-- Run apache2ctl configtest and return (ok, output)
+local function configtest()
+  local p = io.popen("/usr/sbin/apache2ctl configtest 2>&1")
+  local out = p:read("*a")
+  local ok  = p:close()
+  -- apache2ctl exits 0 on success; pclose returns true on exit 0
+  return (ok == true or ok == 0), out
+end
+
 local function list_conf_files()
   local files = {}
   local p = io.popen("ls " .. SITES_DIR .. "*.conf 2>/dev/null")
@@ -128,6 +169,12 @@ end
 
 local function validate_users(s)
   return trim(s):match("^[a-zA-Z0-9%.@_|%-]*$") ~= nil
+end
+
+local function fexists(p)
+  local f = io.open(p, "r")
+  if f then f:close(); return true end
+  return false
 end
 
 -- ── CSS / HTML ─────────────────────────────────────────────────────────────────
@@ -162,6 +209,7 @@ tr:hover td{background:#111130}
 a.btn,button.btn{padding:4px 11px;border:none;border-radius:3px;cursor:pointer;
   text-decoration:none;display:inline-block;font-size:.82em;line-height:1.5}
 .b-edit{background:#0f3460;color:#7ecfff}.b-del{background:#5c0000;color:#ff9999}
+.b-addon{background:#1a1a00;color:#ffee66}
 .b-add{background:#003d00;color:#99ff99}.b-apply{background:#3d3d00;color:#ffff99;
   font-size:.95em;padding:7px 18px}.b-save{background:#003d3d;color:#99ffff}
 .b-cancel{background:#2a2a4e;color:#aaa}
@@ -252,6 +300,7 @@ local function show_list(r, msg)
   r:puts('<form method="POST" action="/?action=apply">')
   r:puts('<button class="btn b-apply" type="submit">&#9654;&nbsp;Konfiguration anwenden</button>')
   r:puts('</form>')
+  r:puts('<a class="btn b-add" href="/?action=domain_new">+ Neue Domain</a>')
   r:puts('<span class="dim">Änderungen erst nach "Anwenden" aktiv (graceful reload)</span>')
   r:puts('</div>')
 
@@ -281,9 +330,15 @@ local function show_list(r, msg)
         if is_vhost_line(line) and not is_no_admin(lines, lineno) then
           local v = parse_vhost_line(line)
           if v then
+            -- Check if AddOn files exist for this entry
+            local has_pre  = io.open(addon_path(v.domain, v.name, "preconfig"),  "r") ~= nil
+            local has_post = io.open(addon_path(v.domain, v.name, "postconfig"), "r") ~= nil
+            if has_pre  then io.open(addon_path(v.domain, v.name, "preconfig"),  "r"):close() end
+            if has_post then io.open(addon_path(v.domain, v.name, "postconfig"), "r"):close() end
+            local addon_tag = (has_pre or has_post) and ' <span class="tag" style="background:#1a1a00;color:#ffee66">AddOn</span>' or ""
             r:puts('<tr>')
             r:puts('<td>' .. macro_tag(v.macro) .. '</td>')
-            r:puts('<td>' .. h(v.name) .. '</td>')
+            r:puts('<td>' .. h(v.name) .. addon_tag .. '</td>')
             r:puts('<td>' .. h(v.domain) .. '</td>')
             r:puts('<td style="font-family:monospace;font-size:.82em">' .. h(v.dest) .. '</td>')
             r:puts('<td style="font-size:.82em">' .. h(v.users) .. '</td>')
@@ -291,6 +346,9 @@ local function show_list(r, msg)
             -- Edit
             r:puts('<a class="btn b-edit" href="/?action=edit&amp;file='
               .. h(fname) .. '&amp;line=' .. lineno .. '">Bearbeiten</a>')
+            -- AddOn
+            r:puts('<a class="btn b-addon" href="/?action=addon&amp;name='
+              .. h(v.name) .. '&amp;domain=' .. h(v.domain) .. '">AddOn</a>')
             -- Delete
             r:puts('<form method="POST" action="/?action=delete" style="margin:0"'
               .. ' onsubmit="return confirm(\'Eintrag ' .. h(v.name) .. ' wirklich löschen?\')">')
@@ -436,12 +494,27 @@ local function do_save(r, p)
     table.insert(lines, insert_pos, new_line)
   end
 
-  local ok, err = write_lines(fpath, lines)
-  if ok then
-    show_list(r, "OK: Gespeichert — Konfiguration noch anwenden!")
-  else
-    show_list(r, "ERR: Schreiben fehlgeschlagen — " .. (err or "sites-enabled nicht beschreibbar?"))
+  -- Write to .tmp, swap with .bak, run configtest, restore .bak on failure
+  local ftmp = fpath .. ".tmp"
+  local fbak = fpath .. ".bak"
+
+  local ok, err = write_lines(ftmp, lines)
+  if not ok then
+    return show_list(r, "ERR: Temp-Datei nicht schreibbar — " .. (err or ""))
   end
+
+  os.rename(fpath, fbak)
+  os.rename(ftmp,  fpath)
+
+  local test_ok, test_out = configtest()
+  if not test_ok then
+    os.remove(fpath)
+    os.rename(fbak, fpath)
+    return show_list(r, "ERR: Konfigurationstest fehlgeschlagen — Änderungen nicht gespeichert.\n" .. (test_out or ""))
+  end
+
+  os.remove(fbak)
+  show_list(r, "OK: Gespeichert (Konfigurationstest erfolgreich) — Konfiguration noch anwenden!")
 end
 
 -- ── Delete (POST) ─────────────────────────────────────────────────────────────
@@ -467,12 +540,27 @@ local function do_delete(r, p)
   end
 
   table.remove(lines, lineno)
-  local ok, err = write_lines(fpath, lines)
-  if ok then
-    show_list(r, "OK: Gelöscht — Konfiguration noch anwenden!")
-  else
-    show_list(r, "ERR: Schreiben fehlgeschlagen — " .. (err or ""))
+
+  local ftmp = fpath .. ".tmp"
+  local fbak = fpath .. ".bak"
+
+  local ok, err = write_lines(ftmp, lines)
+  if not ok then
+    return show_list(r, "ERR: Temp-Datei nicht schreibbar — " .. (err or ""))
   end
+
+  os.rename(fpath, fbak)
+  os.rename(ftmp,  fpath)
+
+  local test_ok, test_out = configtest()
+  if not test_ok then
+    os.remove(fpath)
+    os.rename(fbak, fpath)
+    return show_list(r, "ERR: Konfigurationstest fehlgeschlagen — Änderungen nicht gespeichert.\n" .. (test_out or ""))
+  end
+
+  os.remove(fbak)
+  show_list(r, "OK: Gelöscht (Konfigurationstest erfolgreich) — Konfiguration noch anwenden!")
 end
 
 -- ── Apply (POST) ──────────────────────────────────────────────────────────────
@@ -485,6 +573,277 @@ local function do_apply(r)
   else
     show_list(r, "ERR: apache2ctl graceful fehlgeschlagen (Code: " .. tostring(ret) .. ")")
   end
+end
+
+-- ── AddOn form ────────────────────────────────────────────────────────────────
+
+-- pre_override / post_override: when not nil, these override what's read from disk
+-- (used to redisplay attempted content after a failed configtest)
+local function show_addon_form(r, name, domain, errmsg, testout, pre_override, post_override)
+  r:puts(page_head("AddOn: " .. name .. "." .. domain))
+  r:puts('<div class="main"><div class="card">')
+  r:puts('<h2>AddOn-Konfiguration — <code>' .. h(name) .. '.' .. h(domain) .. '</code></h2>')
+  r:puts('<p style="color:#888;font-size:.85em;margin-bottom:.8em">'
+    .. 'Diese Direktiven werden direkt vor bzw. nach dem ProxyPass in den VHost eingefügt.<br>'
+    .. 'Typisch: SSL-Proxy-Einstellungen, eigene Header, ProxyPassMatch für WebSockets.<br>'
+    .. '<strong>Speichern testet die Konfiguration automatisch — bei Fehler wird nichts gespeichert.</strong>'
+    .. '</p>')
+  if errmsg then
+    r:puts('<div class="msg err">' .. h(errmsg) .. '</div>')
+  end
+  if testout and testout ~= "" then
+    r:puts('<pre style="background:#0a0005;color:#ff9999;padding:.7em;border-radius:3px;'
+      .. 'font-size:.8em;overflow-x:auto;margin-bottom:.8em">' .. h(testout) .. '</pre>')
+  end
+
+  local pre_path  = addon_path(domain, name, "preconfig")
+  local post_path = addon_path(domain, name, "postconfig")
+  local pre_bak   = pre_path  .. ".bak"
+  local post_bak  = post_path .. ".bak"
+  local has_bak   = fexists(pre_bak) or fexists(post_bak)
+
+  -- Show restore-from-backup button when a previous version exists
+  if has_bak then
+    r:puts('<form method="POST" action="/?action=addon_restore" style="margin-bottom:.7em">')
+    r:puts('<input type=hidden name=name   value="' .. h(name)   .. '">')
+    r:puts('<input type=hidden name=domain value="' .. h(domain) .. '">')
+    r:puts('<button class="btn" style="background:#2a1a00;color:#ffaa33" type=submit>'
+      .. '&#8635;&nbsp;Auf letzte gespeicherte Version zurücksetzen</button>')
+    r:puts('</form>')
+  end
+
+  -- Use override content (after a failed save) or read from disk
+  local pre_content  = pre_override  ~= nil and pre_override  or read_file(pre_path)
+  local post_content = post_override ~= nil and post_override or read_file(post_path)
+
+  r:puts('<form method="POST" action="/?action=addon_save">')
+  r:puts('<input type=hidden name=name   value="' .. h(name)   .. '">')
+  r:puts('<input type=hidden name=domain value="' .. h(domain) .. '">')
+
+  r:puts('<div style="margin-bottom:1em">')
+  r:puts('<label style="color:#aaa;font-size:.9em;display:block;margin-bottom:.3em">'
+    .. 'Pre-Config <span style="color:#666">(' .. h(pre_path) .. ')</span></label>')
+  r:puts('<textarea name=pre_content rows=10 style="'
+    .. 'width:100%;background:#060614;color:#ddd;border:1px solid #3a3a6e;'
+    .. 'border-radius:3px;padding:8px;font-family:monospace;font-size:.85em;resize:vertical">'
+    .. h(pre_content) .. '</textarea>')
+  r:puts('</div>')
+
+  r:puts('<div style="margin-bottom:1.2em">')
+  r:puts('<label style="color:#aaa;font-size:.9em;display:block;margin-bottom:.3em">'
+    .. 'Post-Config <span style="color:#666">(' .. h(post_path) .. ')</span></label>')
+  r:puts('<textarea name=post_content rows=6 style="'
+    .. 'width:100%;background:#060614;color:#ddd;border:1px solid #3a3a6e;'
+    .. 'border-radius:3px;padding:8px;font-family:monospace;font-size:.85em;resize:vertical">'
+    .. h(post_content) .. '</textarea>')
+  r:puts('</div>')
+
+  r:puts('<div class="form-row" style="margin-top:1.2em">')
+  r:puts('<button class="btn b-save" type=submit>&#10003;&nbsp;Speichern &amp; Testen</button>&nbsp;')
+  r:puts('<a class="btn b-cancel" href="/">Abbrechen</a>')
+  r:puts('</div></form></div></div></body></html>')
+end
+
+local function do_addon_save(r, p)
+  local name         = trim(p["name"]         or "")
+  local domain       = trim(p["domain"]       or "")
+  local pre_content  = p["pre_content"]  or ""
+  local post_content = p["post_content"] or ""
+
+  if not validate_name(name) or not validate_domain(domain) then
+    return show_list(r, "ERR: Ungültige Parameter")
+  end
+
+  -- Reject obviously dangerous content (mod_lua runs as www-data, but still)
+  for _, content in ipairs({pre_content, post_content}) do
+    if content:find("\0") then
+      return show_list(r, "ERR: Ungültiger Inhalt (Null-Bytes)")
+    end
+  end
+
+  local pre_path  = addon_path(domain, name, "preconfig")
+  local post_path = addon_path(domain, name, "postconfig")
+  local pre_bak   = pre_path  .. ".bak"
+  local post_bak  = post_path .. ".bak"
+
+  -- Move existing files to .bak before touching anything
+  local pre_existed  = fexists(pre_path)
+  local post_existed = fexists(post_path)
+  if pre_existed  then os.rename(pre_path,  pre_bak)  end
+  if post_existed then os.rename(post_path, post_bak) end
+
+  -- Write new content (empty string = don't create file)
+  local ok, err = write_file(pre_path,  pre_content)
+  if not ok then
+    if pre_existed  then os.rename(pre_bak,  pre_path)  end
+    if post_existed then os.rename(post_bak, post_path) end
+    return show_addon_form(r, name, domain, "ERR: " .. err)
+  end
+  ok, err = write_file(post_path, post_content)
+  if not ok then
+    os.remove(pre_path)
+    if pre_existed  then os.rename(pre_bak,  pre_path)  end
+    if post_existed then os.rename(post_bak, post_path) end
+    return show_addon_form(r, name, domain, "ERR: " .. err)
+  end
+
+  -- Config test — on failure: discard new files, restore .bak, show form with attempted content
+  local test_ok, test_out = configtest()
+  if not test_ok then
+    os.remove(pre_path)
+    os.remove(post_path)
+    if pre_existed  then os.rename(pre_bak,  pre_path)  end
+    if post_existed then os.rename(post_bak, post_path) end
+    -- Pass the attempted content back so the user can edit and retry
+    return show_addon_form(r, name, domain,
+      "ERR: Konfigurationstest fehlgeschlagen — Änderungen nicht gespeichert.", test_out,
+      pre_content, post_content)
+  end
+
+  -- Success: keep .bak as a restorable snapshot (overwrite any older .bak)
+  -- .bak files are cleaned up only when the user explicitly restores or when no pre/post existed
+  show_list(r, "OK: AddOn gespeichert (Konfigurationstest erfolgreich) — Konfiguration noch anwenden!")
+end
+
+-- ── AddOn restore (POST) ─────────────────────────────────────────────────────
+
+local function do_addon_restore(r, p)
+  local name   = trim(p["name"]   or "")
+  local domain = trim(p["domain"] or "")
+
+  if not validate_name(name) or not validate_domain(domain) then
+    return show_list(r, "ERR: Ungültige Parameter")
+  end
+
+  local pre_path  = addon_path(domain, name, "preconfig")
+  local post_path = addon_path(domain, name, "postconfig")
+  local pre_bak   = pre_path  .. ".bak"
+  local post_bak  = post_path .. ".bak"
+
+  if not fexists(pre_bak) and not fexists(post_bak) then
+    return show_addon_form(r, name, domain, "ERR: Kein Backup vorhanden")
+  end
+
+  -- Write restored content to .tmp, test, swap on success
+  local restored_pre  = read_file(pre_bak)
+  local restored_post = read_file(post_bak)
+
+  -- Save current files to tmp-bak before overwriting
+  local cur_pre  = read_file(pre_path)
+  local cur_post = read_file(post_path)
+
+  local ok, err = write_file(pre_path,  restored_pre)
+  if not ok then return show_addon_form(r, name, domain, "ERR: " .. err) end
+  ok, err = write_file(post_path, restored_post)
+  if not ok then
+    write_file(pre_path, cur_pre)
+    return show_addon_form(r, name, domain, "ERR: " .. err)
+  end
+
+  local test_ok, test_out = configtest()
+  if not test_ok then
+    write_file(pre_path,  cur_pre)
+    write_file(post_path, cur_post)
+    return show_addon_form(r, name, domain,
+      "ERR: Backup-Konfigurationstest fehlgeschlagen — Restore nicht möglich.", test_out)
+  end
+
+  -- Clean up .bak after successful restore
+  os.remove(pre_bak)
+  os.remove(post_bak)
+  show_list(r, "OK: AddOn auf letzte Version zurückgesetzt (Konfigurationstest erfolgreich) — noch anwenden!")
+end
+
+-- ── Domain creation form ──────────────────────────────────────────────────────
+
+local function show_domain_form(r, pre, errmsg)
+  r:puts(page_head("Neue Domain"))
+  r:puts('<div class="main"><div class="card">')
+  r:puts('<h2>Neue Domain anlegen</h2>')
+  r:puts('<p style="color:#888;font-size:.85em;margin-bottom:.8em">'
+    .. 'Legt eine neue <code>.conf</code>-Datei in <code>sites-admin/</code> an.<br>'
+    .. 'Eine Admin-VHost-Zeile (admin.DOMAIN) wird automatisch eingefügt.<br>'
+    .. 'Konfiguration wird vor dem Speichern automatisch getestet.'
+    .. '</p>')
+  if errmsg then r:puts('<div class="msg err">' .. h(errmsg) .. '</div>') end
+
+  pre = pre or {}
+  r:puts('<form method="POST" action="/?action=domain_create">')
+
+  r:puts('<div class="form-row"><label>Domain:</label>'
+    .. '<input name=domain value="' .. h(pre.domain or "") .. '" placeholder="example.com" required></div>')
+
+  r:puts('<div class="form-row"><label>Admin-Benutzer:</label>'
+    .. '<input name=adminuser value="' .. h(pre.adminuser or "") .. '" placeholder="Hans.Mustermann" required></div>')
+
+  local certs = {{"le","Let\'s Encrypt"},{"self","Self-signed"},{"none","Kein SSL"}}
+  r:puts('<div class="form-row"><label>Zertifikatstyp:</label><select name=certtype>')
+  for _, c in ipairs(certs) do
+    local sel = (pre.certtype == c[1]) and " selected" or ""
+    r:puts('<option value="' .. c[1] .. '"' .. sel .. '>' .. c[2] .. '</option>')
+  end
+  r:puts('</select></div>')
+
+  r:puts('<div class="form-row"><label>TOC-URL:</label>'
+    .. '<input name=tocurl value="' .. h(pre.tocurl or "") .. '" placeholder="https://toc.example.com"></div>')
+
+  r:puts('<div class="form-row" style="margin-top:1.2em">')
+  r:puts('<button class="btn b-save" type=submit>&#10003;&nbsp;Anlegen &amp; Testen</button>&nbsp;')
+  r:puts('<a class="btn b-cancel" href="/">Abbrechen</a>')
+  r:puts('</div></form></div></div></body></html>')
+end
+
+local function do_domain_create(r, p)
+  local domain    = trim(p["domain"]    or "")
+  local adminuser = trim(p["adminuser"] or "")
+  local certtype  = trim(p["certtype"]  or "le")
+  local tocurl    = trim(p["tocurl"]    or "")
+
+  if not validate_domain(domain) then
+    return show_domain_form(r, p, "Ungültige Domain")
+  end
+  if adminuser == "" or adminuser:match("[^a-zA-Z0-9%.@_%-]") then
+    return show_domain_form(r, p, "Ungültiger Admin-Benutzer")
+  end
+  if certtype ~= "le" and certtype ~= "self" and certtype ~= "none" then
+    certtype = "le"
+  end
+  if tocurl == "" then
+    tocurl = "https://toc." .. domain
+  end
+
+  local fname = domain .. ".conf"
+  local fpath = SITES_DIR .. fname
+
+  if fexists(fpath) then
+    return show_domain_form(r, p, "Domain existiert bereits: " .. fname)
+  end
+
+  local lines = {
+    "# " .. domain .. " — Proxy-Konfiguration",
+    "",
+    "Use Domain_Init  " .. domain .. "  " .. certtype .. "  " .. tocurl,
+    "Use Admin_VHost  " .. domain .. "  '" .. adminuser .. "'",
+    "",
+    "Use Domain_Final " .. domain,
+  }
+
+  local ftmp = fpath .. ".tmp"
+  local ok, err = write_lines(ftmp, lines)
+  if not ok then
+    return show_domain_form(r, p, "Datei nicht schreibbar: " .. (err or ""))
+  end
+
+  os.rename(ftmp, fpath)
+
+  local test_ok, test_out = configtest()
+  if not test_ok then
+    os.remove(fpath)
+    return show_domain_form(r, p,
+      "Konfigurationstest fehlgeschlagen — Domain nicht angelegt.\n" .. (test_out or ""))
+  end
+
+  show_list(r, "OK: Domain " .. domain .. " angelegt — Konfiguration noch anwenden!")
 end
 
 -- ── Request dispatcher ────────────────────────────────────────────────────────
@@ -541,6 +900,27 @@ function handle(r)
 
   elseif action == "apply" and r.method == "POST" then
     do_apply(r)
+
+  elseif action == "addon" then
+    local name   = trim(get["name"]   or "")
+    local domain = trim(get["domain"] or "")
+    if not validate_name(name) or not validate_domain(domain) then
+      show_list(r, "ERR: Ungültige Parameter")
+    else
+      show_addon_form(r, name, domain, nil, nil, nil, nil)
+    end
+
+  elseif action == "addon_save" and r.method == "POST" then
+    do_addon_save(r, post)
+
+  elseif action == "addon_restore" and r.method == "POST" then
+    do_addon_restore(r, post)
+
+  elseif action == "domain_new" then
+    show_domain_form(r, nil, nil)
+
+  elseif action == "domain_create" and r.method == "POST" then
+    do_domain_create(r, post)
 
   else
     show_list(r)
