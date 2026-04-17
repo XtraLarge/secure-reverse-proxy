@@ -523,10 +523,8 @@ function parse(line)
 # USE Domain_Final example.com LOGIN
 
   --]]
-  -- remove trash
-  if  ( not ( startswith(string.lower(all_trim(line)), "use "))
-    or ( startswith(string.lower(all_trim(line)), "use domain_") ) ) then return;
-  end
+  -- Only process VHost_* macros (skip Domain_*, Admin_VHost, comments, etc.)
+  if not startswith(string.lower(all_trim(line)), "use vhost_") then return end
 
   -- insert element
   table.insert(A,{
