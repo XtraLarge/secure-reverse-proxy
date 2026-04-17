@@ -9,6 +9,11 @@
 #                             If unset, root domains are auto-detected from
 #                             "Use Domain_Init*" lines in sites-admin/ and
 #                             sites-enabled/.
+#   ACME_SERVER   (optional)  ACME directory URL.  Default: Let's Encrypt
+#                             production.  Set to https://pebble:14000/dir
+#                             (or similar) for local testing with Pebble.
+#   ACME_INSECURE (optional)  Set to 1 to skip TLS verification of the ACME
+#                             server endpoint — required for Pebble (self-signed).
 #
 # For each root domain a single multi-SAN certificate is requested covering:
 #   - the root domain itself
@@ -32,6 +37,18 @@ LE_LIVE="/etc/letsencrypt/live"
 
 [[ -n "${ACME_EMAIL:-}" ]] || { log "ACME_EMAIL not set — skipping"; exit 0; }
 command -v certbot &>/dev/null || { log "certbot not installed — skipping"; exit 1; }
+
+# Optional overrides for the ACME server (e.g. Pebble for local testing)
+ACME_SERVER="${ACME_SERVER:-}"
+ACME_INSECURE="${ACME_INSECURE:-}"
+
+server_args=()
+[[ -n "$ACME_SERVER"   ]] && server_args+=(--server "$ACME_SERVER")
+[[ -n "$ACME_INSECURE" ]] && server_args+=(--no-verify-ssl)
+
+if [[ -n "$ACME_SERVER" ]]; then
+    log "Using custom ACME server: ${ACME_SERVER}"
+fi
 
 # ── Root domain list ──────────────────────────────────────────────────────────
 
@@ -99,6 +116,7 @@ for root in "${ROOT_DOMAINS[@]}"; do
             --email "${ACME_EMAIL}" \
             --webroot -w "${WEBROOT}" \
             "${d_args[@]}" \
+            "${server_args[@]}" \
             --cert-name "${root}" \
             --keep-until-expiring \
             --expand \

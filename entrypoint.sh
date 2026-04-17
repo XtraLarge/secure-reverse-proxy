@@ -180,8 +180,10 @@ if [[ -n "${ACME_EMAIL:-}" ]]; then
     log "ACME enabled (${ACME_EMAIL})"
 
     # Save to runtime env so the weekly cron can source it
-    printf 'ACME_EMAIL=%s\n' "${ACME_EMAIL}" > /etc/apache2/conf-runtime/acme.env
-    [[ -n "${ACME_DOMAINS:-}" ]] && printf 'ACME_DOMAINS=%s\n' "${ACME_DOMAINS}" >> /etc/apache2/conf-runtime/acme.env
+    printf 'ACME_EMAIL=%s\n'    "${ACME_EMAIL}"                            > /etc/apache2/conf-runtime/acme.env
+    [[ -n "${ACME_DOMAINS:-}"  ]] && printf 'ACME_DOMAINS=%s\n'  "${ACME_DOMAINS}"  >> /etc/apache2/conf-runtime/acme.env
+    [[ -n "${ACME_SERVER:-}"   ]] && printf 'ACME_SERVER=%s\n'   "${ACME_SERVER}"   >> /etc/apache2/conf-runtime/acme.env
+    [[ -n "${ACME_INSECURE:-}" ]] && printf 'ACME_INSECURE=%s\n' "${ACME_INSECURE}" >> /etc/apache2/conf-runtime/acme.env
 
     # Detect root domains for the self-signed fallback
     if [[ -n "${ACME_DOMAINS:-}" ]]; then

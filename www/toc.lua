@@ -508,19 +508,17 @@ function parse(line)
 # Example
 #
 # Frame start
-# USE Domain_Init example.com LOGIN
+# USE Domain_Init example.com www
 #
 #
-#  1         2            3                        4         5                                                        6
-# Use VHost_Alias       logoff                example.com  logout.example.com                              ''
-# Use VHost_Proxy       gvm                   example.com  https://10.0.0.1:8006/                          'user alice'
-# Use VHost_Proxy_OTP   gateway1             example.com  http://10.0.0.2/                                'user alice bob'
-# Use VHost_Proxy_Basic camera                example.com  http://10.0.0.9:10090/                         'user alice bob'
-# Use VHost_Proxy_OIDC  test1                 example.com  http://10.0.0.15:8080/                         'alice'
-# USE VHost_Proxy_CCERT test                  example.com  http://127.0.0.1/                                ''
+#  1         2            3                  4            5                              6
+# Use VHost_Alias       logoff            example.com  logout.example.com               ''
+# Use VHost_Proxy       myapp             example.com  https://10.0.0.1:8006/           'alice'
+# Use VHost_Proxy_OIDC  app1              example.com  http://10.0.0.2:8080/            'alice|bob'
+# Use VHost_Proxy_Basic cam               example.com  http://10.0.0.3:10090/           'alice|bob'
 ##
 # Frame end
-# USE Domain_Final example.com LOGIN
+# USE Domain_Final example.com www
 
   --]]
   -- Only process VHost_* macros (skip Domain_*, Admin_VHost, comments, etc.)
@@ -697,23 +695,6 @@ for filename in pfile:lines() do
 end
 pfile:close()
 check_all_services()
-
-
---DOMAIN      = "example.com";
---FILE        = "/etc/apache2/sites-enabled/example.com.conf";
---input(FILE, DOMAIN)
-
---DOMAIN      = "example.com";
---FILE        = "/etc/apache2/sites-enabled/example.com.conf";
---input(FILE, DOMAIN)
-
---DOMAIN      = "example.com";
---FILE        = "/etc/apache2/sites-enabled/example.com.conf";
---input(FILE, DOMAIN)
-
---DOMAIN      = "example.com";
---FILE        = "/etc/apache2/sites-enabled/example.com.conf";
---input(FILE, DOMAIN)
 
 
 --  print( output(DOMAIN, TITLE ))
