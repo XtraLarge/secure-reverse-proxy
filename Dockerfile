@@ -57,6 +57,7 @@ RUN a2enconf server-security macro cgid-runtime evasive sites-admin acme-webroot
 # TOC page (Lua), logout animation page, CGI env-dump, TableFilter JS library
 COPY www/toc.lua       /var/www/html/toc.lua
 COPY www/admin.lua     /var/www/html/admin.lua
+COPY www/admin-kc.lua  /var/www/html/admin-kc.lua
 COPY www/help/         /var/www/help/
 COPY www/cgi/          /var/www/cgi/
 COPY www/res/          /var/www/res/

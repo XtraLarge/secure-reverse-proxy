@@ -372,6 +372,92 @@ docker rm -f "$CAP_CID" >/dev/null 2>&1 || true
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GROUP 9: active-ssl certificate resolution
+# ══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo "[28] active-ssl symlink points to ssl/ volume when no letsencrypt cert exists"
+if run sh -c "readlink /run/apache2/active-ssl/test.example.com/cert.pem" 2>&1 \
+        | grep -q "/etc/apache2/ssl/test.example.com/cert.pem"; then
+    pass "active-ssl/test.example.com/cert.pem → ssl/ volume"
+else
+    fail "active-ssl/test.example.com/cert.pem does not point to ssl/ volume"
+fi
+
+echo ""
+echo "[29] active-ssl symlink prefers letsencrypt over ssl/ volume"
+if docker run --rm \
+        -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" \
+        -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro" \
+        -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro" \
+        -v "$SCRIPT_DIR/letsencrypt:/etc/letsencrypt:ro" \
+        -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/realms/master/.well-known/openid-configuration \
+        -e OIDC_CLIENT_SECRET=test-secret-not-real \
+        -e OIDC_CRYPTO_PASSPHRASE=test-passphrase-not-real \
+        -e OIDC_COOKIE_DOMAIN=test.example.com \
+        -e REDIS_HOST=127.0.0.1 \
+        -e INTERNAL_NETWORKS=10.0.0.0/8 \
+        "$IMAGE" sh -c "readlink /run/apache2/active-ssl/test.example.com/cert.pem" 2>&1 \
+        | grep -q "/etc/letsencrypt/live/"; then
+    pass "active-ssl/test.example.com/cert.pem → letsencrypt when LE cert present"
+else
+    fail "active-ssl/test.example.com/cert.pem does not prefer letsencrypt over ssl/"
+fi
+
+echo ""
+echo "[30] self-signed placeholder created when ACME_EMAIL set and no cert in ssl/"
+EMPTY_SSL_DIR="$(mktemp -d)"
+if docker run --rm \
+        -v "$EMPTY_SSL_DIR:/etc/apache2/ssl:ro" \
+        -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro" \
+        -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro" \
+        -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/realms/master/.well-known/openid-configuration \
+        -e OIDC_CLIENT_SECRET=test-secret-not-real \
+        -e OIDC_CRYPTO_PASSPHRASE=test-passphrase-not-real \
+        -e OIDC_COOKIE_DOMAIN=test.example.com \
+        -e REDIS_HOST=127.0.0.1 \
+        -e INTERNAL_NETWORKS=10.0.0.0/8 \
+        -e ACME_EMAIL=test@example.com \
+        "$IMAGE" sh -c "test -f /run/apache2/active-ssl/test.example.com/cert.pem && echo SELFSIGNED" 2>&1 \
+        | grep -q "SELFSIGNED"; then
+    pass "Self-signed placeholder created for test.example.com"
+else
+    fail "Self-signed placeholder not created when ACME_EMAIL set and no ssl/ cert"
+fi
+rm -rf "$EMPTY_SSL_DIR"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP 10: acme-init.sh behavior
+# ══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo "[31] acme-init.sh exits 0 when ACME_EMAIL not set"
+if docker run --rm \
+        --entrypoint /usr/local/bin/acme-init.sh \
+        "$IMAGE" 2>&1 | grep -q "ACME_EMAIL not set"; then
+    pass "acme-init.sh skips cleanly when ACME_EMAIL not set"
+else
+    fail "acme-init.sh did not skip when ACME_EMAIL not set"
+fi
+
+echo ""
+echo "[32] acme-init.sh exits 0 when no domains found in conf files"
+EMPTY_SITES_DIR="$(mktemp -d)"
+if docker run --rm \
+        --entrypoint /usr/local/bin/acme-init.sh \
+        -v "$EMPTY_SITES_DIR:/etc/apache2/sites-enabled:ro" \
+        -v "$EMPTY_SITES_DIR:/etc/apache2/sites-admin:ro" \
+        -e ACME_EMAIL=test@example.com \
+        "$IMAGE" 2>&1 | grep -q "No domains found"; then
+    pass "acme-init.sh skips cleanly when no domains found"
+else
+    fail "acme-init.sh did not skip when no domains found"
+fi
+rm -rf "$EMPTY_SITES_DIR"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════════════════════
 

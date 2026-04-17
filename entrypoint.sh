@@ -62,6 +62,36 @@ export REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 # Example: DE|AT|CH  →  allows Germany, Austria, Switzerland
 export GEOIP_ALLOW_COUNTRIES="${GEOIP_ALLOW_COUNTRIES:-DE}"
 
+# ── Keycloak Admin API (optional) ─────────────────────────────────────────────
+# Enables the admin-kc.lua user management interface.
+# The logged-in admin's OIDC access_token is used for all API calls — no
+# separate service account needed.  The admin user in Keycloak needs the
+# realm-management client roles: view-users, manage-users, query-roles.
+#
+# KEYCLOAK_REALM       Keycloak realm name.                  Default: master
+# KEYCLOAK_ADMIN_URL   Full Admin REST API URL (incl. realm). Auto-derived when unset.
+#                      Example: https://iam.example.com/admin/realms/master
+# KEYCLOAK_ROLE_PREFIX Only show roles whose name starts with this prefix.
+#                      Example: "proxy-"  →  shows only proxy-* roles.
+#                      Empty (default)   →  shows all realm roles.
+export KEYCLOAK_REALM="${KEYCLOAK_REALM:-master}"
+export KEYCLOAK_ROLE_PREFIX="${KEYCLOAK_ROLE_PREFIX:-}"
+if [[ -z "${KEYCLOAK_ADMIN_URL:-}" ]]; then
+    # Auto-derive from OIDC_PROVIDER_METADATA_URL when it follows the standard
+    # Keycloak pattern:  https://host/realms/REALM/.well-known/openid-configuration
+    #                 →  https://host/admin/realms/REALM
+    _kc_base="${OIDC_PROVIDER_METADATA_URL%%/realms/*}"
+    if [[ "$_kc_base" != "$OIDC_PROVIDER_METADATA_URL" ]]; then
+        export KEYCLOAK_ADMIN_URL="${_kc_base}/admin/realms/${KEYCLOAK_REALM}"
+        log "Keycloak Admin URL (auto-derived): ${KEYCLOAK_ADMIN_URL}"
+    else
+        export KEYCLOAK_ADMIN_URL=""
+        log "Keycloak Admin URL: not set (OIDC_PROVIDER_METADATA_URL is not a standard Keycloak URL — set KEYCLOAK_ADMIN_URL manually to enable admin-kc.lua)"
+    fi
+else
+    log "Keycloak Admin URL: ${KEYCLOAK_ADMIN_URL}"
+fi
+
 # ── Generate internal networks include ────────────────────────────────────────
 # INTERNAL_NETWORKS: comma-separated CIDRs that bypass GeoIP and auth entirely.
 # These are injected into an Apache Include file used inside the auth macros.

@@ -257,6 +257,7 @@ local function topbar(title)
   return '<div class="topbar">'
     .. '<a class="topbar-title" href="/">\xE2\x9A\x99 ' .. h(title) .. '</a>'
     .. '<div class="topbar-nav">'
+    .. '<a href="/admin-kc.lua">\xF0\x9F\x91\xA4 Benutzer</a>'
     .. '<a href="' .. h(toc_link) .. '">\xE2\x98\xB0 TOC</a>'
     .. '<a href="' .. h(logout_link) .. '">\xC3\x97 Logout</a>'
     .. '</div>'
