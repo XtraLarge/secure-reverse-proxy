@@ -22,8 +22,9 @@ All examples are anonymized and use placeholder hosts.
 
 Included examples:
 
-- `backup.preconfig`: HTTPS backend with self-signed cert and WebSocket upgrade
-- `office.preconfig`: Collabora/CODE WOPI endpoints and websocket routing
-- `files.preconfig`: Nextcloud-specific WebSocket and large-upload tuning
-- `iam.preconfig`: preserve browser-facing host and forwarding headers for Keycloak-like backends
-- `cluster.preconfig`: generic HTTPS WebSocket backend
+- `backup.preconfig`: HTTPS backend with self-signed cert and WebSocket upgrade (e.g. backup server)
+- `office.preconfig`: WOPI endpoints and WebSocket routing (e.g. officetive office suite)
+- `files.preconfig`: WebSocket and large-upload tuning (e.g. file sync/share server)
+- `idp.preconfig`: preserve browser-facing host and forwarding headers (e.g. identity provider)
+- `cluster.preconfig`: generic HTTPS WebSocket backend (e.g. cluster management UI)
+- `monitor.preconfig`: forwarding headers for metrics dashboards

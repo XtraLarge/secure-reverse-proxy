@@ -143,7 +143,7 @@
 #
 # Examples:
 #   Use VHost_Proxy_OIDC  mgmt  example.com  http://10.0.0.6:9000/  'alice|bob'
-#   Use VHost_Proxy_OIDC  dms  example.com  http://10.0.0.7:8000/  'alice'
+#   Use VHost_Proxy_OIDC  dms   example.com  http://10.0.0.7:8000/  'alice'
 <Macro VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS)>
   <VirtualHost *:80>
     ServerName $(SITENAME).$(DOMAINNAME)
@@ -196,7 +196,7 @@
 
 # VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION)
 # Full vhost with reverse proxy and GeoIP country lock — no OIDC.
-# Use for services that handle their own auth (Nextcloud, Keycloak, etc.)
+# Use for services that handle their own auth (identity provider, file server, etc.)
 # Internal networks always pass through; external traffic must come from
 # an allowed country (${GEOIP_ALLOW_COUNTRIES}).
 <Macro VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION)>

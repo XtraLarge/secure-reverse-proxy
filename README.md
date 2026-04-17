@@ -149,7 +149,7 @@ Use VHost_Proxy_OIDC_Any  <site>  <domain>  <backend-url>/
 # Reverse proxy — HTTP Basic auth
 Use VHost_Proxy_Basic  <site>  <domain>  <backend-url>/  user  'username'
 
-# Reverse proxy — no auth (backend handles it, e.g. Keycloak, Nextcloud)
+# Reverse proxy — no auth (backend handles it, e.g. identity provider, file server)
 Use VHost_Proxy  <site>  <domain>  <backend-url>/
 ```
 
@@ -199,10 +199,10 @@ RewriteRule /(.*)  http://10.0.0.7:8123/$1 [P,L]
 For more production-like patterns, see the anonymized examples in
 [`examples/addons/`](examples/addons/README.md), including:
 
-- Collabora / CODE
-- Nextcloud websocket tuning
-- Keycloak-style forwarded headers
-- Proxmox / Rancher websocket HTTPS backends
+- Office suite WOPI endpoints and WebSocket routing (`office.preconfig`)
+- File sync WebSocket and large-upload tuning (`files.preconfig`)
+- Identity provider forwarded headers (`idp.preconfig`)
+- HTTPS backends with self-signed certs and WebSocket upgrade (`backup.preconfig`, `cluster.preconfig`)
 
 ---
 

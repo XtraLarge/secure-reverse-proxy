@@ -399,7 +399,7 @@ local function show_form(r, fname, lineno, pre, errmsg)
 
   -- Name
   r:puts('<div class="form-row"><label>Name:</label>'
-    .. '<input name=name value="' .. h((pre and pre.name) or "") .. '" placeholder="monitor" required></div>')
+    .. '<input name=name value="' .. h((pre and pre.name) or "") .. '" placeholder="myapp" required></div>')
 
   -- Domain
   r:puts('<div class="form-row"><label>Domain:</label>'
