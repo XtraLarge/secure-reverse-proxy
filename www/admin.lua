@@ -573,6 +573,8 @@ end
 local function do_apply(r)
   -- apache2ctl graceful sends SIGUSR1 to the running master process
   local ret = os.execute("/usr/sbin/apache2ctl graceful 2>/dev/null")
+  -- Request immediate config dump refresh (cron.d/refresh-dump-config picks this up within 1 min)
+  os.execute("touch /var/cache/apache2/dump-config.trigger 2>/dev/null")
   if ret == 0 or ret == true then
     show_list(r, "OK: Apache graceful reload ausgeführt")
   else
@@ -887,10 +889,37 @@ local function show_vhost_config_view(r, name, domain, rawline)
   r:puts('<pre style="background:#060614;color:#7ecfff;padding:.7em;border-radius:3px;'
     .. 'font-size:.85em;margin-bottom:1.2em;overflow-x:auto">' .. h(rawline) .. '</pre>')
 
-  -- Expanded VHost config via DUMP_CONFIG
-  local p = io.popen("/usr/sbin/apache2ctl -t -DDUMP_CONFIG 2>&1")
-  local full_config = p:read("*a")
-  p:close()
+  -- Read pre-generated config dump (produced at startup and refreshed every 5 min by
+  -- cron.d/refresh-dump-config as root, since SSL cert files are root-readable only).
+  local DUMP_CACHE = "/var/cache/apache2/dump-config.cache"
+  local cf = io.open(DUMP_CACHE, "r")
+  local full_config = cf and cf:read("*a") or ""
+  if cf then cf:close() end
+
+  -- Cache age hint
+  local cache_note = ""
+  if full_config == "" then
+    cache_note = '<p style="color:#aa6600;font-size:.82em;margin-bottom:.8em">'
+      .. 'Konfigurationsdump nicht verf\xC3\xBCgbar — wird beim n\xC3\xA4chsten Container-Start erzeugt.</p>'
+  else
+    local age_p = io.popen("stat -c '%Y' " .. DUMP_CACHE .. " 2>/dev/null")
+    local mtime = age_p and tonumber(age_p:read("*l") or "") or nil
+    if age_p then age_p:close() end
+    if mtime then
+      local now_p = io.popen("date +%s")
+      local now   = now_p and tonumber(now_p:read("*l") or "") or nil
+      if now_p then now_p:close() end
+      if now then
+        local age = now - mtime
+        local age_str = age < 60 and "gerade eben"
+          or (age < 3600 and (tostring(math.floor(age/60)) .. " Min. her") or "> 1 Std. her")
+        cache_note = '<p style="color:#555;font-size:.78em;margin-bottom:.6em">'
+          .. 'Dump-Cache zuletzt aktualisiert: ' .. age_str
+          .. ' \xE2\x80\x94 wird automatisch alle 5 Min. erneuert.</p>'
+      end
+    end
+  end
+  r:puts(cache_note)
 
   local blocks = extract_vhost_blocks(full_config, vhost_fqdn)
   if #blocks > 0 then
@@ -907,7 +936,7 @@ local function show_vhost_config_view(r, name, domain, rawline)
         .. 'font-size:.82em;margin-bottom:1em;overflow-x:auto;white-space:pre-wrap">'
         .. h(block) .. '</pre>')
     end
-  else
+  elseif full_config ~= "" then
     r:puts('<p style="color:#aa6600;font-size:.85em;margin-bottom:1.2em">'
       .. 'Kein VirtualHost-Block f\xC3\xBCr <strong>' .. h(vhost_fqdn) .. '</strong> gefunden.<br>'
       .. 'M\xC3\xB6glicherweise wurde die Konfiguration noch nicht angewendet '

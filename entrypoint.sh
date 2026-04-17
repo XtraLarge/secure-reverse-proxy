@@ -279,6 +279,14 @@ log "cron daemon started (rotate-oidc-key.sh runs at 03:00 daily)"
 log "Testing Apache configuration..."
 apache2ctl configtest || die "Apache config test failed — check your site configs and env vars"
 
+# Pre-generate the config dump for the admin.lua config viewer.
+# This must run as root because SSL certificate files in /etc/letsencrypt/ are root-readable only.
+# admin.lua reads /var/cache/apache2/dump-config.cache; a cron job (cron.d/refresh-dump-config)
+# keeps it current every 5 min and on demand via /var/cache/apache2/dump-config.trigger.
+DUMP_CACHE="/var/cache/apache2/dump-config.cache"
+apache2ctl -t -DDUMP_CONFIG > "$DUMP_CACHE" 2>/dev/null || true
+chmod 644 "$DUMP_CACHE" 2>/dev/null || true
+
 # ── ACME: obtain real cert after Apache starts ────────────────────────────────
 # The self-signed placeholder above lets Apache start; now request the real
 # cert in the background.  The 10 s delay gives Apache time to become ready.
