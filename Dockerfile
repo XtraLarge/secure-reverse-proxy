@@ -77,7 +77,8 @@ RUN chmod 0644 /etc/cron.d/rotate-oidc-key /etc/cron.d/geoip-update /etc/cron.d/
 
 # Runtime directory for generated configs; sites-admin/ for admin-managed domain configs
 # acme-webroot/ serves ACME HTTP-01 challenge tokens (certbot --webroot -w /var/www/acme-webroot)
-RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites-admin /var/www/acme-webroot
+RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites-admin /var/www/acme-webroot \
+             /run/apache2/ssl-placeholder
 
 # ── Volumes ──────────────────────────────────────────────────────────────────
 # ssl/              Manual TLS certificates, one subdir per domain:

@@ -196,22 +196,28 @@ if [[ -n "${ACME_EMAIL:-}" ]]; then
         )
     fi
 
+    # Self-signed placeholders go to /run/apache2/ssl-placeholder/ (always writable,
+    # never a Docker volume) so the ssl/ volume can safely be mounted :ro.
+    # acme-init.sh writes the real cert to /etc/letsencrypt/ and reloads Apache.
+    _PLACEHOLDER_DIR="/run/apache2/ssl-placeholder"
+    mkdir -p "$_PLACEHOLDER_DIR"
+
     for _acme_dom in "${_ACME_ROOTS[@]:-}"; do
         _acme_dom="${_acme_dom// /}"
         [[ -z "$_acme_dom" ]] && continue
-        # Skip if LE cert already present (mounted volume)
+        # Skip if LE cert already present
         [[ -f "/etc/letsencrypt/live/${_acme_dom}/cert.pem" ]] && continue
         # Skip if manually mounted cert already present (ssl/ volume)
         [[ -f "${APACHE_CONFDIR}/ssl/${_acme_dom}/cert.pem" ]] && continue
-        log "ACME: no cert for ${_acme_dom} — creating self-signed placeholder"
-        _ssl="${APACHE_CONFDIR}/ssl/${_acme_dom}"
+        log "ACME: no cert for ${_acme_dom} — creating self-signed placeholder (not in ssl/ volume)"
+        _ssl="${_PLACEHOLDER_DIR}/${_acme_dom}"
         mkdir -p "$_ssl"
         openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
             -keyout "${_ssl}/key.pem" \
             -out    "${_ssl}/cert.pem" \
             -subj   "/CN=${_acme_dom}" 2>/dev/null
         cp "${_ssl}/cert.pem" "${_ssl}/fullchain.pem"
-        log "ACME: self-signed placeholder for ${_acme_dom} (replaced by LE cert in ~10 s)"
+        log "ACME: self-signed placeholder for ${_acme_dom} written to ${_ssl}"
     done
 fi
 
