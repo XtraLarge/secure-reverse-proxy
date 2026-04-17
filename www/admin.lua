@@ -209,7 +209,7 @@ tr:hover td{background:#111130}
 a.btn,button.btn{padding:4px 11px;border:none;border-radius:3px;cursor:pointer;
   text-decoration:none;display:inline-block;font-size:.82em;line-height:1.5}
 .b-edit{background:#0f3460;color:#7ecfff}.b-del{background:#5c0000;color:#ff9999}
-.b-addon{background:#1a1a00;color:#ffee66}
+.b-addon{background:#1a1a00;color:#ffee66}.b-cfg{background:#001f33;color:#5599bb}
 .b-add{background:#003d00;color:#99ff99}.b-apply{background:#3d3d00;color:#ffff99;
   font-size:.95em;padding:7px 18px}.b-save{background:#003d3d;color:#99ffff}
 .b-cancel{background:#2a2a4e;color:#aaa}
@@ -349,6 +349,9 @@ local function show_list(r, msg)
             -- AddOn
             r:puts('<a class="btn b-addon" href="/?action=addon&amp;name='
               .. h(v.name) .. '&amp;domain=' .. h(v.domain) .. '">AddOn</a>')
+            -- Config view
+            r:puts('<a class="btn b-cfg" href="/?action=config&amp;file='
+              .. h(fname) .. '&amp;line=' .. lineno .. '">Config</a>')
             -- Delete
             r:puts('<form method="POST" action="/?action=delete" style="margin:0"'
               .. ' onsubmit="return confirm(\'Eintrag ' .. h(v.name) .. ' wirklich löschen?\')">')
@@ -846,6 +849,72 @@ local function do_domain_create(r, p)
   show_list(r, "OK: Domain " .. domain .. " angelegt — Konfiguration noch anwenden!")
 end
 
+-- ── VHost config view ────────────────────────────────────────────────────────
+
+local function show_vhost_config_view(r, name, domain, rawline)
+  local vhost_fqdn = name .. "." .. domain
+  r:puts(page_head("Config: " .. vhost_fqdn))
+  r:puts('<div class="main"><div class="card">')
+  r:puts('<h2>Konfiguration — <code>' .. h(vhost_fqdn) .. '</code></h2>')
+
+  -- Macro call line
+  r:puts('<p style="color:#aaa;font-size:.85em;margin-bottom:.4em">Macro-Aufruf:</p>')
+  r:puts('<pre style="background:#060614;color:#7ecfff;padding:.7em;border-radius:3px;'
+    .. 'font-size:.85em;margin-bottom:1.2em;overflow-x:auto">' .. h(rawline) .. '</pre>')
+
+  -- AddOn files
+  local pre_path  = addon_path(domain, name, "preconfig")
+  local post_path = addon_path(domain, name, "postconfig")
+  local pre_content  = read_file(pre_path)
+  local post_content = read_file(post_path)
+
+  if pre_content ~= "" then
+    r:puts('<p style="color:#aaa;font-size:.85em;margin-bottom:.4em">'
+      .. 'Pre-Config <span style="color:#555">(' .. h(pre_path) .. ')</span>:</p>')
+    r:puts('<pre style="background:#060614;color:#ddd;padding:.7em;border-radius:3px;'
+      .. 'font-size:.82em;margin-bottom:1.2em;overflow-x:auto">' .. h(pre_content) .. '</pre>')
+  end
+
+  if post_content ~= "" then
+    r:puts('<p style="color:#aaa;font-size:.85em;margin-bottom:.4em">'
+      .. 'Post-Config <span style="color:#555">(' .. h(post_path) .. ')</span>:</p>')
+    r:puts('<pre style="background:#060614;color:#ddd;padding:.7em;border-radius:3px;'
+      .. 'font-size:.82em;margin-bottom:1.2em;overflow-x:auto">' .. h(post_content) .. '</pre>')
+  end
+
+  if pre_content == "" and post_content == "" then
+    r:puts('<p style="color:#555;font-size:.85em;margin-bottom:1.2em">Keine AddOn-Dateien vorhanden.</p>')
+  end
+
+  -- apache2ctl -S: filter lines mentioning this vhost
+  local p = io.popen("/usr/sbin/apache2ctl -S 2>&1")
+  local ctl_out = p:read("*a")
+  p:close()
+
+  local filtered = {}
+  local fqdn_lower = vhost_fqdn:lower()
+  for line in ctl_out:gmatch("[^\n]+") do
+    if line:lower():find(fqdn_lower, 1, true) then
+      table.insert(filtered, line)
+    end
+  end
+
+  if #filtered > 0 then
+    r:puts('<p style="color:#aaa;font-size:.85em;margin-bottom:.4em">'
+      .. 'apache2ctl -S (aktive VHost-Einträge):</p>')
+    r:puts('<pre style="background:#060614;color:#99ff99;padding:.7em;border-radius:3px;'
+      .. 'font-size:.82em;margin-bottom:1.2em;overflow-x:auto">'
+      .. h(table.concat(filtered, "\n")) .. '</pre>')
+  else
+    r:puts('<p style="color:#555;font-size:.85em;margin-bottom:1.2em">'
+      .. 'apache2ctl -S: kein aktiver VHost-Eintrag für '
+      .. h(vhost_fqdn) .. ' gefunden (Konfiguration noch nicht angewendet?).</p>')
+  end
+
+  r:puts('<a class="btn b-cancel" href="/">&#8592;&nbsp;Zurück zur Übersicht</a>')
+  r:puts('</div></div></body></html>')
+end
+
 -- ── Request dispatcher ────────────────────────────────────────────────────────
 
 function handle(r)
@@ -900,6 +969,25 @@ function handle(r)
 
   elseif action == "apply" and r.method == "POST" then
     do_apply(r)
+
+  elseif action == "config" then
+    local fname  = trim(get["file"]  or "")
+    local lineno = tonumber(get["line"])
+    if fname == "" or not lineno then
+      show_list(r, "ERR: Parameter fehlen")
+    else
+      local lines = read_lines(SITES_DIR .. fname)
+      if not lines or not lines[lineno] then
+        show_list(r, "ERR: Zeile nicht gefunden")
+      else
+        local v = parse_vhost_line(lines[lineno])
+        if v then
+          show_vhost_config_view(r, v.name, v.domain, trim(lines[lineno]))
+        else
+          show_list(r, "ERR: Zeile nicht parsebar")
+        end
+      end
+    end
 
   elseif action == "addon" then
     local name   = trim(get["name"]   or "")
