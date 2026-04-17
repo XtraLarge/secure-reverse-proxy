@@ -140,11 +140,11 @@ Create one `.conf` file per domain in `sites-enabled/`. Use the macros provided 
 # Redirect alias (no auth)
 Use VHost_Alias  <site>  <domain>  <target-url>
 
-# Reverse proxy — any authenticated OIDC user
-Use VHost_Proxy_OIDC  <site>  <domain>  <backend-url>/
+# Reverse proxy — specific OIDC users only (pipe-separated, case-insensitive)
+Use VHost_Proxy_OIDC  <site>  <domain>  <backend-url>/  'alice|bob'
 
-# Reverse proxy — specific users only (pipe-separated, case-insensitive)
-Use VHost_Proxy_OIDC_Claim  <site>  <domain>  <backend-url>/  'alice|bob'
+# Reverse proxy — any authenticated OIDC user (use sparingly)
+Use VHost_Proxy_OIDC_Any  <site>  <domain>  <backend-url>/
 
 # Reverse proxy — HTTP Basic auth
 Use VHost_Proxy_Basic  <site>  <domain>  <backend-url>/  user  'username'
@@ -158,7 +158,7 @@ Every domain needs `Domain_Init` at the top and `Domain_Final` at the bottom:
 ```apache
 USE Domain_Init example.com www
 
-Use VHost_Proxy_OIDC_Claim  monitor  example.com  http://10.0.0.5:3000/  'alice|bob'
+Use VHost_Proxy_OIDC  monitor  example.com  http://10.0.0.5:3000/  'alice|bob'
 Use VHost_Proxy  files  example.com  http://10.0.0.6/
 
 USE Domain_Final example.com www
@@ -212,7 +212,7 @@ For more production-like patterns, see the anonymized examples in
 2. Set **Access Type** = `confidential`
 3. Add redirect URIs: `https://*.example.com/protected`
 4. Copy the client secret to `OIDC_CLIENT_SECRET` in `.env`
-5. The `preferred_username` claim is used for user matching in `VHost_Proxy_OIDC_Claim`
+5. The `preferred_username` claim is used for user matching in `VHost_Proxy_OIDC`
 
 For a fully prepared local Keycloak stack with realm import, test user and sample
 proxy config, see [`examples/keycloak/README.md`](examples/keycloak/README.md).

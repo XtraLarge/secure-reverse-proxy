@@ -11,7 +11,7 @@ local SITES_DIR = "/etc/apache2/sites-enabled/"
 local MACRO_TYPES = {
   "VHost_Proxy",
   "VHost_Proxy_OIDC",
-  "VHost_Proxy_OIDC_Claim",
+  "VHost_Proxy_OIDC_Any",
   "VHost_Proxy_Basic",
   "VHost_Alias",
 }
@@ -66,9 +66,9 @@ local function build_line(macro, name, domain, dest, users, authtype)
   users    = trim(users)
   authtype = trim(authtype ~= "" and authtype or "user")
 
-  if m == "vhost_proxy" or m == "vhost_proxy_oidc" or m == "vhost_alias" then
+  if m == "vhost_proxy" or m == "vhost_proxy_oidc_any" or m == "vhost_alias" then
     return string.format("Use %-28s  %-20s  %-25s  %s", macro, name, domain, dest)
-  elseif m == "vhost_proxy_oidc_claim" then
+  elseif m == "vhost_proxy_oidc" then
     return string.format("Use %-28s  %-20s  %-25s  %-35s  '%s'", macro, name, domain, dest, users)
   elseif m == "vhost_proxy_basic" then
     return string.format("Use %-28s  %-20s  %-25s  %-35s  %-6s  '%s'", macro, name, domain, dest, authtype, users)
@@ -161,7 +161,7 @@ a.btn,button.btn{padding:4px 11px;border:none;border-radius:3px;cursor:pointer;
 </style>]]
 
 local JS = [[<script>
-var NEEDS_USERS  = {vhost_proxy_oidc_claim:1, vhost_proxy_basic:1};
+var NEEDS_USERS  = {vhost_proxy_oidc:1, vhost_proxy_basic:1};
 var NEEDS_AUTH   = {vhost_proxy_basic:1};
 function onMacroChange(sel) {
   var m = sel.value.toLowerCase();
@@ -192,10 +192,10 @@ local function macro_tag(m)
   local ml = (m or ""):lower()
   local cls = "tag"
   if ml:find("basic")   then cls = cls .. " tag-basic"
-  elseif ml:find("claim") then cls = cls .. " tag-claim"
-  elseif ml:find("oidc")  then cls = cls .. " tag-oidc"
-  elseif ml:find("alias") then cls = cls .. " tag-alias"
-  else                         cls = cls .. " tag-proxy" end
+  elseif ml:find("_any")   then cls = cls .. " tag-oidc"
+  elseif ml:find("oidc")   then cls = cls .. " tag-claim"
+  elseif ml:find("alias")  then cls = cls .. " tag-alias"
+  else                          cls = cls .. " tag-proxy" end
   return '<span class="' .. cls .. '">' .. h(m) .. '</span>'
 end
 
@@ -305,7 +305,7 @@ local function show_form(r, fname, lineno, pre, errmsg)
     .. '<input name=dest value="' .. h((pre and pre.dest) or "") .. '" placeholder="http://10.0.0.1:8080/" required></div>')
 
   -- Users (OIDC_Claim + Basic)
-  local show_users = (cur == "vhost_proxy_oidc_claim" or cur == "vhost_proxy_basic")
+  local show_users = (cur == "vhost_proxy_oidc" or cur == "vhost_proxy_basic")
   local lbl_users  = cur == "vhost_proxy_basic" and "Passwort-Eintrag:" or "Benutzer (|getrennt):"
   r:puts('<div class="form-row" id=row_users style="display:' .. (show_users and "" or "none") .. '">')
   r:puts('<label id=lbl_users>' .. lbl_users .. '</label>')

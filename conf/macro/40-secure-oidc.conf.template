@@ -137,41 +137,14 @@
   </Location>
 </Macro>
 
-# VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION)
-# Full vhost with OIDC auth + reverse proxy.
-# Any authenticated user is allowed (GeoIP still applies).
-#
-# Example:
-#   Use VHost_Proxy_OIDC  monitor  example.com  http://10.0.0.5:3000/
-<Macro VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
-  <VirtualHost *:80>
-    ServerName $(SITENAME).$(DOMAINNAME)
-    USE LOGGING $(SITENAME) $(DOMAINNAME)
-    USE DEFAULTS
-    USE REWRITE2URL "https://$(SITENAME).$(DOMAINNAME)"
-  </VirtualHost>
-
-  <VirtualHost *:443>
-    ServerName $(SITENAME).$(DOMAINNAME)
-    USE LOGGING $(SITENAME) $(DOMAINNAME)
-    USE DEFAULTS
-    USE SSL $(DOMAINNAME)
-    USE SECURITY_HEADERS
-    USE CLIENTOIDC_VALIDUSER $(SITENAME) $(DOMAINNAME)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
-    USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
-  </VirtualHost>
-</Macro>
-
-# VHost_Proxy_OIDC_Claim $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS)
+# VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS)
 # Full vhost with OIDC auth + reverse proxy.
 # Only users matching $(USERS) (pipe-separated, case-insensitive regex) are allowed.
 #
 # Examples:
-#   Use VHost_Proxy_OIDC_Claim  mgmt  example.com  http://10.0.0.6:9000/  'alice|bob'
-#   Use VHost_Proxy_OIDC_Claim  dms  example.com  http://10.0.0.7:8000/  'alice'
-<Macro VHost_Proxy_OIDC_Claim $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS)>
+#   Use VHost_Proxy_OIDC  mgmt  example.com  http://10.0.0.6:9000/  'alice|bob'
+#   Use VHost_Proxy_OIDC  dms  example.com  http://10.0.0.7:8000/  'alice'
+<Macro VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS)>
   <VirtualHost *:80>
     ServerName $(SITENAME).$(DOMAINNAME)
     USE LOGGING $(SITENAME) $(DOMAINNAME)
@@ -186,6 +159,35 @@
     USE SSL $(DOMAINNAME)
     USE SECURITY_HEADERS
     USE CLIENTOIDC_CLAIM $(SITENAME) $(DOMAINNAME) '$(USERS)'
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    USE PROXY $(DESTINATION)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+  </VirtualHost>
+</Macro>
+
+# VHost_Proxy_OIDC_Any $(SITENAME) $(DOMAINNAME) $(DESTINATION)
+# Full vhost with OIDC auth + reverse proxy.
+# Any authenticated user is allowed (GeoIP still applies).
+# Use this only when you intentionally want to allow all OIDC users;
+# for most cases VHost_Proxy_OIDC with an explicit user list is preferred.
+#
+# Example:
+#   Use VHost_Proxy_OIDC_Any  monitor  example.com  http://10.0.0.5:3000/
+<Macro VHost_Proxy_OIDC_Any $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
+  <VirtualHost *:80>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE REWRITE2URL "https://$(SITENAME).$(DOMAINNAME)"
+  </VirtualHost>
+
+  <VirtualHost *:443>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE SSL $(DOMAINNAME)
+    USE SECURITY_HEADERS
+    USE CLIENTOIDC_VALIDUSER $(SITENAME) $(DOMAINNAME)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
     USE PROXY $(DESTINATION)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
