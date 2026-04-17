@@ -6,7 +6,7 @@
 -- sites-enabled volume must be mounted read-write.
 --
 
-local SITES_DIR = "/etc/apache2/sites-enabled/"
+local SITES_DIR = "/etc/apache2/sites-admin/"
 
 local MACRO_TYPES = {
   "VHost_Proxy",
@@ -185,8 +185,8 @@ function onMacroChange(sel) {
 
 local TOC_DOMAIN = ""
 do
-  -- Derive TOC domain from first conf file found
-  local p = io.popen("ls /etc/apache2/sites-enabled/*.conf 2>/dev/null | head -1")
+  -- Derive TOC domain from first conf file found (sites-enabled or sites-admin)
+  local p = io.popen("ls /etc/apache2/sites-enabled/*.conf /etc/apache2/sites-admin/*.conf 2>/dev/null | head -1")
   if p then
     local f = p:read("*l") or ""
     p:close()

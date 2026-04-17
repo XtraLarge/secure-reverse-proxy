@@ -687,7 +687,8 @@ function handle(r)
 end
 
 local i, t, popen = 0, {}, io.popen
-local pfile = popen('ls -a /etc/apache2/sites-enabled/*.conf')
+-- Read from both sites-enabled/ (manual configs) and sites-admin/ (admin UI configs)
+local pfile = popen('ls /etc/apache2/sites-enabled/*.conf /etc/apache2/sites-admin/*.conf 2>/dev/null')
 for filename in pfile:lines() do
   i = i + 1
   FILE = filename
