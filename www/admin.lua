@@ -100,11 +100,26 @@ local function write_lines(fpath, lines)
   return true, nil
 end
 
+-- Returns true when the file contains a "Use Domain_Init" line,
+-- which identifies it as a managed domain config (not a system file).
+local function is_domain_conf(fpath)
+  local f = io.open(fpath, "r")
+  if not f then return false end
+  for line in f:lines() do
+    if line:lower():match("^%s*use%s+domain_init") then
+      f:close()
+      return true
+    end
+  end
+  f:close()
+  return false
+end
+
 local function list_conf_files()
   local files = {}
   local p = io.popen("ls " .. SITES_DIR .. "*.conf 2>/dev/null")
   for fname in p:lines() do
-    if not fname:match("%.bak") then
+    if not fname:match("%.bak") and is_domain_conf(fname) then
       table.insert(files, fname)
     end
   end
