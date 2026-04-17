@@ -51,7 +51,7 @@ COPY conf/sites-available/ /etc/apache2/sites-available/
 
 COPY conf/ports.conf /etc/apache2/ports.conf
 
-RUN a2enconf server-security macro cgid-runtime evasive sites-admin
+RUN a2enconf server-security macro cgid-runtime evasive
 
 # TOC page (Lua), logout animation page, CGI env-dump, TableFilter JS library
 COPY www/toc.lua       /var/www/html/toc.lua
@@ -72,8 +72,7 @@ COPY cron.d/geoip-update    /etc/cron.d/geoip-update
 RUN chmod 0644 /etc/cron.d/rotate-oidc-key /etc/cron.d/geoip-update
 
 # Runtime directory for generated configs (internal networks include, etc.)
-# sites-admin/ holds configs written by the admin web UI (separate from sites-enabled/)
-RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites-admin
+RUN mkdir -p /etc/apache2/conf-runtime
 
 # ── Volumes ──────────────────────────────────────────────────────────────────
 # ssl/          TLS certificates, one subdir per domain:
@@ -84,7 +83,7 @@ RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites-admin
 #
 # AddOn/        Optional per-vhost include snippets referenced via
 #               IncludeOptional /etc/apache2/AddOn/<domain>/<site>.pre*
-VOLUME ["/etc/apache2/ssl", "/etc/apache2/sites-enabled", "/etc/apache2/sites-admin", "/etc/apache2/AddOn"]
+VOLUME ["/etc/apache2/ssl", "/etc/apache2/sites-enabled", "/etc/apache2/AddOn"]
 
 EXPOSE 80 443
 

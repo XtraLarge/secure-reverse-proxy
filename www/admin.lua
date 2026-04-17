@@ -6,7 +6,7 @@
 -- sites-enabled volume must be mounted read-write.
 --
 
-local SITES_DIR = "/etc/apache2/sites-admin/"
+local SITES_DIR = "/etc/apache2/sites-enabled/"
 
 local MACRO_TYPES = {
   "VHost_Proxy",
@@ -30,6 +30,13 @@ end
 local function is_vhost_line(line)
   local l = trim(line):lower()
   return l:match("^use%s+vhost_") ~= nil
+end
+
+-- Returns true when the line above a VHost entry is "# no-admin"
+-- Such entries are hidden from the admin UI and cannot be edited or deleted.
+local function is_no_admin(lines, lineno)
+  local prev = trim(lines[lineno - 1] or ""):lower()
+  return prev == "# no-admin"
 end
 
 local function parse_vhost_line(line)
@@ -185,8 +192,8 @@ function onMacroChange(sel) {
 
 local TOC_DOMAIN = ""
 do
-  -- Derive TOC domain from first conf file found (sites-enabled or sites-admin)
-  local p = io.popen("ls /etc/apache2/sites-enabled/*.conf /etc/apache2/sites-admin/*.conf 2>/dev/null | head -1")
+  -- Derive TOC domain from first conf file found
+  local p = io.popen("ls /etc/apache2/sites-enabled/*.conf 2>/dev/null | head -1")
   if p then
     local f = p:read("*l") or ""
     p:close()
@@ -256,8 +263,8 @@ local function show_list(r, msg)
 
     -- Count vhost entries
     local entries = 0
-    for _, l in ipairs(lines) do
-      if is_vhost_line(l) then entries = entries + 1 end
+    for i, l in ipairs(lines) do
+      if is_vhost_line(l) and not is_no_admin(lines, i) then entries = entries + 1 end
     end
 
     r:puts('<div class="card">')
@@ -271,7 +278,7 @@ local function show_list(r, msg)
     else
       r:puts('<table><tr><th>Typ</th><th>Name</th><th>Domain</th><th>Ziel</th><th>Benutzer</th><th>Aktionen</th></tr>')
       for lineno, line in ipairs(lines) do
-        if is_vhost_line(line) then
+        if is_vhost_line(line) and not is_no_admin(lines, lineno) then
           local v = parse_vhost_line(line)
           if v then
             r:puts('<tr>')
@@ -413,6 +420,9 @@ local function do_save(r, p)
     if trim(lines[lineno] or "") ~= check then
       return show_list(r, "ERR: Datei wurde zwischenzeitlich geändert — bitte neu laden")
     end
+    if is_no_admin(lines, lineno) then
+      return show_list(r, "ERR: Dieser Eintrag ist mit # no-admin geschützt")
+    end
     lines[lineno] = new_line
   else
     -- Add: insert before Domain_Final, or before last non-empty line
@@ -451,6 +461,9 @@ local function do_delete(r, p)
 
   if trim(lines[lineno] or "") ~= check then
     return show_list(r, "ERR: Datei wurde zwischenzeitlich geändert — bitte neu laden")
+  end
+  if is_no_admin(lines, lineno) then
+    return show_list(r, "ERR: Dieser Eintrag ist mit # no-admin geschützt")
   end
 
   table.remove(lines, lineno)
