@@ -103,6 +103,6 @@ function consoleText(words, id, colors) {
 function invocation(){
   var text=getQueryVariable("text")
   //alert(text);
-  consoleText([text], 'text',['darkgreen']);
+  consoleText([text], 'text',['#00d4ff']);
 
 }

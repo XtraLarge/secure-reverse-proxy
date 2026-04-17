@@ -204,7 +204,8 @@ end
 -- parse security type
 function ssec (S)
   local T;
-  if endswith(S,"alias") then T="-"
+  if endswith(S,"alias")   then T="-"
+    elseif endswith(S,"any")   then T="OpenID Connect"
     elseif endswith(S,"oidc")  then T="OpenID Connect"
     elseif endswith(S,"basic") then T="Basic"
     elseif endswith(S,"ccert") then T="Client Certificate"
@@ -212,6 +213,23 @@ function ssec (S)
     else T="-"
   end
   return T;
+end
+
+-- check if logged-in user may see this entry
+function user_may_see(entry)
+  local users = entry["USERS"] or ""
+  -- No restriction or special marker — always visible
+  if users == "" or users == "-" or users == "- ALL -" then return true end
+  -- Only OIDC claim entries are filtered; Basic/others are shown to all
+  if entry["SECURE"] ~= "OpenID Connect" then return true end
+  -- Empty REMOTE_USER (shouldn't happen, but be safe)
+  if REMOTE_USER == "" then return true end
+  local u_lower = REMOTE_USER:lower()
+  -- USERS is comma+space separated: "alice, bob"
+  for u in (users .. ","):gmatch("([^,]+),?") do
+    if all_trim(u):lower() == u_lower then return true end
+  end
+  return false
 end
 
 -- parse internal protocol type
@@ -438,6 +456,7 @@ function otable()
   O = O .. "<tbody>\n"
 
   for CO = 1, #A do
+    if not user_may_see(A[CO]) then goto continue_row end
     O = O .. "<tr>\n"
     for CE = 1, #T do
       local E = T[CE]
@@ -469,8 +488,9 @@ function otable()
         O = O .. "</td>\n" 
     end
     O = O .. "</tr>\n\n"
+    ::continue_row::
   end
-  O = O .. "</tbody>\n" 
+  O = O .. "</tbody>\n"
   return O
 end
 
@@ -572,75 +592,89 @@ end
 
 function output(DOMAIN, TITLE)
 
-  local STYLE =  "<style>\n" ..
-                 "#XLTab {\n" ..
-                 "  font-family: \"Trebuchet MS\", Arial, Helvetica, sans-serif;\n" ..
-                 "  border-collapse: collapse;\n" ..
-                 "  width: 100%;\n" ..
-                 "}\n" ..
-                 "#XLTab td, #XLTab th {\n" ..
-                 "  border: 1px solid #ddd;\n" ..
-                 "  padding: 8px;\n" ..
-                 "}\n" ..
-                 "#XLTab tr:nth-child(even){background-color: #f2f2f2;}\n" ..
-                 "#XLTab tr:hover {background-color: #ddd;}\n" ..
-                 "#XLTab th {\n" ..
-                 "  padding-top: 12px;\n" ..
-                 "  padding-bottom: 12px;\n" ..
-                 "  background-color: #4CAF50;\n" ..
-                 "  color: white;\n" ..
-                 "}\n" ..
-                 "</style>\n"
+  local STYLE = [[<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;background:#0d0d1a;color:#ddd;min-height:100vh}
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  background:#060614;border-bottom:1px solid #2a2a4e;
+  padding:.6em 1.2em;flex-wrap:wrap;gap:.5em}
+.topbar-title{color:#00d4ff;font-size:1.1em;font-weight:bold;text-decoration:none}
+.topbar-nav{display:flex;gap:.5em}
+.topbar-nav a{
+  color:#7ecfff;text-decoration:none;font-size:.85em;
+  border:1px solid #2a2a4e;border-radius:3px;padding:3px 10px;
+  background:#0a0a22;transition:background .15s}
+.topbar-nav a:hover{background:#0f3460;color:#00d4ff}
+.topbar-user{color:#888;font-size:.8em}
+.main{padding:1em 1.2em}
+h1{color:#00d4ff;font-size:1.15em;margin-bottom:.8em}
+#XLTab{border-collapse:collapse;width:100%;font-size:.85em}
+#XLTab td,#XLTab th{border:1px solid #1a1a3e;padding:5px 9px;vertical-align:middle}
+#XLTab thead th{background:#0f3460;color:#00d4ff;text-align:left;white-space:nowrap;padding:7px 9px}
+#XLTab tbody tr:nth-child(even) td{background:#080820}
+#XLTab tbody tr:hover td{background:#111140}
+#XLTab a{color:#7ecfff;text-decoration:none}
+#XLTab a:hover{color:#00d4ff;text-decoration:underline}
+/* TableFilter overrides */
+.flt{background:#060614!important;color:#ddd!important;border:1px solid #3a3a6e!important;
+  border-radius:2px!important;padding:2px 5px!important;font-size:.82em!important}
+.flt_s{background:#060614!important;color:#ddd!important;border:1px solid #3a3a6e!important}
+.div_tbl_cont{overflow-x:auto}
+</style>]]
 
-  local SCRIPT = "<script src=\"/tablefilter/tablefilter.js\"></script>\n\n" ..
-                 "<script type=\"text/javascript\">\n" ..
-                 "var tf = new TableFilter('XLTab', {\n" ..
-                 "  base_path: '/tablefilter/',\n" ..
-                 "  col_0: 'select', \n" ..
-                 "  col_2: 'select', \n" ..
-                 "  col_3: 'select', \n" ..
-                 "  col_5: 'select', \n" ..
-                 "  col_8: 'select', \n" ..
-                 "  auto_filter: { \n" ..
-                 "    delay: 300 \n" ..
-                 "  }, \n" ..
-                 "  extensions: [{ name: 'sort' }], \n" ..
-                 "  case_sensitive: false, \n" ..
-                 "  col_types: [\n" ..
-                 "    'string',\n" ..
-                 "    'string',\n" ..
-                 "    'string',\n" ..
-                 "    'string',\n" ..
-                 "    'string',\n" ..
-                 "    'string',\n" ..
-                 "    'ipaddress',\n" ..
-                 "    'Number',\n" ..
-                 "    'string',\n" ..
-                 "    'string',\n" ..
-                 "  ],\n" ..
-                 "});\n" ..
-                 "tf.init();\n" ..
-                 "</script>\n\n" ..
-                 "<script type=\"text/javascript\">\n" ..
-                 "window.onload = function() {\n" ..
-                 "  document.getElementById(\"flt1_XLTab\").focus();\n" ..
-                 "};\n" ..
-                 "</script>\n\n"
+  local SCRIPT = [[<script src="/tablefilter/tablefilter.js"></script>
+<script>
+var tf = new TableFilter('XLTab', {
+  base_path: '/tablefilter/',
+  col_0: 'select',
+  col_2: 'select',
+  col_3: 'select',
+  col_5: 'select',
+  col_8: 'select',
+  auto_filter: { delay: 300 },
+  extensions: [{ name: 'sort' }],
+  case_sensitive: false,
+  col_types: [
+    'string','string','string','string','string',
+    'string','ipaddress','Number','string','string'
+  ]
+});
+tf.init();
+window.onload = function() {
+  var f = document.getElementById('flt1_XLTab');
+  if (f) f.focus();
+};
+</script>]]
 
-  local TABLE = "<table id=\"XLTab\">\n" ..
+  local TABLE = "<div class=\"div_tbl_cont\"><table id=\"XLTab\">\n" ..
                 otable() ..
-                "</table>"
+                "</table></div>"
 
-  local PAGE = "<!DOCTYPE html>\n<html lang=de>\n" ..
-               "<head>\n" ..
-               "<title>" .. TITLE .. "</title>\n" ..
-               "<link rel=\"icon\" type=\"image/x-icon\" href=\"https://login.".. DOMAIN .. "/favicon_toc.ico\">\n" ..
-               "</head>\n\n" ..
-               "<body>\n" .. STYLE .. "\n" ..
-               "<h1 align=\"center\">" .. "<a href=\"/logout\">" .. TITLE .. " - " .. REMOTE_USER .. "</a> </h1>\n" .. 
-               TABLE .. "\n" ..
-               "\n" .. SCRIPT ..
-               "</body>\n</html>\n"
+  local ADMINLINK = ""
+  if DOMAIN and DOMAIN ~= "" then
+    ADMINLINK = "  <a href=\"https://admin." .. DOMAIN .. "\">&#9881; Admin</a>\n"
+  end
+
+  local PAGE = "<!DOCTYPE html>\n<html lang=de>\n<head>\n" ..
+    "<meta charset=UTF-8>\n" ..
+    "<meta name=viewport content='width=device-width,initial-scale=1'>\n" ..
+    "<title>" .. TITLE .. "</title>\n" ..
+    STYLE .. "\n" ..
+    "</head>\n<body>\n" ..
+    "<div class=\"topbar\">\n" ..
+    "  <a class=\"topbar-title\" href=\"/\">" .. TITLE .. "</a>\n" ..
+    "  <div class=\"topbar-nav\">\n" ..
+    ADMINLINK ..
+    "  <a href=\"https://logout." .. (DOMAIN or "") .. "\">&#x2715; Logout</a>\n" ..
+    "  </div>\n" ..
+    "  <span class=\"topbar-user\">" .. REMOTE_USER .. "</span>\n" ..
+    "</div>\n" ..
+    "<div class=\"main\">\n" ..
+    TABLE .. "\n" ..
+    "</div>\n" ..
+    SCRIPT .. "\n" ..
+    "</body>\n</html>\n"
 
   return PAGE
 end

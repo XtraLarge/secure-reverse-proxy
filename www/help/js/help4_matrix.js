@@ -9,8 +9,8 @@
     "use strict";
 
     var FONT_SIZE   = 14;
-    var COLOR_TEXT  = "#26B019";
-    var COLOR_TRAIL = "rgba(0,0,0,0.05)";
+    var COLOR_TEXT  = "#00d4ff";
+    var COLOR_TRAIL = "rgba(13,13,26,0.07)";
     var CHARS       = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*<>[]{}+-=/\\|";
     var RESET_PROB  = 0.975;   // probability a column resets after reaching bottom
     var INTERVAL_MS = 40;

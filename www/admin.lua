@@ -126,9 +126,20 @@ end
 -- ── CSS / HTML ─────────────────────────────────────────────────────────────────
 
 local CSS = [[<style>
-*{box-sizing:border-box}
-body{font-family:Arial,sans-serif;margin:0;padding:1.5em;background:#0d0d1a;color:#ddd}
-h1{color:#00d4ff;margin:0 0 .3em}h1 a{color:inherit;text-decoration:none}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;background:#0d0d1a;color:#ddd;min-height:100vh}
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  background:#060614;border-bottom:1px solid #2a2a4e;
+  padding:.6em 1.2em;flex-wrap:wrap;gap:.5em}
+.topbar-title{color:#00d4ff;font-size:1.1em;font-weight:bold;text-decoration:none}
+.topbar-nav{display:flex;gap:.5em}
+.topbar-nav a{
+  color:#7ecfff;text-decoration:none;font-size:.85em;
+  border:1px solid #2a2a4e;border-radius:3px;padding:3px 10px;
+  background:#0a0a22;transition:background .15s}
+.topbar-nav a:hover{background:#0f3460;color:#00d4ff}
+.main{padding:1.2em}
 h2{color:#7ecfff;font-size:1em;margin:0 0 .7em;border-bottom:1px solid #2a2a4e;padding-bottom:.3em}
 table{border-collapse:collapse;width:100%;font-size:.88em}
 th{background:#0f3460;color:#00d4ff;padding:6px 10px;text-align:left;white-space:nowrap}
@@ -156,7 +167,7 @@ a.btn,button.btn{padding:4px 11px;border:none;border-radius:3px;cursor:pointer;
 .msg{padding:.5em .8em;border-radius:3px;margin-bottom:.8em;font-size:.9em}
 .ok{background:#003d00;color:#99ff99}.err{background:#3d0000;color:#ff9999}
 .actions{display:flex;gap:.4em;flex-wrap:nowrap}
-.topbar{display:flex;align-items:center;gap:1em;margin-bottom:1.2em;flex-wrap:wrap}
+.applybar{display:flex;align-items:center;gap:1em;margin-bottom:1.2em;flex-wrap:wrap}
 .dim{color:#666;font-size:.8em}
 </style>]]
 
@@ -172,12 +183,36 @@ function onMacroChange(sel) {
 }
 </script>]]
 
+local TOC_DOMAIN = ""
+do
+  -- Derive TOC domain from first conf file found
+  local p = io.popen("ls /etc/apache2/sites-enabled/*.conf 2>/dev/null | head -1")
+  if p then
+    local f = p:read("*l") or ""
+    p:close()
+    -- extract domain: basename without .conf
+    TOC_DOMAIN = f:match("([^/]+)%.conf$") or ""
+  end
+end
+
+local function topbar(title)
+  local toc_link  = TOC_DOMAIN ~= "" and ("https://toc."    .. TOC_DOMAIN) or "/"
+  local logout_link = TOC_DOMAIN ~= "" and ("https://logout." .. TOC_DOMAIN) or "/logout"
+  return '<div class="topbar">'
+    .. '<a class="topbar-title" href="/">\xE2\x9A\x99 ' .. h(title) .. '</a>'
+    .. '<div class="topbar-nav">'
+    .. '<a href="' .. h(toc_link) .. '">\xE2\x98\xB0 TOC</a>'
+    .. '<a href="' .. h(logout_link) .. '">\xC3\x97 Logout</a>'
+    .. '</div>'
+    .. '</div>'
+end
+
 local function page_head(title)
   return "<!DOCTYPE html><html lang=de><head><meta charset=UTF-8>"
     .. "<meta name=viewport content='width=device-width,initial-scale=1'>"
     .. "<title>" .. h(title) .. " — Proxy Admin</title>"
     .. CSS .. JS .. "</head><body>"
-    .. '<h1><a href="/">&#9881; Proxy Admin</a></h1>'
+    .. topbar(title)
 end
 
 local function msg_html(txt)
@@ -205,7 +240,8 @@ local function show_list(r, msg)
   r:puts(page_head("Übersicht"))
   if msg then r:puts(msg_html(msg)) end
 
-  r:puts('<div class="topbar">')
+  r:puts('<div class="main">')
+  r:puts('<div class="applybar">')
   r:puts('<form method="POST" action="/?action=apply">')
   r:puts('<button class="btn b-apply" type="submit">&#9654;&nbsp;Konfiguration anwenden</button>')
   r:puts('</form>')
@@ -264,7 +300,7 @@ local function show_list(r, msg)
     r:puts('</div>')
     ::continue::
   end
-  r:puts('</body></html>')
+  r:puts('</div></body></html>')
 end
 
 -- ── Entry form ────────────────────────────────────────────────────────────────
@@ -272,7 +308,7 @@ end
 local function show_form(r, fname, lineno, pre, errmsg)
   local title = lineno and "Eintrag bearbeiten" or "Neuer Eintrag"
   r:puts(page_head(title))
-  r:puts('<div class="card">')
+  r:puts('<div class="main"><div class="card">')
   r:puts('<h2>' .. title .. ' — ' .. h(fname) .. '</h2>')
   if errmsg then r:puts(msg_html("ERR: " .. errmsg)) end
 
@@ -320,7 +356,7 @@ local function show_form(r, fname, lineno, pre, errmsg)
   r:puts('<div class="form-row" style="margin-top:1.2em">')
   r:puts('<button class="btn b-save" type=submit>&#10003;&nbsp;Speichern</button>&nbsp;')
   r:puts('<a class="btn b-cancel" href="/">Abbrechen</a>')
-  r:puts('</div></form></div></body></html>')
+  r:puts('</div></form></div></div></body></html>')
 end
 
 -- ── Save (POST) ───────────────────────────────────────────────────────────────
