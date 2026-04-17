@@ -174,7 +174,7 @@ a2enconf auth_openidc 2>/dev/null || true
 # Split both fields, filter for valid domain patterns, mkdir all found ones.
 # Case-insensitive grep (-i) handles both "Use" and "USE" variants.
 # || true prevents pipefail from aborting when no conf files are found.
-grep -rih '^[[:space:]]*use[[:space:]]' /etc/apache2/sites-enabled/ 2>/dev/null \
+grep -rih '^[[:space:]]*use[[:space:]]' /etc/apache2/sites-enabled/ /etc/apache2/sites-admin/ 2>/dev/null \
     | awk '{print $3; print $4}' \
     | grep -E '^[A-Za-z0-9]([A-Za-z0-9-]*\.)+[A-Za-z]{2,}$' \
     | sort -u \

@@ -6,7 +6,7 @@
 -- sites-enabled volume must be mounted read-write.
 --
 
-local SITES_DIR = "/etc/apache2/sites-enabled/"
+local SITES_DIR = "/etc/apache2/sites-admin/"
 
 local MACRO_TYPES = {
   "VHost_Proxy",
@@ -100,26 +100,11 @@ local function write_lines(fpath, lines)
   return true, nil
 end
 
--- Returns true when the file contains a "Use Domain_Init" line,
--- which identifies it as a managed domain config (not a system file).
-local function is_domain_conf(fpath)
-  local f = io.open(fpath, "r")
-  if not f then return false end
-  for line in f:lines() do
-    if line:lower():match("^%s*use%s+domain_init") then
-      f:close()
-      return true
-    end
-  end
-  f:close()
-  return false
-end
-
 local function list_conf_files()
   local files = {}
   local p = io.popen("ls " .. SITES_DIR .. "*.conf 2>/dev/null")
   for fname in p:lines() do
-    if not fname:match("%.bak") and is_domain_conf(fname) then
+    if not fname:match("%.bak") then
       table.insert(files, fname)
     end
   end
@@ -207,8 +192,8 @@ function onMacroChange(sel) {
 
 local TOC_DOMAIN = ""
 do
-  -- Derive TOC domain from first conf file found
-  local p = io.popen("ls /etc/apache2/sites-enabled/*.conf 2>/dev/null | head -1")
+  -- Derive TOC domain from sites-admin first, fall back to sites-enabled
+  local p = io.popen("ls /etc/apache2/sites-admin/*.conf /etc/apache2/sites-enabled/*.conf 2>/dev/null | head -1")
   if p then
     local f = p:read("*l") or ""
     p:close()
