@@ -91,11 +91,21 @@ deploy_cert() {
     local root="$1"
     local src="${LE_LIVE}/${root}"
     local dst="${SSL_DIR}/${root}"
+    local active="/run/apache2/active-ssl/${root}"
+
+    # Copy to ssl/ volume for persistence across container restarts
     mkdir -p "$dst"
     cp -fL "${src}/cert.pem"      "${dst}/cert.pem"
     cp -fL "${src}/privkey.pem"   "${dst}/key.pem"
     cp -fL "${src}/fullchain.pem" "${dst}/fullchain.pem"
-    log "Deployed cert for ${root} → ${dst}"
+
+    # Update active-ssl symlinks so Apache picks up the real cert on graceful reload
+    mkdir -p "$active"
+    ln -sfn "${src}/cert.pem"      "${active}/cert.pem"
+    ln -sfn "${src}/privkey.pem"   "${active}/key.pem"
+    ln -sfn "${src}/fullchain.pem" "${active}/fullchain.pem"
+
+    log "Deployed cert for ${root} → ${dst} (active-ssl updated)"
 }
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
