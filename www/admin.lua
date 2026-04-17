@@ -209,7 +209,8 @@ tr:hover td{background:#111130}
 a.btn,button.btn{padding:4px 11px;border:none;border-radius:3px;cursor:pointer;
   text-decoration:none;display:inline-block;font-size:.82em;line-height:1.5}
 .b-edit{background:#0f3460;color:#7ecfff}.b-del{background:#5c0000;color:#ff9999}
-.b-addon{background:#1a1a00;color:#ffee66}.b-cfg{background:#001f33;color:#5599bb}
+.b-addon{background:#1a1a00;color:#555533}.b-addon-active{background:#3a3300;color:#ffee44;font-weight:bold}
+.b-cfg{background:#001f33;color:#5599bb}
 .b-add{background:#003d00;color:#99ff99}.b-apply{background:#3d3d00;color:#ffff99;
   font-size:.95em;padding:7px 18px}.b-save{background:#003d3d;color:#99ffff}
 .b-cancel{background:#2a2a4e;color:#aaa}
@@ -331,14 +332,19 @@ local function show_list(r, msg)
           local v = parse_vhost_line(line)
           if v then
             -- Check if AddOn files exist for this entry
-            local has_pre  = io.open(addon_path(v.domain, v.name, "preconfig"),  "r") ~= nil
-            local has_post = io.open(addon_path(v.domain, v.name, "postconfig"), "r") ~= nil
-            if has_pre  then io.open(addon_path(v.domain, v.name, "preconfig"),  "r"):close() end
-            if has_post then io.open(addon_path(v.domain, v.name, "postconfig"), "r"):close() end
-            local addon_tag = (has_pre or has_post) and ' <span class="tag" style="background:#1a1a00;color:#ffee66">AddOn</span>' or ""
+            local has_pre  = fexists(addon_path(v.domain, v.name, "preconfig"))
+            local has_post = fexists(addon_path(v.domain, v.name, "postconfig"))
+            local has_addon = has_pre or has_post
+            -- Describe which files exist (pre / post / beide)
+            local addon_hint = ""
+            if has_pre and has_post then addon_hint = "pre+post"
+            elseif has_pre          then addon_hint = "pre"
+            elseif has_post         then addon_hint = "post"
+            end
+
             r:puts('<tr>')
             r:puts('<td>' .. macro_tag(v.macro) .. '</td>')
-            r:puts('<td>' .. h(v.name) .. addon_tag .. '</td>')
+            r:puts('<td>' .. h(v.name) .. '</td>')
             r:puts('<td>' .. h(v.domain) .. '</td>')
             r:puts('<td style="font-family:monospace;font-size:.82em">' .. h(v.dest) .. '</td>')
             r:puts('<td style="font-size:.82em">' .. h(v.users) .. '</td>')
@@ -346,9 +352,16 @@ local function show_list(r, msg)
             -- Edit
             r:puts('<a class="btn b-edit" href="/?action=edit&amp;file='
               .. h(fname) .. '&amp;line=' .. lineno .. '">Bearbeiten</a>')
-            -- AddOn
-            r:puts('<a class="btn b-addon" href="/?action=addon&amp;name='
-              .. h(v.name) .. '&amp;domain=' .. h(v.domain) .. '">AddOn</a>')
+            -- AddOn: bright when files exist, dim when not
+            if has_addon then
+              r:puts('<a class="btn b-addon-active" href="/?action=addon&amp;name='
+                .. h(v.name) .. '&amp;domain=' .. h(v.domain)
+                .. '" title="AddOn vorhanden: ' .. addon_hint .. '">'
+                .. '&#9679;&nbsp;AddOn</a>')
+            else
+              r:puts('<a class="btn b-addon" href="/?action=addon&amp;name='
+                .. h(v.name) .. '&amp;domain=' .. h(v.domain) .. '">AddOn</a>')
+            end
             -- Config view
             r:puts('<a class="btn b-cfg" href="/?action=config&amp;file='
               .. h(fname) .. '&amp;line=' .. lineno .. '">Config</a>')
