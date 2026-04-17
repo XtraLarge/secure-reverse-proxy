@@ -851,67 +851,68 @@ end
 
 -- ── VHost config view ────────────────────────────────────────────────────────
 
+-- Extract all <VirtualHost> blocks whose ServerName matches fqdn (case-insensitive).
+-- Uses apache2ctl -t -DDUMP_CONFIG which outputs the fully macro-expanded config.
+local function extract_vhost_blocks(full_config, fqdn)
+  local blocks = {}
+  local fqdn_pat = fqdn:lower():gsub("%-", "%%-"):gsub("%.", "%%.")
+  local pos = 1
+  while true do
+    local s = full_config:find("<VirtualHost", pos, true)
+    if not s then break end
+    local e = full_config:find("</VirtualHost>", s, true)
+    if not e then break end
+    e = e + #"</VirtualHost>" - 1
+    local block = full_config:sub(s, e)
+    -- Match ServerName directive in this block
+    if block:lower():match("servername%s+" .. fqdn_pat .. "%s") or
+       block:lower():match("servername%s+" .. fqdn_pat .. "$") then
+      table.insert(blocks, block)
+    end
+    pos = e + 1
+  end
+  return blocks
+end
+
 local function show_vhost_config_view(r, name, domain, rawline)
   local vhost_fqdn = name .. "." .. domain
   r:puts(page_head("Config: " .. vhost_fqdn))
   r:puts('<div class="main"><div class="card">')
   r:puts('<h2>Konfiguration — <code>' .. h(vhost_fqdn) .. '</code></h2>')
 
-  -- Macro call line
-  r:puts('<p style="color:#aaa;font-size:.85em;margin-bottom:.4em">Macro-Aufruf:</p>')
+  -- Macro call line (source reference)
+  r:puts('<p style="color:#aaa;font-size:.85em;margin-bottom:.4em">Macro-Aufruf in sites-admin:</p>')
   r:puts('<pre style="background:#060614;color:#7ecfff;padding:.7em;border-radius:3px;'
     .. 'font-size:.85em;margin-bottom:1.2em;overflow-x:auto">' .. h(rawline) .. '</pre>')
 
-  -- AddOn files
-  local pre_path  = addon_path(domain, name, "preconfig")
-  local post_path = addon_path(domain, name, "postconfig")
-  local pre_content  = read_file(pre_path)
-  local post_content = read_file(post_path)
-
-  if pre_content ~= "" then
-    r:puts('<p style="color:#aaa;font-size:.85em;margin-bottom:.4em">'
-      .. 'Pre-Config <span style="color:#555">(' .. h(pre_path) .. ')</span>:</p>')
-    r:puts('<pre style="background:#060614;color:#ddd;padding:.7em;border-radius:3px;'
-      .. 'font-size:.82em;margin-bottom:1.2em;overflow-x:auto">' .. h(pre_content) .. '</pre>')
-  end
-
-  if post_content ~= "" then
-    r:puts('<p style="color:#aaa;font-size:.85em;margin-bottom:.4em">'
-      .. 'Post-Config <span style="color:#555">(' .. h(post_path) .. ')</span>:</p>')
-    r:puts('<pre style="background:#060614;color:#ddd;padding:.7em;border-radius:3px;'
-      .. 'font-size:.82em;margin-bottom:1.2em;overflow-x:auto">' .. h(post_content) .. '</pre>')
-  end
-
-  if pre_content == "" and post_content == "" then
-    r:puts('<p style="color:#555;font-size:.85em;margin-bottom:1.2em">Keine AddOn-Dateien vorhanden.</p>')
-  end
-
-  -- apache2ctl -S: filter lines mentioning this vhost
-  local p = io.popen("/usr/sbin/apache2ctl -S 2>&1")
-  local ctl_out = p:read("*a")
+  -- Expanded VHost config via DUMP_CONFIG
+  local p = io.popen("/usr/sbin/apache2ctl -t -DDUMP_CONFIG 2>&1")
+  local full_config = p:read("*a")
   p:close()
 
-  local filtered = {}
-  local fqdn_lower = vhost_fqdn:lower()
-  for line in ctl_out:gmatch("[^\n]+") do
-    if line:lower():find(fqdn_lower, 1, true) then
-      table.insert(filtered, line)
-    end
-  end
-
-  if #filtered > 0 then
+  local blocks = extract_vhost_blocks(full_config, vhost_fqdn)
+  if #blocks > 0 then
     r:puts('<p style="color:#aaa;font-size:.85em;margin-bottom:.4em">'
-      .. 'apache2ctl -S (aktive VHost-Einträge):</p>')
-    r:puts('<pre style="background:#060614;color:#99ff99;padding:.7em;border-radius:3px;'
-      .. 'font-size:.82em;margin-bottom:1.2em;overflow-x:auto">'
-      .. h(table.concat(filtered, "\n")) .. '</pre>')
+      .. 'Expandierte Apache-Konfiguration (' .. #blocks
+      .. ' VirtualHost-Block' .. (#blocks > 1 and "s" or "") .. '):</p>')
+    for i, block in ipairs(blocks) do
+      if #blocks > 1 then
+        -- Port hint from opening tag, e.g. <VirtualHost *:443>
+        local port = block:match("<VirtualHost[^>]*:(%d+)") or tostring(i)
+        r:puts('<p style="color:#666;font-size:.78em;margin:.6em 0 .2em">— Port ' .. port .. ' —</p>')
+      end
+      r:puts('<pre style="background:#060614;color:#ddd;padding:.7em;border-radius:3px;'
+        .. 'font-size:.82em;margin-bottom:1em;overflow-x:auto;white-space:pre-wrap">'
+        .. h(block) .. '</pre>')
+    end
   else
-    r:puts('<p style="color:#555;font-size:.85em;margin-bottom:1.2em">'
-      .. 'apache2ctl -S: kein aktiver VHost-Eintrag für '
-      .. h(vhost_fqdn) .. ' gefunden (Konfiguration noch nicht angewendet?).</p>')
+    r:puts('<p style="color:#aa6600;font-size:.85em;margin-bottom:1.2em">'
+      .. 'Kein VirtualHost-Block f\xC3\xBCr <strong>' .. h(vhost_fqdn) .. '</strong> gefunden.<br>'
+      .. 'M\xC3\xB6glicherweise wurde die Konfiguration noch nicht angewendet '
+      .. 'oder der Macro-Aufruf enth\xC3\xA4lt einen Fehler.</p>')
   end
 
-  r:puts('<a class="btn b-cancel" href="/">&#8592;&nbsp;Zurück zur Übersicht</a>')
+  r:puts('<a class="btn b-cancel" href="/">&#8592;&nbsp;Zur\xC3\xBCck zur \xC3\x9Cbersicht</a>')
   r:puts('</div></div></body></html>')
 end
 
