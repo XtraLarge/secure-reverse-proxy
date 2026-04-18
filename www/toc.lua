@@ -680,8 +680,13 @@ function handle(r)
   -- Set MIME type to text/html:
   r.content_type = "text/html"
 
-  -- return output
- r:puts( output(DOMAIN, TITLE ))
+  -- Derive domain from request hostname (e.g. "toc.example.com" → "example.com").
+  -- This is more reliable than extracting the domain from the conf filename, which
+  -- breaks when files are named without the TLD (e.g. "derwerres.conf").
+  local req_host = (r.hostname or ""):gsub(":%d+$", "")
+  local req_domain = req_host:match("^[^.]+%.(.+)$") or DOMAIN
+
+  r:puts( output(req_domain, TITLE ))
 end
 
 local i, t, popen = 0, {}, io.popen
