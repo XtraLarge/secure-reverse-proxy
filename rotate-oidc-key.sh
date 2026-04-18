@@ -22,9 +22,10 @@ PREV_KEY="$(cat "$PASSPHRASE_FILE")"
 NEW_KEY="$(openssl rand -hex 32)"
 
 echo "${NEW_KEY}" > "$PASSPHRASE_FILE"
-# mod_auth_openidc accepts two space-separated passphrases:
-# the first encrypts new sessions, the second still decrypts old ones.
-printf 'OIDCCryptoPassphrase  "%s" "%s"\n' "${NEW_KEY}" "${PREV_KEY}" > "$PASSPHRASE_CONF"
+# Note: mod_auth_openidc 2.4.x (Debian 12) only accepts a single passphrase.
+# Multi-passphrase support (for zero-downtime rotation) is available in 2.4.14+.
+# Sessions encrypted with the old key will require re-authentication after rotation.
+printf 'OIDCCryptoPassphrase  "%s"\n' "${NEW_KEY}" > "$PASSPHRASE_CONF"
 
 if apache2ctl graceful 2>/dev/null; then
     echo "[rotate-oidc-key] Passphrase rotated — graceful reload done ($(date -u +%FT%TZ))"
