@@ -839,38 +839,138 @@ local function json_enc(v)
   return "null"
 end
 
--- Check whether a Keycloak client with the given clientId exists.
--- Returns client table or nil.
+-- Client naming convention: proxy-<domain>
+local function kc_client_id(domain) return "proxy-" .. domain end
+
+-- Check whether a Keycloak client proxy-<domain> exists.
+-- Returns internal UUID or nil.
 local function kc_client_exists(domain, token)
   if KC_ADMIN_URL == "" then return nil end
-  -- KC_ADMIN_URL ends with /realms/<realm> — derive clients endpoint
   local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local cid  = kc_client_id(domain)
   local tmp = os.tmpname()
   io.open(tmp,"w"):write("Authorization: Bearer " .. token):close()
   local cmd = string.format(
     'curl -s -k -H @%s "%s/clients?clientId=%s&search=false" 2>/dev/null',
-    tmp, base, domain)
+    tmp, base, cid)
   local p = io.popen(cmd); local out = p:read("*a"); p:close()
   os.remove(tmp)
-  -- Quick check: does the response contain our clientId?
-  if out:find('"clientId"') and out:find('"' .. domain:gsub("%-","%%%-"):gsub("%.","%%%%.") .. '"') then
-    local id = out:match('"id"%s*:%s*"([^"]+)"')
-    return id
+  local esc = cid:gsub("%-","%%%-"):gsub("%.","%%%%.")
+  if out:find('"clientId"') and out:find('"' .. esc .. '"') then
+    return out:match('"id"%s*:%s*"([^"]+)"')
   end
   return nil
 end
 
+-- Fetch a realm role's internal ID by name.
+local function kc_realm_role_id(role_name, token)
+  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local tmp = os.tmpname()
+  io.open(tmp,"w"):write("Authorization: Bearer " .. token):close()
+  local cmd = string.format('curl -s -k -H @%s "%s/roles/%s" 2>/dev/null', tmp, base, role_name)
+  local p = io.popen(cmd); local out = p:read("*a"); p:close()
+  os.remove(tmp)
+  return out:match('"id"%s*:%s*"([^"]+)"')
+end
+
+-- Create a client role (admin / user) on a client UUID.
+local function kc_add_client_role(cuuid, role_name, desc, token)
+  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local tmp_h = os.tmpname(); local tmp_b = os.tmpname()
+  io.open(tmp_h,"w"):write("Authorization: Bearer " .. token):close()
+  io.open(tmp_b,"w"):write(json_enc({name=role_name, description=desc})):close()
+  local cmd = string.format(
+    'curl -s -k -o /dev/null -w "%%{http_code}" -X POST'
+    ..' -H @%s -H "Content-Type: application/json" --data @%s "%s/clients/%s/roles" 2>/dev/null',
+    tmp_h, tmp_b, base, cuuid)
+  local p = io.popen(cmd); p:read("*a"); p:close()
+  os.remove(tmp_h); os.remove(tmp_b)
+end
+
+-- Fetch a client role's internal ID.
+local function kc_client_role_id(cuuid, role_name, token)
+  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local tmp = os.tmpname()
+  io.open(tmp,"w"):write("Authorization: Bearer " .. token):close()
+  local cmd = string.format(
+    'curl -s -k -H @%s "%s/clients/%s/roles/%s" 2>/dev/null', tmp, base, cuuid, role_name)
+  local p = io.popen(cmd); local out = p:read("*a"); p:close()
+  os.remove(tmp)
+  return out:match('"id"%s*:%s*"([^"]+)"')
+end
+
+-- Create a Keycloak group by name; returns its UUID.
+local function kc_create_group(name, token)
+  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local tmp_h = os.tmpname(); local tmp_b = os.tmpname()
+  io.open(tmp_h,"w"):write("Authorization: Bearer " .. token):close()
+  io.open(tmp_b,"w"):write(json_enc({name=name})):close()
+  local cmd = string.format(
+    'curl -s -k -o /dev/null -X POST'
+    ..' -H @%s -H "Content-Type: application/json" --data @%s "%s/groups" 2>/dev/null',
+    tmp_h, tmp_b, base)
+  local p = io.popen(cmd); p:read("*a"); p:close()
+  os.remove(tmp_h); os.remove(tmp_b)
+  -- Retrieve the new group's ID by listing and matching by name
+  local tmp2 = os.tmpname()
+  io.open(tmp2,"w"):write("Authorization: Bearer " .. token):close()
+  local cmd2 = string.format('curl -s -k -H @%s "%s/groups?max=200" 2>/dev/null', tmp2, base)
+  local p2 = io.popen(cmd2); local out2 = p2:read("*a"); p2:close()
+  os.remove(tmp2)
+  local esc = name:gsub("%-","%%%-"):gsub("%.","%%%%.")
+  for block in out2:gmatch("%b{}") do
+    if block:find('"name"%s*:%s*"' .. esc .. '"') then
+      local gid = block:match('"id"%s*:%s*"([^"]+)"')
+      if gid then return gid end
+    end
+  end
+  return nil
+end
+
+-- Assign a realm role to a group.
+local function kc_group_realm_role(gid, role_id, role_name, token)
+  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local tmp_h = os.tmpname(); local tmp_b = os.tmpname()
+  io.open(tmp_h,"w"):write("Authorization: Bearer " .. token):close()
+  io.open(tmp_b,"w"):write(json_enc({{id=role_id, name=role_name}})):close()
+  local cmd = string.format(
+    'curl -s -k -o /dev/null -X POST'
+    ..' -H @%s -H "Content-Type: application/json" --data @%s "%s/groups/%s/role-mappings/realm" 2>/dev/null',
+    tmp_h, tmp_b, base, gid)
+  local p = io.popen(cmd); p:read("*a"); p:close()
+  os.remove(tmp_h); os.remove(tmp_b)
+end
+
+-- Assign a client role to a group.
+local function kc_group_client_role(gid, cuuid, role_id, role_name, token)
+  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local tmp_h = os.tmpname(); local tmp_b = os.tmpname()
+  io.open(tmp_h,"w"):write("Authorization: Bearer " .. token):close()
+  io.open(tmp_b,"w"):write(json_enc({{id=role_id, name=role_name, clientRole=true, containerId=cuuid}})):close()
+  local cmd = string.format(
+    'curl -s -k -o /dev/null -X POST'
+    ..' -H @%s -H "Content-Type: application/json" --data @%s "%s/groups/%s/role-mappings/clients/%s" 2>/dev/null',
+    tmp_h, tmp_b, base, gid, cuuid)
+  local p = io.popen(cmd); p:read("*a"); p:close()
+  os.remove(tmp_h); os.remove(tmp_b)
+end
+
 -- Create a new Keycloak client for the given domain.
 -- Returns secret or nil + error.
+-- Create a new Keycloak client for the given domain.
+-- Naming: proxy-<domain>
+-- Also creates client roles (admin/user), domain groups, and role mappings.
+-- Returns secret or nil + error.
 local function kc_create_client(domain, token)
-  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
-  local tmp_h = os.tmpname()
-  local tmp_b = os.tmpname()
+  local base      = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local client_id = kc_client_id(domain)
+  local tmp_h     = os.tmpname()
+  local tmp_b     = os.tmpname()
   io.open(tmp_h,"w"):write("Authorization: Bearer " .. token):close()
 
   local body = json_enc({
-    clientId               = domain,
-    name                   = "Proxy " .. domain,
+    clientId               = client_id,
+    name                   = "Apache OIDC Proxy " .. domain,
     description            = "Apache OIDC Proxy fuer " .. domain,
     enabled                = true,
     protocol               = "openid-connect",
@@ -896,40 +996,61 @@ local function kc_create_client(domain, token)
     return nil, "Keycloak antwortete mit HTTP " .. tostring(status)
   end
 
-  -- Add groups mapper
-  local cid = kc_client_exists(domain, token)
-  if cid then
-    local mapper = json_enc({
-      name           = "groups",
-      protocol       = "openid-connect",
-      protocolMapper = "oidc-group-membership-mapper",
-      config = {
-        ["full.path"]            = "false",
-        ["id.token.claim"]       = "true",
-        ["access.token.claim"]   = "true",
-        ["claim.name"]           = "groups",
-        ["userinfo.token.claim"] = "true",
-      }
-    })
-    io.open(tmp_b,"w"):write(mapper):close()
-    local cm = string.format(
-      'curl -s -k -X POST -H @%s -H "Content-Type: application/json"'
-      .. ' --data @%s "%s/clients/%s/protocol-mappers/models" 2>/dev/null',
-      tmp_h, tmp_b, base, cid)
-    io.popen(cm):close()
-
-    -- Fetch the generated secret
-    local sm = string.format(
-      'curl -s -k -H @%s "%s/clients/%s/client-secret" 2>/dev/null',
-      tmp_h, base, cid)
-    local sp = io.popen(sm); local sout = sp:read("*a"); sp:close()
-    local secret = sout:match('"value"%s*:%s*"([^"]+)"')
+  local cuuid = kc_client_exists(domain, token)
+  if not cuuid then
     os.remove(tmp_h); os.remove(tmp_b)
-    return secret, nil
+    return nil, "Client angelegt, aber UUID nicht lesbar"
   end
 
+  -- Groups claim mapper
+  local mapper = json_enc({
+    name           = "groups",
+    protocol       = "openid-connect",
+    protocolMapper = "oidc-group-membership-mapper",
+    config = {
+      ["full.path"]            = "false",
+      ["id.token.claim"]       = "true",
+      ["access.token.claim"]   = "true",
+      ["claim.name"]           = "groups",
+      ["userinfo.token.claim"] = "true",
+    }
+  })
+  io.open(tmp_b,"w"):write(mapper):close()
+  local cm = string.format(
+    'curl -s -k -X POST -H @%s -H "Content-Type: application/json"'
+    .. ' --data @%s "%s/clients/%s/protocol-mappers/models" 2>/dev/null',
+    tmp_h, tmp_b, base, cuuid)
+  local pm = io.popen(cm); pm:read("*a"); pm:close()
+
+  -- Client roles: admin + user
+  kc_add_client_role(cuuid, "admin", "Administratoren fuer " .. domain, token)
+  kc_add_client_role(cuuid, "user",  "Benutzer fuer " .. domain,        token)
+
+  local admin_rid = kc_client_role_id(cuuid, "admin", token)
+  local user_rid  = kc_client_role_id(cuuid, "user",  token)
+  local gu_rid    = kc_realm_role_id("global_user", token)
+
+  -- Domain groups with role mappings
+  local ga_gid = kc_create_group(domain .. "-admins", token)
+  local gu_gid = kc_create_group(domain .. "-users",  token)
+
+  if ga_gid and admin_rid then
+    kc_group_client_role(ga_gid, cuuid, admin_rid, "admin", token)
+    if gu_rid then kc_group_realm_role(ga_gid, gu_rid, "global_user", token) end
+  end
+  if gu_gid and user_rid then
+    kc_group_client_role(gu_gid, cuuid, user_rid, "user", token)
+    if gu_rid then kc_group_realm_role(gu_gid, gu_rid, "global_user", token) end
+  end
+
+  -- Fetch the generated secret
+  local sm = string.format(
+    'curl -s -k -H @%s "%s/clients/%s/client-secret" 2>/dev/null',
+    tmp_h, base, cuuid)
+  local sp = io.popen(sm); local sout = sp:read("*a"); sp:close()
+  local secret = sout:match('"value"%s*:%s*"([^"]+)"')
   os.remove(tmp_h); os.remove(tmp_b)
-  return nil, "Client angelegt, aber ID nicht lesbar"
+  return secret, nil
 end
 
 -- Write domain OIDC client credentials to AddOn/.oidc/<domain>.conf
@@ -962,10 +1083,11 @@ end
 
 -- Show or handle Keycloak client section for a domain
 local function show_kc_client_section(r, domain, msg)
-  local existing = read_oidc_client_conf(domain)
+  local existing   = read_oidc_client_conf(domain)
+  local target_cid = kc_client_id(domain)   -- proxy-<domain>
 
   r:puts('<div class="card" style="margin-top:1em">')
-  r:puts('<h2>\xF0\x9F\x94\x91 Keycloak-Client</h2>')
+  r:puts('<h2>\xF0\x9F\x94\x91 Keycloak-Client &mdash; <code>' .. h(domain) .. '</code></h2>')
 
   if msg then
     local cls = msg:sub(1,3) == "ERR" and "err" or "ok"
@@ -973,10 +1095,13 @@ local function show_kc_client_section(r, domain, msg)
   end
 
   if KC_ADMIN_URL == "" then
-    r:puts('<p class="hint">KEYCLOAK_ADMIN_URL nicht gesetzt — Keycloak-Integration nicht verfügbar.</p>')
+    r:puts('<p class="hint">KEYCLOAK_ADMIN_URL nicht gesetzt — Keycloak-Integration nicht verf\xC3\xBCgbar.</p>')
   elseif existing then
     r:puts('<p style="color:#99ff99;margin-bottom:.6em">')
     r:puts('\xE2\x9C\x94 Client <code>' .. h(existing.client_id) .. '</code> ist konfiguriert.')
+    r:puts('</p>')
+    r:puts('<p style="color:#888;font-size:.85em;margin-bottom:.8em">')
+    r:puts('Gruppen: <code>' .. h(domain) .. '-admins</code> / <code>' .. h(domain) .. '-users</code>')
     r:puts('</p>')
     r:puts('<form method="POST" action="/?action=kc_rotate&domain=' .. h(domain) .. '">')
     r:puts('<button class="btn b-warn" type="submit">&#x21BA;&nbsp;Secret rotieren</button>')
@@ -984,11 +1109,13 @@ local function show_kc_client_section(r, domain, msg)
   else
     r:puts('<p style="color:#aaa;font-size:.9em;margin-bottom:.8em">')
     r:puts('Kein eigener Keycloak-Client f\xC3\xBCr <code>' .. h(domain) .. '</code>.<br>')
-    r:puts('Aktuell wird der globale Client <code>' .. h(KC_CLIENT_ID) .. '</code> verwendet.')
+    r:puts('Aktuell wird der globale Client <code>' .. h(KC_CLIENT_ID) .. '</code> verwendet.<br>')
+    r:puts('Neu angelegt als <code>' .. h(target_cid) .. '</code> mit Rollen <code>admin</code> / <code>user</code>')
+    r:puts(' und Gruppen <code>' .. h(domain) .. '-admins</code> / <code>' .. h(domain) .. '-users</code>.')
     r:puts('</p>')
     r:puts('<form method="POST" action="/?action=kc_create&domain=' .. h(domain) .. '">')
     r:puts('<button class="btn b-add" type="submit">')
-    r:puts('&#x2B;&nbsp;Keycloak-Client <code>' .. h(domain) .. '</code> anlegen</button>')
+    r:puts('&#x2B;&nbsp;Client <code>' .. h(target_cid) .. '</code> anlegen</button>')
     r:puts('</form>')
   end
   r:puts('</div>')
@@ -1002,7 +1129,7 @@ local function do_kc_create(r, domain)
 
   -- Check if client already exists
   if kc_client_exists(domain, tok) then
-    return show_list(r, "ERR Client '" .. domain .. "' existiert bereits in Keycloak")
+    return show_list(r, "ERR Client '" .. kc_client_id(domain) .. "' existiert bereits in Keycloak")
   end
 
   local secret, cerr = kc_create_client(domain, tok)
@@ -1010,7 +1137,7 @@ local function do_kc_create(r, domain)
     return show_list(r, "ERR Keycloak-Client anlegen: " .. (cerr or ""))
   end
 
-  local ok, werr = write_oidc_client_conf(domain, domain, secret)
+  local ok, werr = write_oidc_client_conf(domain, kc_client_id(domain), secret)
   if not ok then
     return show_list(r, "ERR Conf-Datei schreiben: " .. (werr or ""))
   end
@@ -1018,7 +1145,7 @@ local function do_kc_create(r, domain)
   -- Graceful reload so Apache picks up the new IncludeOptional file
   os.execute("apache2ctl graceful 2>/dev/null")
 
-  show_list(r, "OK Keycloak-Client '" .. domain .. "' angelegt und aktiviert")
+  show_list(r, "OK Keycloak-Client '" .. kc_client_id(domain) .. "' angelegt und aktiviert")
 end
 
 local function do_kc_rotate(r, domain)
@@ -1051,12 +1178,12 @@ local function do_kc_rotate(r, domain)
     return show_list(r, "ERR Secret-Rotation fehlgeschlagen")
   end
 
-  local ok, werr = write_oidc_client_conf(domain, domain, new_secret)
+  local ok, werr = write_oidc_client_conf(domain, kc_client_id(domain), new_secret)
   if not ok then
     return show_list(r, "ERR Conf-Datei schreiben: " .. (werr or ""))
   end
   os.execute("apache2ctl graceful 2>/dev/null")
-  show_list(r, "OK Secret f\xC3\xBCr '" .. domain .. "' rotiert und aktiviert")
+  show_list(r, "OK Secret f\xC3\xBCr '" .. kc_client_id(domain) .. "' rotiert und aktiviert")
 end
 
 local function show_domain_form(r, pre, errmsg)
