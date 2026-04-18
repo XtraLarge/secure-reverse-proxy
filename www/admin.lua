@@ -227,6 +227,7 @@ a.btn,button.btn{padding:4px 11px;border:none;border-radius:3px;cursor:pointer;
 .b-add{background:#003d00;color:#99ff99}.b-apply{background:#3d3d00;color:#ffff99;
   font-size:.95em;padding:7px 18px}.b-save{background:#003d3d;color:#99ffff}
 .b-cancel{background:#2a2a4e;color:#aaa}
+.b-warn{background:#3d2000;color:#ffaa44}
 .form-row{margin:.6em 0;display:flex;align-items:center;gap:.7em}
 .form-row label{width:160px;color:#aaa;flex-shrink:0;font-size:.9em}
 .form-row input,.form-row select{
@@ -238,6 +239,14 @@ a.btn,button.btn{padding:4px 11px;border:none;border-radius:3px;cursor:pointer;
 .actions{display:flex;gap:.4em;flex-wrap:nowrap}
 .applybar{display:flex;align-items:center;gap:1em;margin-bottom:1.2em;flex-wrap:wrap}
 .dim{color:#666;font-size:.8em}
+.uf-field{margin-bottom:.8em}
+.uf-field label{display:block;color:#aaa;font-size:.85em;margin-bottom:.3em}
+.uf-field input{width:100%;max-width:340px;background:#0a0a1e;color:#ddd;
+  border:1px solid #3a3a6e;padding:.4em .7em;border-radius:4px;font-size:.9em}
+.grp-checks{display:flex;flex-wrap:wrap;gap:.5em}
+.grp-checks label{display:flex;align-items:center;gap:.35em;cursor:pointer;
+  background:#0a0a22;border:1px solid #2a2a4e;border-radius:3px;padding:3px 8px}
+.grp-checks input[type=checkbox]{accent-color:#00d4ff}
 </style>]]
 
 local JS = [[<script>
@@ -270,7 +279,7 @@ local function topbar(title)
   return '<div class="topbar">'
     .. '<a class="topbar-title" href="/">\xE2\x9A\x99 ' .. h(title) .. '</a>'
     .. '<div class="topbar-nav">'
-    .. '<a href="/admin-kc.lua">\xF0\x9F\x91\xA4 Benutzer</a>'
+    .. '<a href="/?action=users">\xF0\x9F\x91\xA4 Nutzer</a>'
     .. '<a href="' .. h(toc_link) .. '">\xE2\x98\xB0 TOC</a>'
     .. '<a href="' .. h(logout_link) .. '">\xC3\x97 Logout</a>'
     .. '</div>'
@@ -787,6 +796,470 @@ local function do_addon_restore(r, p)
   os.remove(pre_bak)
   os.remove(post_bak)
   show_list(r, "OK: AddOn auf letzte Version zurückgesetzt (Konfigurationstest erfolgreich) — noch anwenden!")
+end
+
+-- ── Keycloak User & Group management ─────────────────────────────────────────
+
+-- Generic GET against the Keycloak Admin API.
+local function kc_api_get(path, token)
+  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local tmp = os.tmpname()
+  io.open(tmp,"w"):write("Authorization: Bearer " .. token):close()
+  local cmd = string.format('curl -s -k -H @%s "%s%s" 2>/dev/null', tmp, base, path)
+  local p = io.popen(cmd); local out = p:read("*a"); p:close()
+  os.remove(tmp)
+  return out
+end
+
+-- Generic write (POST/PUT/DELETE) against the Keycloak Admin API.
+-- body may be nil for DELETE/PUT without body.
+local function kc_api_write(method, path, body, token)
+  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local tmp_h = os.tmpname()
+  io.open(tmp_h,"w"):write("Authorization: Bearer " .. token):close()
+  local cmd
+  if body then
+    local tmp_b = os.tmpname()
+    io.open(tmp_b,"w"):write(body):close()
+    cmd = string.format(
+      'curl -s -k -o /dev/null -w "%%{http_code}" -X %s'
+      ..' -H @%s -H "Content-Type: application/json" --data @%s "%s%s" 2>/dev/null',
+      method, tmp_h, tmp_b, base, path)
+    local p = io.popen(cmd); local status = tonumber(p:read("*a") or "0"); p:close()
+    os.remove(tmp_h); os.remove(tmp_b)
+    return status
+  else
+    cmd = string.format(
+      'curl -s -k -o /dev/null -w "%%{http_code}" -X %s -H @%s "%s%s" 2>/dev/null',
+      method, tmp_h, base, path)
+    local p = io.popen(cmd); local status = tonumber(p:read("*a") or "0"); p:close()
+    os.remove(tmp_h)
+    return status
+  end
+end
+
+-- Parse a flat JSON object block into a Lua table (strings + booleans).
+local function json_obj_flat(s)
+  local t = {}
+  for k, v in s:gmatch('"([^"]+)"%s*:%s*"([^"]*)"') do t[k] = v end
+  for k    in s:gmatch('"([^"]+)"%s*:%s*true')       do t[k] = true  end
+  for k    in s:gmatch('"([^"]+)"%s*:%s*false')      do t[k] = false end
+  return t
+end
+
+-- Parse a JSON array of flat objects.
+local function json_arr_flat(s)
+  local result = {}
+  for block in s:gmatch("%b{}") do
+    local obj = json_obj_flat(block)
+    if obj.id then result[#result+1] = obj end  -- skip empty blocks
+  end
+  return result
+end
+
+-- Fetch all users (max 500, skip service accounts).
+local function kc_list_users(token)
+  local all = json_arr_flat(kc_api_get("/users?max=500", token))
+  local out = {}
+  for _, u in ipairs(all) do
+    if not (u.username or ""):match("^service%-account%-") then
+      out[#out+1] = u
+    end
+  end
+  return out
+end
+
+-- Fetch all groups (flat list).
+local function kc_list_groups(token)
+  return json_arr_flat(kc_api_get("/groups?max=200", token))
+end
+
+-- Fetch group IDs a user belongs to; returns {id→name} map.
+local function kc_user_group_map(uid, token)
+  local m = {}
+  for _, g in ipairs(json_arr_flat(kc_api_get("/users/" .. uid .. "/groups", token))) do
+    m[g.id] = g.name or ""
+  end
+  return m
+end
+
+-- Set user's group memberships to exactly the given list of group IDs.
+local function kc_user_set_groups(uid, desired_ids, token)
+  local current = kc_user_group_map(uid, token)
+  local desired = {}
+  for _, id in ipairs(desired_ids) do desired[id] = true end
+  -- Add new
+  for id in pairs(desired) do
+    if not current[id] then
+      kc_api_write("PUT", "/users/" .. uid .. "/groups/" .. id, nil, token)
+    end
+  end
+  -- Remove old
+  for id in pairs(current) do
+    if not desired[id] then
+      kc_api_write("DELETE", "/users/" .. uid .. "/groups/" .. id, nil, token)
+    end
+  end
+end
+
+-- Create a user. Returns new UUID or nil + error string.
+local function kc_user_create(data, token)
+  local payload = json_enc({
+    username  = data.username,
+    email     = data.email     ~= "" and data.email     or nil,
+    firstName = data.firstName ~= "" and data.firstName or nil,
+    lastName  = data.lastName  ~= "" and data.lastName  or nil,
+    enabled   = true,
+    credentials = {{ type="password", value=data.password, temporary=false }},
+  })
+  local status = kc_api_write("POST", "/users", payload, token)
+  if status ~= 201 then
+    return nil, "Keycloak antwortete mit HTTP " .. tostring(status)
+  end
+  -- Fetch the new user's UUID
+  local found = json_arr_flat(kc_api_get(
+    "/users?username=" .. data.username .. "&exact=true", token))
+  if #found == 0 then return nil, "Nutzer angelegt, aber UUID nicht lesbar" end
+  return found[1].id, nil
+end
+
+-- Update user fields (email, firstName, lastName). Does not touch password or groups.
+local function kc_user_update(uid, data, token)
+  local payload = json_enc({
+    email     = data.email     or "",
+    firstName = data.firstName or "",
+    lastName  = data.lastName  or "",
+    enabled   = true,
+  })
+  return kc_api_write("PUT", "/users/" .. uid, payload, token) == 204
+end
+
+-- Reset a user's password.
+local function kc_user_reset_pw(uid, password, token)
+  return kc_api_write("PUT", "/users/" .. uid .. "/reset-password",
+    json_enc({type="password", value=password, temporary=false}), token) == 204
+end
+
+-- Delete a user.
+local function kc_user_delete(uid, token)
+  return kc_api_write("DELETE", "/users/" .. uid, nil, token) == 204
+end
+
+-- Accounts that must not be deleted via the UI.
+local KC_PROTECTED_USERS = { admin=true, claude=true }
+-- Groups that must not be deleted via the UI.
+local KC_PROTECTED_GROUPS = { ["global-admins"]=true, ["global-users"]=true }
+
+-- ── User/group pages ──────────────────────────────────────────────────────────
+
+local function show_users(r, msg)
+  r:puts(page_head("Nutzerverwaltung"))
+  r:puts('<div class="main">')
+  if msg then r:puts(msg_html(msg)) end
+  r:puts('<div class="applybar">')
+  r:puts('<a class="btn b-add" href="/?action=user_new">+ Neuer Nutzer</a>')
+  r:puts('<a class="btn b-add" href="/?action=group_new">+ Neue Gruppe</a>')
+  r:puts('<a class="btn b-cancel" href="/">\u2190 \xC3\x9Cbersicht</a>')
+  r:puts('</div>')
+
+  if KC_ADMIN_URL == "" then
+    r:puts('<div class="card"><p class="dim">KEYCLOAK_ADMIN_URL nicht gesetzt '
+      .. '— Keycloak-Integration nicht verf\xC3\xBCgbar.</p></div>')
+    r:puts('</div></body></html>')
+    return
+  end
+
+  local tok, terr = kc_token()
+  if not tok then
+    r:puts('<div class="card"><p class="msg err">Keycloak-Token: ' .. h(terr or "") .. '</p></div>')
+    r:puts('</div></body></html>')
+    return
+  end
+
+  local users  = kc_list_users(tok)
+  local groups = kc_list_groups(tok)
+
+  -- Users card
+  r:puts('<div class="card">')
+  r:puts('<h2>Nutzer (' .. #users .. ')</h2>')
+  if #users == 0 then
+    r:puts('<p class="dim">Keine Nutzer gefunden.</p>')
+  else
+    r:puts('<table><tr>'
+      .. '<th>Benutzername</th><th>E-Mail</th><th>Name</th><th>Gruppen</th><th>Aktionen</th>'
+      .. '</tr>')
+    for _, u in ipairs(users) do
+      local gmap = kc_user_group_map(u.id, tok)
+      local gbadges = ""
+      for _, gname in pairs(gmap) do
+        gbadges = gbadges .. '<span class="tag">' .. h(gname) .. '</span> '
+      end
+      local fullname = trim((u.firstName or "") .. " " .. (u.lastName or ""))
+      r:puts('<tr>')
+      r:puts('<td><strong>' .. h(u.username or "") .. '</strong></td>')
+      r:puts('<td style="font-size:.85em">' .. h(u.email or "") .. '</td>')
+      r:puts('<td style="font-size:.85em">' .. h(fullname) .. '</td>')
+      r:puts('<td style="font-size:.82em">' .. gbadges .. '</td>')
+      r:puts('<td><div class="actions">')
+      r:puts('<a class="btn b-edit" href="/?action=user_edit&uid=' .. h(u.id) .. '">Bearbeiten</a>')
+      if not KC_PROTECTED_USERS[u.username] then
+        r:puts('<form method="POST" action="/?action=user_delete" style="margin:0"'
+          .. ' onsubmit="return confirm(\'Nutzer \\'  .. h(u.username or "") .. '\\' wirklich l\xC3\xB6schen?\')">')
+        r:puts('<input type=hidden name=uid value="'       .. h(u.id)             .. '">')
+        r:puts('<input type=hidden name=username value="'  .. h(u.username or "") .. '">')
+        r:puts('<button class="btn b-del" type=submit>L\xC3\xB6schen</button></form>')
+      end
+      r:puts('</div></td></tr>')
+    end
+    r:puts('</table>')
+  end
+  r:puts('</div>')
+
+  -- Groups card
+  r:puts('<div class="card">')
+  r:puts('<h2>Gruppen (' .. #groups .. ')</h2>')
+  r:puts('<table><tr><th>Name</th><th>Typ</th><th>Aktionen</th></tr>')
+  for _, g in ipairs(groups) do
+    local is_system = KC_PROTECTED_GROUPS[g.name] or false
+    r:puts('<tr>')
+    r:puts('<td><code>' .. h(g.name or "") .. '</code></td>')
+    r:puts('<td>' .. (is_system
+      and '<span class="tag" style="background:#1a1a1a;color:#666">System</span>'
+      or  '<span class="tag">Domain</span>') .. '</td>')
+    r:puts('<td><div class="actions">')
+    if not is_system then
+      r:puts('<form method="POST" action="/?action=group_delete" style="margin:0"'
+        .. ' onsubmit="return confirm(\'Gruppe \\' .. h(g.name or "") .. '\\' l\xC3\xB6schen?\')">')
+      r:puts('<input type=hidden name=gid   value="' .. h(g.id)   .. '">')
+      r:puts('<input type=hidden name=gname value="' .. h(g.name or "") .. '">')
+      r:puts('<button class="btn b-del" type=submit>L\xC3\xB6schen</button></form>')
+    end
+    r:puts('</div></td></tr>')
+  end
+  r:puts('</table></div>')
+
+  r:puts('</div></body></html>')
+end
+
+-- Render the user create/edit form.
+-- uid=nil → new user; uid=string → edit existing.
+local function show_user_form(r, uid, pre, msg)
+  local is_new = (uid == nil or uid == "")
+  r:puts(page_head(is_new and "Neuer Nutzer" or "Nutzer bearbeiten"))
+  r:puts('<div class="main"><div class="card">')
+  r:puts('<h2>' .. (is_new and "Neuer Nutzer" or "Nutzer bearbeiten: <code>" .. h((pre or {}).username or "") .. "</code>") .. '</h2>')
+  if msg then r:puts(msg_html(msg)) end
+
+  if KC_ADMIN_URL == "" then
+    r:puts('<p class="dim">KEYCLOAK_ADMIN_URL nicht gesetzt.</p></div></div></body></html>')
+    return
+  end
+
+  local tok, terr = kc_token()
+  if not tok then
+    r:puts('<p class="msg err">Keycloak-Token: ' .. h(terr or "") .. '</p></div></div></body></html>')
+    return
+  end
+
+  local all_groups    = kc_list_groups(tok)
+  local user_group_ids = {}
+  if not is_new then
+    user_group_ids = kc_user_group_map(uid, tok)
+  end
+
+  local p = pre or {}
+  local action_url = is_new
+    and "/?action=user_create"
+    or  ("/?action=user_save&uid=" .. h(uid))
+
+  -- JS: serialize checkboxes → hidden CSV field on submit
+  r:puts('<script>')
+  r:puts('function serializeGroups(form){')
+  r:puts('  var ids=Array.from(form.querySelectorAll("input.grp-cb:checked")).map(function(c){return c.value;});')
+  r:puts('  form.querySelector("#groups_csv").value=ids.join(",");')
+  r:puts('  return true;')
+  r:puts('}')
+  r:puts('</script>')
+
+  r:puts('<form method="POST" action="' .. h(action_url) .. '" onsubmit="return serializeGroups(this)">')
+  r:puts('<input type=hidden name=groups_csv id=groups_csv value="">')
+
+  -- Username
+  r:puts('<div class="uf-field">')
+  r:puts('<label>Benutzername</label>')
+  if is_new then
+    r:puts('<input type="text" name="username" value="' .. h(p.username or "") .. '" required autocomplete=off>')
+  else
+    r:puts('<code style="font-size:.95em">' .. h(p.username or "") .. '</code>')
+    r:puts('<input type=hidden name=username value="' .. h(p.username or "") .. '">')
+  end
+  r:puts('</div>')
+
+  -- E-Mail
+  r:puts('<div class="uf-field"><label>E-Mail</label>')
+  r:puts('<input type="email" name="email" value="' .. h(p.email or "") .. '" autocomplete=off>')
+  r:puts('</div>')
+
+  -- First / Last name
+  r:puts('<div style="display:flex;gap:1em;margin-bottom:.8em">')
+  for _, f in ipairs({{"firstName","Vorname"},{"lastName","Nachname"}}) do
+    r:puts('<div class="uf-field" style="flex:1;margin-bottom:0"><label>' .. f[2] .. '</label>')
+    r:puts('<input type="text" name="' .. f[1] .. '" value="' .. h(p[f[1]] or "") .. '" style="max-width:none;width:100%">')
+    r:puts('</div>')
+  end
+  r:puts('</div>')
+
+  -- Password
+  r:puts('<div class="uf-field">')
+  r:puts('<label>' .. (is_new and 'Initiales Passwort' or 'Neues Passwort <span class="dim">(leer = unver\xC3\xA4ndert)</span>') .. '</label>')
+  r:puts('<input type="password" name="password"' .. (is_new and ' required' or '') .. ' autocomplete=new-password>')
+  r:puts('</div>')
+
+  -- Group checkboxes
+  r:puts('<div class="uf-field"><label>Gruppen</label>')
+  r:puts('<div class="grp-checks">')
+  for _, g in ipairs(all_groups) do
+    local checked = user_group_ids[g.id] and ' checked' or ''
+    r:puts('<label>')
+    r:puts('<input type="checkbox" class="grp-cb" value="' .. h(g.id) .. '"' .. checked .. '>')
+    r:puts('<span class="tag">' .. h(g.name or "") .. '</span>')
+    r:puts('</label>')
+  end
+  r:puts('</div></div>')
+
+  -- Buttons
+  r:puts('<div style="display:flex;gap:.7em;margin-top:1.2em">')
+  r:puts('<button class="btn b-add" type="submit">' .. (is_new and 'Anlegen' or 'Speichern') .. '</button>')
+  r:puts('<a class="btn b-cancel" href="/?action=users">Abbrechen</a>')
+  r:puts('</div>')
+  r:puts('</form>')
+  r:puts('</div></div></body></html>')
+end
+
+-- Render the new group form.
+local function show_group_form(r, pre, msg)
+  r:puts(page_head("Neue Gruppe"))
+  r:puts('<div class="main"><div class="card"><h2>Neue Gruppe anlegen</h2>')
+  if msg then r:puts(msg_html(msg)) end
+  r:puts('<form method="POST" action="/?action=group_create">')
+  r:puts('<div class="uf-field"><label>Gruppenname</label>')
+  r:puts('<input type="text" name="gname" value="' .. h((pre or {}).gname or "")
+    .. '" required placeholder="z.B. example.com-users" autocomplete=off>')
+  r:puts('</div>')
+  r:puts('<div style="display:flex;gap:.7em;margin-top:1.2em">')
+  r:puts('<button class="btn b-add" type="submit">Anlegen</button>')
+  r:puts('<a class="btn b-cancel" href="/?action=users">Abbrechen</a>')
+  r:puts('</div></form>')
+  r:puts('</div></div></body></html>')
+end
+
+-- ── User/group action handlers ────────────────────────────────────────────────
+
+local function do_user_create(r, post)
+  local username = trim(post.username  or "")
+  local email    = trim(post.email     or "")
+  local fname    = trim(post.firstName or "")
+  local lname    = trim(post.lastName  or "")
+  local password = post.password       or ""
+  local grp_csv  = trim(post.groups_csv or "")
+
+  if username == "" or password == "" then
+    return show_user_form(r, nil,
+      {username=username,email=email,firstName=fname,lastName=lname},
+      "ERR: Benutzername und Passwort sind Pflichtfelder")
+  end
+
+  local tok, terr = kc_token()
+  if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
+
+  local uid, cerr = kc_user_create(
+    {username=username,email=email,firstName=fname,lastName=lname,password=password}, tok)
+  if not uid then
+    return show_user_form(r, nil,
+      {username=username,email=email,firstName=fname,lastName=lname},
+      "ERR: " .. (cerr or ""))
+  end
+
+  -- Parse comma-separated group IDs
+  local desired = {}
+  for id in grp_csv:gmatch("[^,]+") do
+    id = trim(id)
+    if id ~= "" then desired[#desired+1] = id end
+  end
+  kc_user_set_groups(uid, desired, tok)
+
+  show_users(r, "OK Nutzer '" .. username .. "' angelegt")
+end
+
+local function do_user_save(r, uid, post)
+  if not uid or uid == "" then return show_users(r, "ERR: Keine UID") end
+
+  local tok, terr = kc_token()
+  if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
+
+  kc_user_update(uid, {
+    email     = trim(post.email     or ""),
+    firstName = trim(post.firstName or ""),
+    lastName  = trim(post.lastName  or ""),
+  }, tok)
+
+  local pw = post.password or ""
+  if pw ~= "" then kc_user_reset_pw(uid, pw, tok) end
+
+  local desired = {}
+  for id in (trim(post.groups_csv or "")):gmatch("[^,]+") do
+    id = trim(id)
+    if id ~= "" then desired[#desired+1] = id end
+  end
+  kc_user_set_groups(uid, desired, tok)
+
+  show_users(r, "OK Nutzer gespeichert")
+end
+
+local function do_user_delete(r, post)
+  local uid      = trim(post.uid      or "")
+  local username = trim(post.username or "")
+  if uid == "" then return show_users(r, "ERR: Keine UID") end
+  if KC_PROTECTED_USERS[username] then
+    return show_users(r, "ERR: Systemnutzer k\xC3\xB6nnen nicht gel\xC3\xB6scht werden")
+  end
+  local tok, terr = kc_token()
+  if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
+  if kc_user_delete(uid, tok) then
+    show_users(r, "OK Nutzer '" .. username .. "' gel\xC3\xB6scht")
+  else
+    show_users(r, "ERR: L\xC3\xB6schen fehlgeschlagen")
+  end
+end
+
+local function do_group_create(r, post)
+  local gname = trim(post.gname or "")
+  if gname == "" then return show_group_form(r, post, "ERR: Gruppenname fehlt") end
+  local tok, terr = kc_token()
+  if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
+  local gid = kc_create_group(gname, tok)
+  if gid then
+    show_users(r, "OK Gruppe '" .. gname .. "' angelegt")
+  else
+    show_group_form(r, post, "ERR: Gruppe konnte nicht angelegt werden")
+  end
+end
+
+local function do_group_delete(r, post)
+  local gid   = trim(post.gid   or "")
+  local gname = trim(post.gname or "")
+  if gid == "" then return show_users(r, "ERR: Keine GID") end
+  if KC_PROTECTED_GROUPS[gname] then
+    return show_users(r, "ERR: Systemgruppen k\xC3\xB6nnen nicht gel\xC3\xB6scht werden")
+  end
+  local tok, terr = kc_token()
+  if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
+  local status = kc_api_write("DELETE", "/groups/" .. gid, nil, tok)
+  if status == 204 then
+    show_users(r, "OK Gruppe '" .. gname .. "' gel\xC3\xB6scht")
+  else
+    show_users(r, "ERR: L\xC3\xB6schen fehlgeschlagen (HTTP " .. tostring(status) .. ")")
+  end
 end
 
 -- ── Domain creation form ──────────────────────────────────────────────────────
@@ -1572,6 +2045,45 @@ function handle(r)
     else
       do_kc_rotate(r, domain)
     end
+
+  elseif action == "users" then
+    show_users(r)
+
+  elseif action == "user_new" then
+    show_user_form(r, nil, nil, nil)
+
+  elseif action == "user_edit" then
+    local uid = trim(get["uid"] or "")
+    if uid == "" then
+      show_users(r, "ERR: Keine UID")
+    else
+      local tok, terr = kc_token()
+      if not tok then
+        show_users(r, "ERR Keycloak-Token: " .. (terr or ""))
+      else
+        local udata = json_obj_flat(kc_api_get("/users/" .. uid, tok))
+        show_user_form(r, uid, udata, nil)
+      end
+    end
+
+  elseif action == "user_create" and r.method == "POST" then
+    do_user_create(r, post)
+
+  elseif action == "user_save" and r.method == "POST" then
+    local uid = trim(get["uid"] or "")
+    do_user_save(r, uid, post)
+
+  elseif action == "user_delete" and r.method == "POST" then
+    do_user_delete(r, post)
+
+  elseif action == "group_new" then
+    show_group_form(r, nil, nil)
+
+  elseif action == "group_create" and r.method == "POST" then
+    do_group_create(r, post)
+
+  elseif action == "group_delete" and r.method == "POST" then
+    do_group_delete(r, post)
 
   else
     show_list(r)
