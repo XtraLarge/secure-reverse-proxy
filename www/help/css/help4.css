@@ -39,4 +39,9 @@ body {
   top: -0.1em;
   left: 8px;
   color: #00d4ff;
+  animation: blink 0.8s step-end infinite;
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
 }

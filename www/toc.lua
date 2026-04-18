@@ -596,6 +596,7 @@ body{font-family:Arial,sans-serif;background:#0d0d1a;color:#ddd;min-height:100vh
   background:#060614;border-bottom:1px solid #2a2a4e;
   padding:.6em 1.2em;flex-wrap:wrap;gap:.5em}
 .topbar-title{color:#00d4ff;font-size:1.1em;font-weight:bold;text-decoration:none}
+.topbar-right{display:flex;align-items:center;gap:.7em;margin-left:auto}
 .topbar-nav{display:flex;gap:.5em}
 .topbar-nav a{
   color:#7ecfff;text-decoration:none;font-size:.85em;
@@ -660,11 +661,13 @@ window.onload = function() {
     "</head>\n<body>\n" ..
     "<div class=\"topbar\">\n" ..
     "  <a class=\"topbar-title\" href=\"/\">" .. TITLE .. "</a>\n" ..
-    "  <div class=\"topbar-nav\">\n" ..
+    "  <div class=\"topbar-right\">\n" ..
+    "    <div class=\"topbar-nav\">\n" ..
     ADMINLINK ..
-    "  <a href=\"https://logout." .. (DOMAIN or "") .. "\">&#x2715; Logout</a>\n" ..
+    "      <a href=\"https://logout." .. (DOMAIN or "") .. "\">&#x2715; Logout</a>\n" ..
+    "    </div>\n" ..
+    "    <span class=\"topbar-user\">" .. REMOTE_USER .. "</span>\n" ..
     "  </div>\n" ..
-    "  <span class=\"topbar-user\">" .. REMOTE_USER .. "</span>\n" ..
     "</div>\n" ..
     "<div class=\"main\">\n" ..
     TABLE .. "\n" ..
