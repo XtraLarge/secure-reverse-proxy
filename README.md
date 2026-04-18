@@ -49,6 +49,20 @@ with per-row reachability status and a search filter.
 ```bash
 git clone https://github.com/XtraLarge/apache-oidc-proxy.git
 cd apache-oidc-proxy
+```
+
+**Option A — interactive setup (recommended):**
+
+```bash
+bash scripts/setup.sh
+```
+
+The script asks for all required values, auto-generates secrets for Redis and
+the OIDC session passphrase, and creates the directory structure for you.
+
+**Option B — manual:**
+
+```bash
 cp .env.example .env
 ```
 
@@ -108,9 +122,11 @@ apache-oidc-proxy/
 ├── sites-enabled/              ← your vhost configs (gitignored)
 │   └── <domain>.conf
 └── AddOn/                      ← optional per-vhost Apache snippets (gitignored)
-    └── <domain>/
-        ├── <site>.preconfig    ← included before ProxyPass
-        └── <site>.postconfig   ← included after ProxyPass
+    ├── <domain>/
+    │   ├── <site>.preconfig    ← included before ProxyPass
+    │   └── <site>.postconfig   ← included after ProxyPass
+    └── .oidc/                  ← per-domain OIDC credentials (written by admin UI)
+        └── <domain>.conf       ← OIDCClientID / OIDCClientSecret overrides
 ```
 
 `ssl/`, `sites-enabled/` and `AddOn/` are bind-mounted into the container and
@@ -331,6 +347,9 @@ The admin UI lets you:
 - **View** the expanded Apache configuration for each vhost
 - **Add and edit** vhost configurations directly in the browser
 - **Reload** the Apache configuration without restarting the container
+- **Create and rotate Keycloak clients** per domain — the proxy-`<domain>` client,
+  `admin`/`user` roles, and `<domain>-admins`/`<domain>-users` groups are set up
+  automatically; the per-domain credentials are stored in `AddOn/.oidc/<domain>.conf`
 
 ![Admin UI](docs/screenshots/admin.png)
 <!-- TODO: screenshot -->
@@ -352,9 +371,10 @@ Lets you:
 
 - **List and search** Keycloak users
 - **Create** users with a temporary password
-- **Edit** name, email, and role assignments
-- **Reset** passwords and send verification emails
+- **Edit** name, email, and group assignments
+- **Reset** passwords
 - **Enable / disable** or **delete** users
+- **Manage groups** — create and delete `<domain>-admins` / `<domain>-users` groups
 
 ![Keycloak user management](docs/screenshots/admin-kc.png)
 <!-- TODO: screenshot -->

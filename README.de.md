@@ -49,6 +49,20 @@ aller Dienste mit Erreichbarkeitsstatus und Suchfilter.
 ```bash
 git clone https://github.com/XtraLarge/apache-oidc-proxy.git
 cd apache-oidc-proxy
+```
+
+**Option A — interaktives Setup (empfohlen):**
+
+```bash
+bash scripts/setup.sh
+```
+
+Das Script fragt alle erforderlichen Werte ab, generiert automatisch Secrets für
+Redis und die OIDC-Session-Passphrase und legt die Verzeichnisstruktur an.
+
+**Option B — manuell:**
+
+```bash
 cp .env.example .env
 ```
 
@@ -108,9 +122,11 @@ apache-oidc-proxy/
 ├── sites-enabled/              ← Eigene VHost-Konfigurationen (gitignored)
 │   └── <domain>.conf
 └── AddOn/                      ← Optionale Apache-Snippets pro VHost (gitignored)
-    └── <domain>/
-        ├── <site>.preconfig    ← Vor ProxyPass eingefügt
-        └── <site>.postconfig   ← Nach ProxyPass eingefügt
+    ├── <domain>/
+    │   ├── <site>.preconfig    ← Vor ProxyPass eingefügt
+    │   └── <site>.postconfig   ← Nach ProxyPass eingefügt
+    └── .oidc/                  ← Domain-spezifische OIDC-Credentials (von Admin-UI geschrieben)
+        └── <domain>.conf       ← OIDCClientID / OIDCClientSecret-Überschreibungen
 ```
 
 `ssl/`, `sites-enabled/` und `AddOn/` werden als Bind-Mounts in den Container
@@ -331,6 +347,9 @@ Die Admin-Oberfläche ermöglicht:
 - **Anzeigen** der expandierten Apache-Konfiguration pro VHost
 - **Hinzufügen und Bearbeiten** von VHost-Konfigurationen direkt im Browser
 - **Neu laden** der Apache-Konfiguration ohne Container-Neustart
+- **Keycloak-Clients anlegen und rotieren** — der `proxy-<domain>`-Client,
+  `admin`/`user`-Rollen und `<domain>-admins`/`<domain>-users`-Gruppen werden
+  automatisch erstellt; die Credentials werden in `AddOn/.oidc/<domain>.conf` gespeichert
 
 ![Admin-Oberfläche](docs/screenshots/admin.png)
 <!-- TODO: Screenshot -->
@@ -352,9 +371,10 @@ Funktionen:
 
 - **Benutzer auflisten und suchen**
 - **Benutzer anlegen** mit temporärem Passwort
-- **Bearbeiten** von Name, E-Mail und Rollenzuweisungen
-- **Passwörter zurücksetzen** und Verifikations-E-Mails versenden
+- **Bearbeiten** von Name, E-Mail und Gruppenzuweisungen
+- **Passwörter zurücksetzen**
 - **Benutzer aktivieren / deaktivieren** oder **löschen**
+- **Gruppen verwalten** — `<domain>-admins` / `<domain>-users`-Gruppen anlegen und löschen
 
 ![Keycloak-Benutzerverwaltung](docs/screenshots/admin-kc.png)
 <!-- TODO: Screenshot -->
