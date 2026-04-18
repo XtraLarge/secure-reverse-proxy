@@ -169,6 +169,47 @@ printf 'OIDCProviderBackChannelLogoutSupported On\n'
 chmod 600 "$IAM_ADMIN_OIDC_FILE"
 log "Generated iam-admin-oidc.conf (redirect URI: https://iam.${OIDC_COOKIE_DOMAIN}${OIDC_REDIRECT_PATH})"
 
+# ── Generate per-domain OIDC client credential files ─────────────────────────
+# Allows each domain to use a separate Keycloak client with its own secret.
+#
+# For each domain, set env vars using the domain name in UPPER_SNAKE_CASE
+# (dots and hyphens replaced by underscores), e.g.:
+#
+#   OIDC_CLIENT_ID_EXAMPLE_COM=Proxy-example.com
+#   OIDC_CLIENT_SECRET_EXAMPLE_COM=<secret>
+#   OIDC_CLIENT_ID_HANDAMHUF_DE=Proxy-handamhuf.de
+#   OIDC_CLIENT_SECRET_HANDAMHUF_DE=<secret>
+#
+# If no domain-specific vars are set, the global OIDC_CLIENT_ID /
+# OIDC_CLIENT_SECRET remain active (IncludeOptional skips missing files).
+#
+# The OIDCBASE macro includes these files AFTER the global credentials,
+# so they override on a per-domain basis.
+_gen_oidc_client_conf() {
+    local domain="$1"
+    local domain_key
+    domain_key=$(echo "$domain" | tr '.-' '_' | tr '[:lower:]' '[:upper:]')
+    local id_var="OIDC_CLIENT_ID_${domain_key}"
+    local secret_var="OIDC_CLIENT_SECRET_${domain_key}"
+    # Use indirect expansion to read variable by name
+    local client_id="${!id_var:-}"
+    local client_secret="${!secret_var:-}"
+    if [[ -n "$client_id" && -n "$client_secret" ]]; then
+        local conf="/etc/apache2/conf-runtime/oidc-client-${domain}.conf"
+        printf 'OIDCClientID     %s\n' "$client_id"     > "$conf"
+        printf 'OIDCClientSecret %s\n' "$client_secret" >> "$conf"
+        chmod 600 "$conf"
+        log "Generated oidc-client-${domain}.conf (client_id: ${client_id})"
+    fi
+}
+
+# Scan sites-enabled and sites-admin for domain names and generate conf files
+while IFS= read -r conf_file; do
+    domain=$(basename "$conf_file" .conf)
+    _gen_oidc_client_conf "$domain"
+done < <(find /etc/apache2/sites-enabled /etc/apache2/sites-admin \
+    -maxdepth 1 -name '*.conf' 2>/dev/null)
+
 # ── GeoIP2 database update ───────────────────────────────────────────────────
 # If GEOIP_ACCOUNT_ID and GEOIP_LICENSE_KEY are set, download the current
 # GeoLite2-Country database from MaxMind on startup (and via weekly cron).

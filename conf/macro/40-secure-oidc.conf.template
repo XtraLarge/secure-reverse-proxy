@@ -33,8 +33,13 @@
   # TLS is still fully validated by the client's browser.
   OIDCSSLValidateServer           Off
   OIDCProviderTokenEndpointAuth   ${OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH}
+  # Global client credentials (fallback).
+  # If /etc/apache2/conf-runtime/oidc-client-$(DOMAINNAME).conf exists it
+  # overrides these with domain-specific credentials — see entrypoint.sh and
+  # OIDC_CLIENT_ID_<DOMAIN> / OIDC_CLIENT_SECRET_<DOMAIN> env vars.
   OIDCClientID                    ${OIDC_CLIENT_ID}
   OIDCClientSecret                ${OIDC_CLIENT_SECRET}
+  IncludeOptional /etc/apache2/conf-runtime/oidc-client-$(DOMAINNAME).conf
 
   OIDCRemoteUserClaim             ${OIDC_REMOTE_USER_CLAIM}
   OIDCScope                       "${OIDC_SCOPE}"
