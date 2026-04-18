@@ -135,6 +135,40 @@ else
     > "$REDIS_AUTH_FILE"
 fi
 
+# ── Generate OIDC config include for iam/admin-console protection ────────────
+# Used by AddOn/DOMAIN/iam.preconfig via:
+#   Include /etc/apache2/conf-runtime/iam-admin-oidc.conf
+# Mirrors the OIDCBASE macro but writes to a file so secrets stay out of the
+# volume-mounted AddOn directory.  The <Location /admin> AuthType + Require
+# directives still go in the preconfig — only the VHost-level OIDC settings
+# (provider URL, client creds, cookie config) live here.
+IAM_ADMIN_OIDC_FILE="/etc/apache2/conf-runtime/iam-admin-oidc.conf"
+{
+printf 'OIDCProviderMetadataURL          %s\n'  "${OIDC_PROVIDER_METADATA_URL}"
+printf 'OIDCSSLValidateServer            Off\n'
+printf 'OIDCProviderTokenEndpointAuth    %s\n'  "${OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH}"
+printf 'OIDCClientID                     %s\n'  "${OIDC_CLIENT_ID}"
+printf 'OIDCClientSecret                 %s\n'  "${OIDC_CLIENT_SECRET}"
+printf 'OIDCRemoteUserClaim              %s\n'  "${OIDC_REMOTE_USER_CLAIM}"
+printf 'OIDCScope                        "%s"\n' "${OIDC_SCOPE}"
+printf 'OIDCRedirectURI                  https://iam.%s%s\n' "${OIDC_COOKIE_DOMAIN}" "${OIDC_REDIRECT_PATH}"
+printf 'Include /etc/apache2/conf-runtime/oidc-passphrase.conf\n'
+printf 'OIDCDefaultLoggedOutURL          %s\n'  "${OIDC_DEFAULT_LOGOUT_URL}"
+printf 'OIDCCookieDomain                 %s\n'  "${OIDC_COOKIE_DOMAIN}"
+printf 'OIDCCookie                       %s-IAM-Admin-Session\n'  "${OIDC_COOKIE_DOMAIN}"
+printf 'OIDCStateCookiePrefix            %s-IAM-Admin-State-\n'   "${OIDC_COOKIE_DOMAIN}"
+printf 'OIDCCookieSameSite               On\n'
+printf 'OIDCCookieHTTPOnly               On\n'
+printf 'OIDCSessionCacheFallbackToCookie On\n'
+printf 'OIDCCacheType                    redis\n'
+printf 'OIDCRedisCacheServer             %s:%s\n' "${REDIS_HOST}" "${REDIS_PORT}"
+printf 'OIDCRedisCacheDatabase           %s\n'  "${REDIS_DB}"
+printf 'Include /etc/apache2/conf-runtime/redis-auth.conf\n'
+printf 'OIDCProviderBackChannelLogoutSupported On\n'
+} > "$IAM_ADMIN_OIDC_FILE"
+chmod 600 "$IAM_ADMIN_OIDC_FILE"
+log "Generated iam-admin-oidc.conf (redirect URI: https://iam.${OIDC_COOKIE_DOMAIN}${OIDC_REDIRECT_PATH})"
+
 # ── GeoIP2 database update ───────────────────────────────────────────────────
 # If GEOIP_ACCOUNT_ID and GEOIP_LICENSE_KEY are set, download the current
 # GeoLite2-Country database from MaxMind on startup (and via weekly cron).
