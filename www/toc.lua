@@ -224,10 +224,14 @@ function user_may_see(entry)
   -- VHost_Proxy / VHost_Alias have no USERS parameter; finalword() falls through
   -- and returns the destination URL.  Treat any URL-shaped value as unrestricted.
   if users:match("^https?://") then return true end
+  -- Basic auth USERS contains the htpasswd username, not the OIDC claim.
+  -- All authenticated OIDC users can see Basic auth entries (they are accessible
+  -- from internal networks without credentials, and from external with the password).
+  if entry["SECURE"] == "Basic" then return true end
   -- Empty REMOTE_USER (shouldn't happen after auth, but be safe)
   if REMOTE_USER == "" then return true end
   local u_lower = REMOTE_USER:lower()
-  -- USERS is comma+space separated: "alice, bob"
+  -- USERS is comma+space separated after pipe→comma conversion: "alice, bob"
   for u in (users .. ","):gmatch("([^,]+),?") do
     if all_trim(u):lower() == u_lower then return true end
   end
