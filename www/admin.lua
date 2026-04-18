@@ -9,6 +9,19 @@
 
 local SITES_DIR = "/etc/apache2/sites-admin/"
 local ADDON_DIR = "/etc/apache2/AddOn/"
+local OIDC_DIR  = "/etc/apache2/AddOn/.oidc/"
+
+-- Keycloak Admin API — uses the Proxy client's service account (client_credentials)
+local KC_ADMIN_URL    = os.getenv("KEYCLOAK_ADMIN_URL") or ""
+local KC_CLIENT_ID    = os.getenv("OIDC_CLIENT_ID")     or ""
+local KC_CLIENT_SECRET = os.getenv("OIDC_CLIENT_SECRET") or ""
+-- Derive token endpoint from OIDC_PROVIDER_METADATA_URL
+local KC_TOKEN_URL = (function()
+  local meta = os.getenv("OIDC_PROVIDER_METADATA_URL") or ""
+  -- Replace /.well-known/openid-configuration with /protocol/openid-connect/token
+  return meta:gsub("/.well%-known/openid%-configuration$",
+                   "/protocol/openid-connect/token")
+end)()
 
 local MACRO_TYPES = {
   "VHost_Proxy",
@@ -312,10 +325,19 @@ local function show_list(r, msg)
     local lines = read_lines(fpath)
     if not lines then goto continue end
 
-    -- Count vhost entries
+    -- Count vhost entries and collect unique domains
     local entries = 0
+    local domains_seen = {}
+    local domains_ordered = {}
     for i, l in ipairs(lines) do
-      if is_vhost_line(l) and not is_no_admin(lines, i) then entries = entries + 1 end
+      if is_vhost_line(l) and not is_no_admin(lines, i) then
+        entries = entries + 1
+        local v = parse_vhost_line(l)
+        if v and not domains_seen[v.domain] then
+          domains_seen[v.domain] = true
+          domains_ordered[#domains_ordered + 1] = v.domain
+        end
+      end
     end
 
     r:puts('<div class="card">')
@@ -368,6 +390,14 @@ local function show_list(r, msg)
       r:puts('</table>')
     end
     r:puts('</div>')
+
+    -- Keycloak client sections — one per unique domain in this file
+    if KC_ADMIN_URL ~= "" then
+      for _, domain in ipairs(domains_ordered) do
+        show_kc_client_section(r, domain)
+      end
+    end
+
     ::continue::
   end
   r:puts('</div></body></html>')
@@ -761,6 +791,274 @@ end
 
 -- ── Domain creation form ──────────────────────────────────────────────────────
 
+-- ── Keycloak client management ───────────────────────────────────────────────
+
+-- Get a service-account token via client_credentials grant.
+-- Returns token string or nil + error message.
+local function kc_token()
+  if KC_TOKEN_URL == "" or KC_CLIENT_ID == "" or KC_CLIENT_SECRET == "" then
+    return nil, "KEYCLOAK_ADMIN_URL / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET nicht gesetzt"
+  end
+  local tmp_id  = os.tmpname()
+  local tmp_sec = os.tmpname()
+  io.open(tmp_id,  "w"):write(KC_CLIENT_ID):close()
+  io.open(tmp_sec, "w"):write(KC_CLIENT_SECRET):close()
+  local cmd = string.format(
+    'curl -s -k -X POST %s'
+    .. ' -d "grant_type=client_credentials"'
+    .. ' -d "client_id=$(cat %s)"'
+    .. ' -d "client_secret=$(cat %s)" 2>/dev/null',
+    KC_TOKEN_URL, tmp_id, tmp_sec)
+  local p = io.popen(cmd); local out = p:read("*a"); p:close()
+  os.remove(tmp_id); os.remove(tmp_sec)
+  local tok = out:match('"access_token"%s*:%s*"([^"]+)"')
+  if not tok then
+    return nil, "Token-Anfrage fehlgeschlagen: " .. out:sub(1, 120)
+  end
+  return tok, nil
+end
+
+-- Minimal JSON encoder for Keycloak API calls
+local function json_enc(v)
+  local t = type(v)
+  if t == "boolean" then return v and "true" or "false"
+  elseif t == "number" then return tostring(v)
+  elseif t == "string" then
+    return '"' .. v:gsub('\\','\\\\'):gsub('"','\\"'):gsub('\n','\\n') .. '"'
+  elseif t == "table" then
+    if #v > 0 then
+      local a = {}; for _,x in ipairs(v) do a[#a+1] = json_enc(x) end
+      return "[" .. table.concat(a,",") .. "]"
+    else
+      local o = {}; for k,val in pairs(v) do
+        o[#o+1] = json_enc(tostring(k)) .. ":" .. json_enc(val)
+      end
+      return "{" .. table.concat(o,",") .. "}"
+    end
+  end
+  return "null"
+end
+
+-- Check whether a Keycloak client with the given clientId exists.
+-- Returns client table or nil.
+local function kc_client_exists(domain, token)
+  if KC_ADMIN_URL == "" then return nil end
+  -- KC_ADMIN_URL ends with /realms/<realm> — derive clients endpoint
+  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local tmp = os.tmpname()
+  io.open(tmp,"w"):write("Authorization: Bearer " .. token):close()
+  local cmd = string.format(
+    'curl -s -k -H @%s "%s/clients?clientId=%s&search=false" 2>/dev/null',
+    tmp, base, domain)
+  local p = io.popen(cmd); local out = p:read("*a"); p:close()
+  os.remove(tmp)
+  -- Quick check: does the response contain our clientId?
+  if out:find('"clientId"') and out:find('"' .. domain:gsub("%-","%%%-"):gsub("%.","%%%%.") .. '"') then
+    local id = out:match('"id"%s*:%s*"([^"]+)"')
+    return id
+  end
+  return nil
+end
+
+-- Create a new Keycloak client for the given domain.
+-- Returns secret or nil + error.
+local function kc_create_client(domain, token)
+  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local tmp_h = os.tmpname()
+  local tmp_b = os.tmpname()
+  io.open(tmp_h,"w"):write("Authorization: Bearer " .. token):close()
+
+  local body = json_enc({
+    clientId               = domain,
+    name                   = "Proxy " .. domain,
+    description            = "Apache OIDC Proxy fuer " .. domain,
+    enabled                = true,
+    protocol               = "openid-connect",
+    publicClient           = false,
+    standardFlowEnabled    = true,
+    directAccessGrantsEnabled = false,
+    serviceAccountsEnabled = false,
+    redirectUris           = { "https://*." .. domain .. "/protected" },
+    webOrigins             = { "https://*." .. domain },
+  })
+  io.open(tmp_b,"w"):write(body):close()
+
+  -- Create client
+  local cmd = string.format(
+    'curl -s -k -o /dev/null -w "%%{http_code}" -X POST'
+    .. ' -H @%s -H "Content-Type: application/json"'
+    .. ' --data @%s "%s/clients" 2>/dev/null',
+    tmp_h, tmp_b, base)
+  local p = io.popen(cmd); local status = tonumber(p:read("*a")); p:close()
+
+  if status ~= 201 then
+    os.remove(tmp_h); os.remove(tmp_b)
+    return nil, "Keycloak antwortete mit HTTP " .. tostring(status)
+  end
+
+  -- Add groups mapper
+  local cid = kc_client_exists(domain, token)
+  if cid then
+    local mapper = json_enc({
+      name           = "groups",
+      protocol       = "openid-connect",
+      protocolMapper = "oidc-group-membership-mapper",
+      config = {
+        ["full.path"]            = "false",
+        ["id.token.claim"]       = "true",
+        ["access.token.claim"]   = "true",
+        ["claim.name"]           = "groups",
+        ["userinfo.token.claim"] = "true",
+      }
+    })
+    io.open(tmp_b,"w"):write(mapper):close()
+    local cm = string.format(
+      'curl -s -k -X POST -H @%s -H "Content-Type: application/json"'
+      .. ' --data @%s "%s/clients/%s/protocol-mappers/models" 2>/dev/null',
+      tmp_h, tmp_b, base, cid)
+    io.popen(cm):close()
+
+    -- Fetch the generated secret
+    local sm = string.format(
+      'curl -s -k -H @%s "%s/clients/%s/client-secret" 2>/dev/null',
+      tmp_h, base, cid)
+    local sp = io.popen(sm); local sout = sp:read("*a"); sp:close()
+    local secret = sout:match('"value"%s*:%s*"([^"]+)"')
+    os.remove(tmp_h); os.remove(tmp_b)
+    return secret, nil
+  end
+
+  os.remove(tmp_h); os.remove(tmp_b)
+  return nil, "Client angelegt, aber ID nicht lesbar"
+end
+
+-- Write domain OIDC client credentials to AddOn/.oidc/<domain>.conf
+local function write_oidc_client_conf(domain, client_id, secret)
+  os.execute("mkdir -p " .. OIDC_DIR)
+  local path = OIDC_DIR .. domain .. ".conf"
+  local f, err = io.open(path, "w")
+  if not f then return false, err end
+  f:write("# OIDC client credentials for " .. domain .. " — managed by admin.lua\n")
+  f:write("OIDCClientID     " .. client_id .. "\n")
+  f:write("OIDCClientSecret " .. secret   .. "\n")
+  f:close()
+  os.execute("chmod 600 " .. path)
+  return true, nil
+end
+
+-- Read existing OIDC client credentials from AddOn/.oidc/<domain>.conf
+local function read_oidc_client_conf(domain)
+  local path = OIDC_DIR .. domain .. ".conf"
+  local f = io.open(path, "r")
+  if not f then return nil end
+  local id, sec
+  for line in f:lines() do
+    id  = id  or line:match("^OIDCClientID%s+(.+)$")
+    sec = sec or line:match("^OIDCClientSecret%s+(.+)$")
+  end
+  f:close()
+  return id and { client_id = trim(id), has_secret = (sec ~= nil) }
+end
+
+-- Show or handle Keycloak client section for a domain
+local function show_kc_client_section(r, domain, msg)
+  local existing = read_oidc_client_conf(domain)
+
+  r:puts('<div class="card" style="margin-top:1em">')
+  r:puts('<h2>\xF0\x9F\x94\x91 Keycloak-Client</h2>')
+
+  if msg then
+    local cls = msg:sub(1,3) == "ERR" and "err" or "ok"
+    r:puts('<div class="msg ' .. cls .. '">' .. h(msg) .. '</div>')
+  end
+
+  if KC_ADMIN_URL == "" then
+    r:puts('<p class="hint">KEYCLOAK_ADMIN_URL nicht gesetzt — Keycloak-Integration nicht verfügbar.</p>')
+  elseif existing then
+    r:puts('<p style="color:#99ff99;margin-bottom:.6em">')
+    r:puts('\xE2\x9C\x94 Client <code>' .. h(existing.client_id) .. '</code> ist konfiguriert.')
+    r:puts('</p>')
+    r:puts('<form method="POST" action="/?action=kc_rotate&domain=' .. h(domain) .. '">')
+    r:puts('<button class="btn b-warn" type="submit">&#x21BA;&nbsp;Secret rotieren</button>')
+    r:puts('</form>')
+  else
+    r:puts('<p style="color:#aaa;font-size:.9em;margin-bottom:.8em">')
+    r:puts('Kein eigener Keycloak-Client f\xC3\xBCr <code>' .. h(domain) .. '</code>.<br>')
+    r:puts('Aktuell wird der globale Client <code>' .. h(KC_CLIENT_ID) .. '</code> verwendet.')
+    r:puts('</p>')
+    r:puts('<form method="POST" action="/?action=kc_create&domain=' .. h(domain) .. '">')
+    r:puts('<button class="btn b-add" type="submit">')
+    r:puts('&#x2B;&nbsp;Keycloak-Client <code>' .. h(domain) .. '</code> anlegen</button>')
+    r:puts('</form>')
+  end
+  r:puts('</div>')
+end
+
+local function do_kc_create(r, domain)
+  local tok, err = kc_token()
+  if not tok then
+    return show_list(r, "ERR Keycloak-Token: " .. (err or ""))
+  end
+
+  -- Check if client already exists
+  if kc_client_exists(domain, tok) then
+    return show_list(r, "ERR Client '" .. domain .. "' existiert bereits in Keycloak")
+  end
+
+  local secret, cerr = kc_create_client(domain, tok)
+  if not secret then
+    return show_list(r, "ERR Keycloak-Client anlegen: " .. (cerr or ""))
+  end
+
+  local ok, werr = write_oidc_client_conf(domain, domain, secret)
+  if not ok then
+    return show_list(r, "ERR Conf-Datei schreiben: " .. (werr or ""))
+  end
+
+  -- Graceful reload so Apache picks up the new IncludeOptional file
+  os.execute("apache2ctl graceful 2>/dev/null")
+
+  show_list(r, "OK Keycloak-Client '" .. domain .. "' angelegt und aktiviert")
+end
+
+local function do_kc_rotate(r, domain)
+  local existing = read_oidc_client_conf(domain)
+  if not existing then
+    return show_list(r, "ERR Kein Keycloak-Client f\xC3\xBCr " .. domain .. " konfiguriert")
+  end
+
+  local tok, err = kc_token()
+  if not tok then
+    return show_list(r, "ERR Keycloak-Token: " .. (err or ""))
+  end
+
+  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local cid  = kc_client_exists(domain, tok)
+  if not cid then
+    return show_list(r, "ERR Client '" .. domain .. "' nicht in Keycloak gefunden")
+  end
+
+  -- Rotate secret
+  local tmp = os.tmpname()
+  io.open(tmp,"w"):write("Authorization: Bearer " .. tok):close()
+  local cmd = string.format(
+    'curl -s -k -X POST -H @%s "%s/clients/%s/client-secret" 2>/dev/null',
+    tmp, base, cid)
+  local p = io.popen(cmd); local out = p:read("*a"); p:close()
+  os.remove(tmp)
+  local new_secret = out:match('"value"%s*:%s*"([^"]+)"')
+  if not new_secret then
+    return show_list(r, "ERR Secret-Rotation fehlgeschlagen")
+  end
+
+  local ok, werr = write_oidc_client_conf(domain, domain, new_secret)
+  if not ok then
+    return show_list(r, "ERR Conf-Datei schreiben: " .. (werr or ""))
+  end
+  os.execute("apache2ctl graceful 2>/dev/null")
+  show_list(r, "OK Secret f\xC3\xBCr '" .. domain .. "' rotiert und aktiviert")
+end
+
 local function show_domain_form(r, pre, errmsg)
   r:puts(page_head("Neue Domain"))
   r:puts('<div class="main"><div class="card">')
@@ -1131,6 +1429,22 @@ function handle(r)
 
   elseif action == "domain_create" and r.method == "POST" then
     do_domain_create(r, post)
+
+  elseif action == "kc_create" and r.method == "POST" then
+    local domain = trim(get["domain"] or "")
+    if not validate_domain(domain) then
+      show_list(r, "ERR: Ungültige Domain")
+    else
+      do_kc_create(r, domain)
+    end
+
+  elseif action == "kc_rotate" and r.method == "POST" then
+    local domain = trim(get["domain"] or "")
+    if not validate_domain(domain) then
+      show_list(r, "ERR: Ungültige Domain")
+    else
+      do_kc_rotate(r, domain)
+    end
 
   else
     show_list(r)
