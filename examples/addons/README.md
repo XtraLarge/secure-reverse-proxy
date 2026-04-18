@@ -22,9 +22,18 @@ All examples are anonymized and use placeholder hosts.
 
 Included examples:
 
+**preconfig** (before `ProxyPass` — request-side directives):
+
 - `backup.preconfig`: HTTPS backend with self-signed cert and WebSocket upgrade (e.g. backup server)
 - `office.preconfig`: WOPI endpoints and WebSocket routing (e.g. online office suite)
 - `files.preconfig`: WebSocket and large-upload tuning (e.g. file sync/share server)
 - `idp.preconfig`: preserve browser-facing host and forwarding headers (e.g. identity provider)
 - `cluster.preconfig`: generic HTTPS WebSocket backend (e.g. cluster management UI)
 - `monitor.preconfig`: forwarding headers for metrics dashboards
+
+**postconfig** (after `ProxyPass` — response-side directives):
+
+- `headers.postconfig`: override or remove response headers from the backend (e.g. strip version banners, enforce cache control)
+- `cors.postconfig`: add CORS headers for API backends that do not set them (e.g. browser-facing REST APIs)
+- `redirect-fix.postconfig`: rewrite `Location` headers when the backend redirects to its internal address
+- `cookie.postconfig`: fix cookie domain and path so the browser accepts cookies from the backend

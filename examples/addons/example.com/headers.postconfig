@@ -1,0 +1,18 @@
+# headers.postconfig — override or remove response headers from the backend
+#
+# Use this when a backend sends headers that should not reach the browser,
+# or when you need to enforce specific values regardless of what the backend sets.
+#
+# Common use cases:
+#   - Remove server version banners (X-Powered-By, Server)
+#   - Enforce cache-control for sensitive apps
+#   - Override a too-permissive Content-Security-Policy from the backend
+
+# Remove information-leaking server headers
+Header unset X-Powered-By
+Header unset X-Generator
+Header always unset Server
+
+# Prevent caching of authenticated responses
+Header always set Cache-Control "no-store, no-cache, must-revalidate"
+Header always set Pragma "no-cache"

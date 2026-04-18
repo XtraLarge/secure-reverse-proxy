@@ -1,0 +1,17 @@
+# redirect-fix.postconfig — rewrite Location headers from the backend
+#
+# Use this when the backend issues redirects (301/302) using its internal
+# hostname or port instead of the public proxy URL.
+#
+# Example: backend redirects to http://10.0.0.5:8080/dashboard
+#          browser should receive  https://app.example.com/dashboard
+#
+# ProxyPassReverse handles the common case automatically, but if the backend
+# uses a different path prefix or an unexpected scheme, use Header edit instead.
+
+# Rewrite Location headers: replace internal base URL with public URL
+Header edit Location "^http://10\.0\.0\.5:8080/" "https://app.example.com/"
+
+# Rewrite Set-Cookie domain so cookies are valid under the proxy domain
+ProxyPassReverseCookieDomain 10.0.0.5 example.com
+ProxyPassReverseCookiePath   /internal /

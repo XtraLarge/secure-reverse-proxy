@@ -1,0 +1,18 @@
+# cors.postconfig — CORS headers for API backends
+#
+# Use this when the backend does not set CORS headers itself but the API is
+# consumed by browser-based frontends on the same or a different subdomain.
+#
+# Adjust the allowed origin to match your actual frontend domain.
+# Never use "*" for credentialed requests (cookies / Authorization header).
+
+Header always set Access-Control-Allow-Origin  "https://app.example.com"
+Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+Header always set Access-Control-Allow-Headers "Authorization, Content-Type, X-Requested-With"
+Header always set Access-Control-Allow-Credentials "true"
+Header always set Access-Control-Max-Age "3600"
+
+# Answer OPTIONS preflight requests directly without forwarding to the backend
+RewriteEngine On
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^ - [R=204,L]

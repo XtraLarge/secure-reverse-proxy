@@ -1,0 +1,17 @@
+# cookie.postconfig — fix cookie domain and path from the backend
+#
+# Use this when the backend sets cookies with an internal hostname, a bare IP,
+# or a path that does not match the proxied URL structure.
+#
+# Without these corrections the browser will reject the cookies because the
+# domain or path does not match the public proxy URL.
+
+# Rewrite the cookie domain from the backend's internal name to the public domain
+ProxyPassReverseCookieDomain internal-app.local example.com
+
+# Rewrite the cookie path if the backend serves from a subpath
+# but is proxied at the root (or vice versa)
+ProxyPassReverseCookiePath /app /
+
+# Alternatively, use Header edit for full control over the Set-Cookie header:
+# Header edit Set-Cookie "(.*); Domain=internal-app\.local(.*)" "$1; Domain=example.com$2"
