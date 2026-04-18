@@ -785,16 +785,27 @@ function handle(r)
     return apache2.OK
   end
 
-  -- OIDC access token (set by mod_auth_openidc in the authentication phase)
+  -- OIDC access token (set by mod_auth_openidc in the authentication phase).
+  -- If empty the user reached this script without an OIDC session (e.g. an
+  -- internal-IP request that bypassed OIDC at the Location / level).
+  -- Show a login prompt rather than a cryptic error.
   local token = r.subprocess_env["OIDC_access_token"] or ""
   if token == "" then
+    -- Build a return URL so the user lands back here after login
+    local return_url = "https://" .. (r.hostname or "") .. r.uri
+    if r.args and r.args ~= "" then return_url = return_url .. "?" .. r.args end
+    local login_url  = "https://" .. (r.hostname or "") .. "/admin-kc.lua"
+
     r:puts(page_head("Keycloak Admin", "list"))
-    r:puts('<div class="main"><div class="msg err">')
-    r:puts('<strong>Kein OIDC-Access-Token verfügbar</strong><br><br>')
-    r:puts('mod_auth_openidc hat keinen Access-Token für diese Session hinterlegt.<br>')
-    r:puts('Mögliche Ursachen:<br>')
-    r:puts('• Die Session ist abgelaufen — bitte neu anmelden<br>')
-    r:puts('• Der OIDC-Scope enthält nicht "openid" (OIDC_SCOPE prüfen)')
+    r:puts('<div class="main">')
+    r:puts('<div class="card" style="max-width:480px;margin-top:2em">')
+    r:puts('<h2 style="margin-bottom:.7em">\xF0\x9F\x94\x90 Anmeldung erforderlich</h2>')
+    r:puts('<p style="color:#aaa;font-size:.9em;margin-bottom:1.2em">')
+    r:puts('Für die Keycloak-Benutzerverwaltung ist eine aktive OIDC-Session nötig.<br>')
+    r:puts('Bitte melde dich an, um fortzufahren.')
+    r:puts('</p>')
+    r:puts('<a class="btn b-add" style="font-size:.95em;padding:7px 18px" href="'
+      .. h(login_url) .. '">\xE2\x9E\x94 Jetzt anmelden</a>')
     r:puts('</div></div></body></html>')
     return apache2.OK
   end
