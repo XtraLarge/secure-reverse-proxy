@@ -1,0 +1,6 @@
+# logrotate config for the consolidated Apache syslog file.
+# Active only when LOG_FILE is set (default: /var/log/apache2/apache.log).
+# The actual path is written to /etc/logrotate.d/apache-active by entrypoint.sh.
+
+# This file is a placeholder — entrypoint.sh writes the real config to
+# /etc/logrotate.d/apache-active based on the LOG_FILE env var.

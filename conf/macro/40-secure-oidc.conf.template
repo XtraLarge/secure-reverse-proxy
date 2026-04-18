@@ -62,7 +62,8 @@
   OIDCCookieHTTPOnly              On
   OIDCStateCookiePrefix           $(DOMAINNAME)-Auth-State-
 
-  # Redis session cache
+  # Redis session cache — store sessions server-side to avoid oversized cookies
+  OIDCSessionType                 server-cache
   OIDCSessionCacheFallbackToCookie On
   OIDCCacheType                   redis
   OIDCRedisCacheServer            ${REDIS_HOST}:${REDIS_PORT}

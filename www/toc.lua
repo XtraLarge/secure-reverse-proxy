@@ -9,6 +9,7 @@ REMOTE_USER = os.getenv("TOC_REMOTE_USER_DEFAULT") or ""
 T           = {"STATUS", "NAME", "DOMAIN", "TYP",  "DEST",        "IPROT",       "IIP",     "IPORT",     "SECURE",  "USERS"} 
 TT          = {"Status", "Name", "Domain", "Type", "Destination", "Int. Proto.", "Int. IP", "Int. Port", "Secured", "Users"}
 A           = {};
+A_seen      = {};   -- dedup set: "name.domain" keys already inserted into A
 
 
 --
@@ -220,9 +221,10 @@ function user_may_see(entry)
   local users = entry["USERS"] or ""
   -- No restriction or special marker — always visible
   if users == "" or users == "-" or users == "- ALL -" then return true end
-  -- Only OIDC claim entries are filtered; Basic/others are shown to all
-  if entry["SECURE"] ~= "OpenID Connect" then return true end
-  -- Empty REMOTE_USER (shouldn't happen, but be safe)
+  -- VHost_Proxy / VHost_Alias have no USERS parameter; finalword() falls through
+  -- and returns the destination URL.  Treat any URL-shaped value as unrestricted.
+  if users:match("^https?://") then return true end
+  -- Empty REMOTE_USER (shouldn't happen after auth, but be safe)
   if REMOTE_USER == "" then return true end
   local u_lower = REMOTE_USER:lower()
   -- USERS is comma+space separated: "alice, bob"
@@ -328,7 +330,8 @@ local function ping_host(host)
 
   -- 2) Wenn keiner sofort "ok" war aber wir pending sockets haben:
   if need_select and #pending > 0 then
-    local _, writable = socket.select(nil, pending, 0.05)
+    local ok_sel, _, writable = pcall(socket.select, nil, pending, 0.05)
+    if not ok_sel then writable = {} end
     if #writable > 0 then
       for _, s in ipairs(pending) do
         pcall(function() s:close() end)
@@ -396,7 +399,8 @@ function check_all_services()
 
   -- 2) Einmaliges Warten: welche Sockets werden schreibbar (Handshake fertig)?
   if #write_list > 0 then
-    local _, writable = socket.select(nil, write_list, GLOBAL_TIMEOUT)
+    local ok_sel, _, writable = pcall(socket.select, nil, write_list, GLOBAL_TIMEOUT)
+    if not ok_sel then writable = {} end
     local writable_set = {}
     for _, s in ipairs(writable) do
       writable_set[s] = true
@@ -524,7 +528,10 @@ function parse(line)
   -- Only process VHost_* macros (skip Domain_*, Admin_VHost, comments, etc.)
   if not startswith(string.lower(all_trim(line)), "use vhost_") then return end
 
-  -- insert element
+  -- insert element (skip duplicates that appear in both sites-enabled and sites-admin)
+  local dedup_key = string.lower(word(line,3)) .. "." .. string.lower(word(line,4))
+  if A_seen[dedup_key] then return end
+  A_seen[dedup_key] = true
   table.insert(A,{
     ["NAME"]   = word(line,3);
     ["DOMAIN"] = word(line,4);

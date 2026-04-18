@@ -13,6 +13,15 @@ local OIDC_DIR  = "/etc/apache2/AddOn/.oidc/"
 
 -- Keycloak Admin API — uses the Proxy client's service account (client_credentials)
 local KC_ADMIN_URL    = os.getenv("KEYCLOAK_ADMIN_URL") or ""
+-- Normalise to the admin API base: if the URL already contains /admin/realms/ leave it,
+-- otherwise transform /realms/ → /admin/realms/ (for URLs like https://iam/realms/master).
+local KC_BASE_URL = (function()
+  if KC_ADMIN_URL == "" then return "" end
+  if KC_ADMIN_URL:find("/admin/realms/", 1, true) then
+    return KC_ADMIN_URL  -- already the admin API URL
+  end
+  return KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+end)()
 local KC_CLIENT_ID    = os.getenv("OIDC_CLIENT_ID")     or ""
 local KC_CLIENT_SECRET = os.getenv("OIDC_CLIENT_SECRET") or ""
 -- Derive token endpoint from OIDC_PROVIDER_METADATA_URL
@@ -261,14 +270,14 @@ function onMacroChange(sel) {
 }
 </script>]]
 
-local TOC_DOMAIN = ""
-do
-  -- Derive TOC domain from sites-admin first, fall back to sites-enabled
+-- Use OIDC_COOKIE_DOMAIN (e.g. "example.com") as the authoritative domain.
+-- Fall back to parsing the first sites-admin conf filename if not set.
+local TOC_DOMAIN = os.getenv("OIDC_COOKIE_DOMAIN") or ""
+if TOC_DOMAIN == "" then
   local p = io.popen("ls /etc/apache2/sites-admin/*.conf /etc/apache2/sites-enabled/*.conf 2>/dev/null | head -1")
   if p then
     local f = p:read("*l") or ""
     p:close()
-    -- extract domain: basename without .conf
     TOC_DOMAIN = f:match("([^/]+)%.conf$") or ""
   end
 end
@@ -279,7 +288,8 @@ local function topbar(title)
   return '<div class="topbar">'
     .. '<a class="topbar-title" href="/">\xE2\x9A\x99 ' .. h(title) .. '</a>'
     .. '<div class="topbar-nav">'
-    .. '<a href="/?action=users">\xF0\x9F\x91\xA4 Nutzer</a>'
+    .. '<a href="/?action=users">\xF0\x9F\x91\xA4 OIDC Auth</a>'
+    .. '<a href="/?action=htpasswd">\xF0\x9F\x94\x91 Basic Auth</a>'
     .. '<a href="' .. h(toc_link) .. '">\xE2\x98\xB0 TOC</a>'
     .. '<a href="' .. h(logout_link) .. '">\xC3\x97 Logout</a>'
     .. '</div>'
@@ -312,6 +322,12 @@ local function macro_tag(m)
   else                          cls = cls .. " tag-proxy" end
   return '<span class="' .. cls .. '">' .. h(m) .. '</span>'
 end
+
+-- ── Forward declarations ──────────────────────────────────────────────────────
+local show_kc_client_section
+local kc_token
+local json_enc
+local kc_create_group
 
 -- ── List page ─────────────────────────────────────────────────────────────────
 
@@ -802,7 +818,7 @@ end
 
 -- Generic GET against the Keycloak Admin API.
 local function kc_api_get(path, token)
-  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local base = KC_BASE_URL
   local tmp = os.tmpname()
   io.open(tmp,"w"):write("Authorization: Bearer " .. token):close()
   local cmd = string.format('curl -s -k -H @%s "%s%s" 2>/dev/null', tmp, base, path)
@@ -814,7 +830,7 @@ end
 -- Generic write (POST/PUT/DELETE) against the Keycloak Admin API.
 -- body may be nil for DELETE/PUT without body.
 local function kc_api_write(method, path, body, token)
-  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local base = KC_BASE_URL
   local tmp_h = os.tmpname()
   io.open(tmp_h,"w"):write("Authorization: Bearer " .. token):close()
   local cmd
@@ -950,6 +966,27 @@ local KC_PROTECTED_USERS = { admin=true, claude=true }
 -- Groups that must not be deleted via the UI.
 local KC_PROTECTED_GROUPS = { ["global-admins"]=true, ["global-users"]=true }
 
+-- ── Keycloak insufficient-rights notice ───────────────────────────────────────
+
+-- Shown when the OIDC token does not have Keycloak admin rights.
+-- Instructs the user to log out and re-login with an account that has the roles.
+local function show_kc_login(r, errmsg)
+  r:puts(page_head("Keine Admin-Rechte"))
+  r:puts('<div class="main"><div class="card">')
+  r:puts('<h2>Keycloak-Admin-Rechte erforderlich</h2>')
+  if errmsg and errmsg ~= "needs_login" then
+    r:puts(msg_html("ERR: " .. errmsg))
+  end
+  r:puts('<p>Der aktuell angemeldete Account hat keine ausreichenden Rechte '
+    .. 'zur Nutzerverwaltung in Keycloak.</p>')
+  r:puts('<p>Bitte abmelden und mit einem Account mit <code>manage-users</code>-Rolle '
+    .. 'neu anmelden.</p>')
+  r:puts('<div class="applybar">')
+  r:puts('<a class="btn b-del" href="/?logout">Abmelden &amp; neu einloggen</a>')
+  r:puts('<a class="btn b-cancel" href="/">\xE2\x86\x90 \xC3\x9Cbersicht</a>')
+  r:puts('</div></div></div></body></html>')
+end
+
 -- ── User/group pages ──────────────────────────────────────────────────────────
 
 local function show_users(r, msg)
@@ -959,7 +996,7 @@ local function show_users(r, msg)
   r:puts('<div class="applybar">')
   r:puts('<a class="btn b-add" href="/?action=user_new">+ Neuer Nutzer</a>')
   r:puts('<a class="btn b-add" href="/?action=group_new">+ Neue Gruppe</a>')
-  r:puts('<a class="btn b-cancel" href="/">\u2190 \xC3\x9Cbersicht</a>')
+  r:puts('<a class="btn b-cancel" href="/">\xE2\x86\x90 \xC3\x9Cbersicht</a>')
   r:puts('</div>')
 
   if KC_ADMIN_URL == "" then
@@ -971,8 +1008,8 @@ local function show_users(r, msg)
 
   local tok, terr = kc_token(r)
   if not tok then
-    r:puts('<div class="card"><p class="msg err">Keycloak-Token: ' .. h(terr or "") .. '</p></div>')
     r:puts('</div></body></html>')
+    show_kc_login(r, terr)
     return
   end
 
@@ -1001,10 +1038,11 @@ local function show_users(r, msg)
       r:puts('<td style="font-size:.85em">' .. h(fullname) .. '</td>')
       r:puts('<td style="font-size:.82em">' .. gbadges .. '</td>')
       r:puts('<td><div class="actions">')
+      -- Edit: POST form so credentials flow through
       r:puts('<a class="btn b-edit" href="/?action=user_edit&uid=' .. h(u.id) .. '">Bearbeiten</a>')
       if not KC_PROTECTED_USERS[u.username] then
-        r:puts('<form method="POST" action="/?action=user_delete" style="margin:0"'
-          .. ' onsubmit="return confirm(\'Nutzer \\'  .. h(u.username or "") .. '\\' wirklich l\xC3\xB6schen?\')">')
+        r:puts('<form method="POST" action="/?action=user_delete" style="display:inline"'
+          .. ' onsubmit="return confirm(\'Nutzer &quot;' .. h(u.username or "") .. '&quot; wirklich l\xC3\xB6schen?\')">')
         r:puts('<input type=hidden name=uid value="'       .. h(u.id)             .. '">')
         r:puts('<input type=hidden name=username value="'  .. h(u.username or "") .. '">')
         r:puts('<button class="btn b-del" type=submit>L\xC3\xB6schen</button></form>')
@@ -1028,8 +1066,8 @@ local function show_users(r, msg)
       or  '<span class="tag">Domain</span>') .. '</td>')
     r:puts('<td><div class="actions">')
     if not is_system then
-      r:puts('<form method="POST" action="/?action=group_delete" style="margin:0"'
-        .. ' onsubmit="return confirm(\'Gruppe \\' .. h(g.name or "") .. '\\' l\xC3\xB6schen?\')">')
+      r:puts('<form method="POST" action="/?action=group_delete" style="display:inline"'
+        .. ' onsubmit="return confirm(\'Gruppe &quot;' .. h(g.name or "") .. '&quot; l\xC3\xB6schen?\')">')
       r:puts('<input type=hidden name=gid   value="' .. h(g.id)   .. '">')
       r:puts('<input type=hidden name=gname value="' .. h(g.name or "") .. '">')
       r:puts('<button class="btn b-del" type=submit>L\xC3\xB6schen</button></form>')
@@ -1162,6 +1200,7 @@ local function do_user_create(r, post)
   local lname    = trim(post.lastName  or "")
   local password = post.password       or ""
   local grp_csv  = trim(post.groups_csv or "")
+  
 
   if username == "" or password == "" then
     return show_user_form(r, nil,
@@ -1170,7 +1209,7 @@ local function do_user_create(r, post)
   end
 
   local tok, terr = kc_token(r)
-  if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
+  if not tok then return show_kc_login(r, terr) end
 
   local uid, cerr = kc_user_create(
     {username=username,email=email,firstName=fname,lastName=lname,password=password}, tok)
@@ -1193,9 +1232,10 @@ end
 
 local function do_user_save(r, uid, post)
   if not uid or uid == "" then return show_users(r, "ERR: Keine UID") end
+  
 
   local tok, terr = kc_token(r)
-  if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
+  if not tok then return show_kc_login(r, terr) end
 
   kc_user_update(uid, {
     email     = trim(post.email     or ""),
@@ -1219,12 +1259,13 @@ end
 local function do_user_delete(r, post)
   local uid      = trim(post.uid      or "")
   local username = trim(post.username or "")
+  
   if uid == "" then return show_users(r, "ERR: Keine UID") end
   if KC_PROTECTED_USERS[username] then
     return show_users(r, "ERR: Systemnutzer k\xC3\xB6nnen nicht gel\xC3\xB6scht werden")
   end
   local tok, terr = kc_token(r)
-  if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
+  if not tok then return show_kc_login(r, terr) end
   if kc_user_delete(uid, tok) then
     show_users(r, "OK Nutzer '" .. username .. "' gel\xC3\xB6scht")
   else
@@ -1234,9 +1275,10 @@ end
 
 local function do_group_create(r, post)
   local gname = trim(post.gname or "")
+  
   if gname == "" then return show_group_form(r, post, "ERR: Gruppenname fehlt") end
   local tok, terr = kc_token(r)
-  if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
+  if not tok then return show_kc_login(r, terr) end
   local gid = kc_create_group(gname, tok)
   if gid then
     show_users(r, "OK Gruppe '" .. gname .. "' angelegt")
@@ -1248,12 +1290,13 @@ end
 local function do_group_delete(r, post)
   local gid   = trim(post.gid   or "")
   local gname = trim(post.gname or "")
+  
   if gid == "" then return show_users(r, "ERR: Keine GID") end
   if KC_PROTECTED_GROUPS[gname] then
     return show_users(r, "ERR: Systemgruppen k\xC3\xB6nnen nicht gel\xC3\xB6scht werden")
   end
   local tok, terr = kc_token(r)
-  if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
+  if not tok then return show_kc_login(r, terr) end
   local status = kc_api_write("DELETE", "/groups/" .. gid, nil, tok)
   if status == 204 then
     show_users(r, "OK Gruppe '" .. gname .. "' gel\xC3\xB6scht")
@@ -1266,24 +1309,25 @@ end
 
 -- ── Keycloak client management ───────────────────────────────────────────────
 
--- Get a service-account token via client_credentials grant.
--- Returns token string or nil + error message.
--- Returns the OIDC access token of the currently logged-in user.
--- mod_auth_openidc sets OIDC_access_token in the subprocess environment.
--- Returns token string or nil + error message.
-local function kc_token(r)
+-- Get a Keycloak admin token from the current OIDC session.
+-- The logged-in user must have manage-users / view-users roles on master-realm.
+-- Returns: token_string, nil  OR  nil, error_message
+-- Special error "needs_login" means: no valid token → show re-login prompt.
+kc_token = function(r)
   if KC_ADMIN_URL == "" then
     return nil, "KEYCLOAK_ADMIN_URL nicht gesetzt"
   end
+
   local tok = r and r.subprocess_env and r.subprocess_env["OIDC_access_token"]
   if not tok or tok == "" then
-    return nil, "Kein OIDC-Token — bitte \xC3\xBCber HTTPS mit aktivem Login aufrufen"
+    return nil, "needs_login"
   end
+
   return tok, nil
 end
 
 -- Minimal JSON encoder for Keycloak API calls
-local function json_enc(v)
+json_enc = function(v)
   local t = type(v)
   if t == "boolean" then return v and "true" or "false"
   elseif t == "number" then return tostring(v)
@@ -1310,7 +1354,7 @@ local function kc_client_id(domain) return "proxy-" .. domain end
 -- Returns internal UUID or nil.
 local function kc_client_exists(domain, token)
   if KC_ADMIN_URL == "" then return nil end
-  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local base = KC_BASE_URL
   local cid  = kc_client_id(domain)
   local tmp = os.tmpname()
   io.open(tmp,"w"):write("Authorization: Bearer " .. token):close()
@@ -1328,7 +1372,7 @@ end
 
 -- Fetch a realm role's internal ID by name.
 local function kc_realm_role_id(role_name, token)
-  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local base = KC_BASE_URL
   local tmp = os.tmpname()
   io.open(tmp,"w"):write("Authorization: Bearer " .. token):close()
   local cmd = string.format('curl -s -k -H @%s "%s/roles/%s" 2>/dev/null', tmp, base, role_name)
@@ -1339,7 +1383,7 @@ end
 
 -- Create a client role (admin / user) on a client UUID.
 local function kc_add_client_role(cuuid, role_name, desc, token)
-  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local base = KC_BASE_URL
   local tmp_h = os.tmpname(); local tmp_b = os.tmpname()
   io.open(tmp_h,"w"):write("Authorization: Bearer " .. token):close()
   io.open(tmp_b,"w"):write(json_enc({name=role_name, description=desc})):close()
@@ -1353,7 +1397,7 @@ end
 
 -- Fetch a client role's internal ID.
 local function kc_client_role_id(cuuid, role_name, token)
-  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local base = KC_BASE_URL
   local tmp = os.tmpname()
   io.open(tmp,"w"):write("Authorization: Bearer " .. token):close()
   local cmd = string.format(
@@ -1364,8 +1408,8 @@ local function kc_client_role_id(cuuid, role_name, token)
 end
 
 -- Create a Keycloak group by name; returns its UUID.
-local function kc_create_group(name, token)
-  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+kc_create_group = function(name, token)
+  local base = KC_BASE_URL
   local tmp_h = os.tmpname(); local tmp_b = os.tmpname()
   io.open(tmp_h,"w"):write("Authorization: Bearer " .. token):close()
   io.open(tmp_b,"w"):write(json_enc({name=name})):close()
@@ -1393,7 +1437,7 @@ end
 
 -- Assign a realm role to a group.
 local function kc_group_realm_role(gid, role_id, role_name, token)
-  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local base = KC_BASE_URL
   local tmp_h = os.tmpname(); local tmp_b = os.tmpname()
   io.open(tmp_h,"w"):write("Authorization: Bearer " .. token):close()
   io.open(tmp_b,"w"):write(json_enc({{id=role_id, name=role_name}})):close()
@@ -1407,7 +1451,7 @@ end
 
 -- Assign a client role to a group.
 local function kc_group_client_role(gid, cuuid, role_id, role_name, token)
-  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local base = KC_BASE_URL
   local tmp_h = os.tmpname(); local tmp_b = os.tmpname()
   io.open(tmp_h,"w"):write("Authorization: Bearer " .. token):close()
   io.open(tmp_b,"w"):write(json_enc({{id=role_id, name=role_name, clientRole=true, containerId=cuuid}})):close()
@@ -1426,7 +1470,7 @@ end
 -- Also creates client roles (admin/user), domain groups, and role mappings.
 -- Returns secret or nil + error.
 local function kc_create_client(domain, token)
-  local base      = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local base      = KC_BASE_URL
   local client_id = kc_client_id(domain)
   local tmp_h     = os.tmpname()
   local tmp_b     = os.tmpname()
@@ -1444,6 +1488,7 @@ local function kc_create_client(domain, token)
     serviceAccountsEnabled = false,
     redirectUris           = { "https://*." .. domain .. "/protected" },
     webOrigins             = { "https://*." .. domain },
+    attributes             = { ["post.logout.redirect.uris"] = "https://logout." .. domain .. "/*" },
   })
   io.open(tmp_b,"w"):write(body):close()
 
@@ -1546,7 +1591,7 @@ local function read_oidc_client_conf(domain)
 end
 
 -- Show or handle Keycloak client section for a domain
-local function show_kc_client_section(r, domain, msg)
+show_kc_client_section = function(r, domain, msg)
   local existing   = read_oidc_client_conf(domain)
   local target_cid = kc_client_id(domain)   -- proxy-<domain>
 
@@ -1623,7 +1668,7 @@ local function do_kc_rotate(r, domain)
     return show_list(r, "ERR Keycloak-Token: " .. (err or ""))
   end
 
-  local base = KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
+  local base = KC_BASE_URL
   local cid  = kc_client_exists(domain, tok)
   if not cid then
     return show_list(r, "ERR Client '" .. domain .. "' nicht in Keycloak gefunden")
@@ -1926,6 +1971,143 @@ local function show_vhost_config_view(r, name, domain, rawline)
   r:puts('</div></div></body></html>')
 end
 
+-- ── BasicAuth / htpasswd management ──────────────────────────────────────────
+
+local HTPASSWD_FILE = "/etc/apache2/basic.htpasswd"
+
+local function validate_htpasswd_user(s)
+  -- Only safe characters — no shell metacharacters
+  return s and s ~= "" and s:match("^[%w%-%._]+$") ~= nil
+end
+
+local function htpasswd_list_users()
+  local users = {}
+  local f = io.open(HTPASSWD_FILE, "r")
+  if not f then return users end
+  for line in f:lines() do
+    local user = line:match("^([^:]+):")
+    if user then table.insert(users, user) end
+  end
+  f:close()
+  return users
+end
+
+-- Set or update a user's password via htpasswd (bcrypt, password via stdin).
+-- Returns nil on success, error string on failure.
+local function htpasswd_set(username, password)
+  if not validate_htpasswd_user(username) then return "Ungültiger Benutzername" end
+  if not password or password == "" then return "Passwort darf nicht leer sein" end
+  local create = fexists(HTPASSWD_FILE) and "" or " -c"
+  local cmd = string.format("htpasswd -B -i%s %s %s 2>&1",
+    create, HTPASSWD_FILE, username)
+  local p = io.popen(cmd, "w")
+  if not p then return "htpasswd konnte nicht ausgeführt werden" end
+  p:write(password .. "\n")
+  local ok, _, code = p:close()
+  if not ok then return "htpasswd fehlgeschlagen (exit " .. tostring(code or "?") .. ")" end
+  return nil
+end
+
+-- Delete a user from the htpasswd file.
+-- Returns nil on success, error string on failure.
+local function htpasswd_del(username)
+  if not validate_htpasswd_user(username) then return "Ungültiger Benutzername" end
+  if not fexists(HTPASSWD_FILE) then return "Datei nicht gefunden" end
+  local cmd = string.format("htpasswd -D %s %s 2>&1", HTPASSWD_FILE, username)
+  local p = io.popen(cmd)
+  if not p then return "htpasswd konnte nicht ausgeführt werden" end
+  local out = p:read("*a")
+  local ok = p:close()
+  if not ok then return trim(out) ~= "" and trim(out) or "Fehler beim Löschen" end
+  return nil
+end
+
+local function show_htpasswd(r, msg)
+  r:puts(page_head("BasicAuth Benutzer"))
+  if msg then r:puts(msg_html(msg)) end
+  r:puts('<div class="main">')
+
+  local users = htpasswd_list_users()
+  r:puts('<div class="card">')
+  r:puts('<h2>Benutzer in basic.htpasswd</h2>')
+  if #users == 0 then
+    r:puts('<p class="dim">Keine Benutzer vorhanden.</p>')
+  else
+    r:puts('<table><tr><th>Benutzername</th><th>Aktionen</th></tr>')
+    for _, user in ipairs(users) do
+      r:puts('<tr><td>' .. h(user) .. '</td><td class="actions">')
+      r:puts('<a class="btn b-edit" href="/?action=htpasswd_edit&user=' .. h(user) .. '">Passwort \xC3\xA4ndern</a> ')
+      r:puts('<form method="POST" action="/?action=htpasswd_delete" style="display:inline"'
+          .. ' onsubmit="return confirm(\'Benutzer &quot;' .. h(user) .. '&quot; wirklich l\xC3\xB6schen?\')">')
+      r:puts('<input type="hidden" name="username" value="' .. h(user) .. '">')
+      r:puts('<button class="btn b-del" type="submit">L\xC3\xB6schen</button></form>')
+      r:puts('</td></tr>')
+    end
+    r:puts('</table>')
+  end
+  r:puts('</div>')
+
+  r:puts('<div class="card"><h2>Neuer Benutzer</h2>')
+  r:puts('<form method="POST" action="/?action=htpasswd_set">')
+  r:puts('<input type="hidden" name="mode" value="new">')
+  r:puts('<div class="form-row"><label>Benutzername</label>')
+  r:puts('<input name="username" required placeholder="benutzername"></div>')
+  r:puts('<div class="form-row"><label>Passwort</label>')
+  r:puts('<input type="password" name="password" required placeholder="Passwort"></div>')
+  r:puts('<div class="form-row"><label>Passwort (wdh.)</label>')
+  r:puts('<input type="password" name="confirm" required placeholder="Passwort wiederholen"></div>')
+  r:puts('<div class="form-row"><label></label><button class="btn b-save" type="submit">Anlegen</button></div>')
+  r:puts('</form></div>')
+  r:puts('</div>')
+end
+
+local function show_htpasswd_edit(r, username, msg)
+  r:puts(page_head("Passwort \xC3\xA4ndern"))
+  if msg then r:puts(msg_html(msg)) end
+  r:puts('<div class="main"><div class="card">')
+  r:puts('<h2>Passwort f\xC3\xBCr <strong>' .. h(username) .. '</strong></h2>')
+  r:puts('<form method="POST" action="/?action=htpasswd_set">')
+  r:puts('<input type="hidden" name="mode" value="edit">')
+  r:puts('<input type="hidden" name="username" value="' .. h(username) .. '">')
+  r:puts('<div class="form-row"><label>Neues Passwort</label>')
+  r:puts('<input type="password" name="password" required autofocus placeholder="Neues Passwort"></div>')
+  r:puts('<div class="form-row"><label>Passwort (wdh.)</label>')
+  r:puts('<input type="password" name="confirm" required placeholder="Passwort wiederholen"></div>')
+  r:puts('<div class="form-row"><label></label>')
+  r:puts('<button class="btn b-save" type="submit">Speichern</button> ')
+  r:puts('<a class="btn b-cancel" href="/?action=htpasswd">Abbrechen</a></div>')
+  r:puts('</form></div></div>')
+end
+
+local function do_htpasswd_set(r, post)
+  local username = trim(post["username"] or "")
+  local password = post["password"] or ""
+  local confirm  = post["confirm"]  or ""
+  local mode     = post["mode"]     or "new"
+
+  local function err(msg)
+    if mode == "edit" then show_htpasswd_edit(r, username, "ERR: " .. msg)
+    else                   show_htpasswd(r, "ERR: " .. msg) end
+  end
+
+  if not validate_htpasswd_user(username) then return err("Ung\xC3\xBCltiger Benutzername") end
+  if password == ""           then return err("Passwort darf nicht leer sein") end
+  if password ~= confirm      then return err("Passw\xC3\xB6rter stimmen nicht \xC3\xBCberein") end
+
+  local e = htpasswd_set(username, password)
+  if e then err(e) else show_htpasswd(r, "OK: Passwort f\xC3\xBCr '" .. h(username) .. "' gespeichert") end
+end
+
+local function do_htpasswd_delete(r, post)
+  local username = trim(post["username"] or "")
+  if not validate_htpasswd_user(username) then
+    return show_htpasswd(r, "ERR: Ung\xC3\xBCltiger Benutzername")
+  end
+  local e = htpasswd_del(username)
+  if e then show_htpasswd(r, "ERR: " .. e)
+  else      show_htpasswd(r, "OK: Benutzer '" .. h(username) .. "' gel\xC3\xB6scht") end
+end
+
 -- ── Request dispatcher ────────────────────────────────────────────────────────
 
 function handle(r)
@@ -2037,20 +2219,41 @@ function handle(r)
       do_kc_rotate(r, domain)
     end
 
+  elseif action == "htpasswd" then
+    show_htpasswd(r)
+
+  elseif action == "htpasswd_edit" then
+    local user = trim(get["user"] or "")
+    if not validate_htpasswd_user(user) then
+      show_htpasswd(r, "ERR: Ung\xC3\xBCltiger Benutzername")
+    else
+      show_htpasswd_edit(r, user, nil)
+    end
+
+  elseif action == "htpasswd_set" and r.method == "POST" then
+    do_htpasswd_set(r, post)
+
+  elseif action == "htpasswd_delete" and r.method == "POST" then
+    do_htpasswd_delete(r, post)
+
   elseif action == "users" then
-    show_users(r)
+    
+    
+    show_users(r, nil)
 
   elseif action == "user_new" then
     show_user_form(r, nil, nil, nil)
 
   elseif action == "user_edit" then
-    local uid = trim(get["uid"] or "")
+    local uid = trim(post["uid"] or get["uid"] or "")
+    
+    
     if uid == "" then
       show_users(r, "ERR: Keine UID")
     else
       local tok, terr = kc_token(r)
       if not tok then
-        show_users(r, "ERR Keycloak-Token: " .. (terr or ""))
+        show_kc_login(r, terr)
       else
         local udata = json_obj_flat(kc_api_get("/users/" .. uid, tok))
         show_user_form(r, uid, udata, nil)
@@ -2061,7 +2264,7 @@ function handle(r)
     do_user_create(r, post)
 
   elseif action == "user_save" and r.method == "POST" then
-    local uid = trim(get["uid"] or "")
+    local uid = trim(post["uid"] or get["uid"] or "")
     do_user_save(r, uid, post)
 
   elseif action == "user_delete" and r.method == "POST" then

@@ -1,0 +1,5 @@
+# Daily logrotate run for Apache consolidated log
+# Runs at 04:00 — after the OIDC key rotation (03:00) to avoid overlap.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+0 4 * * * root logrotate /etc/logrotate.d/apache-active 2>&1 | logger -t logrotate
