@@ -969,7 +969,7 @@ local function show_users(r, msg)
     return
   end
 
-  local tok, terr = kc_token()
+  local tok, terr = kc_token(r)
   if not tok then
     r:puts('<div class="card"><p class="msg err">Keycloak-Token: ' .. h(terr or "") .. '</p></div>')
     r:puts('</div></body></html>')
@@ -1055,7 +1055,7 @@ local function show_user_form(r, uid, pre, msg)
     return
   end
 
-  local tok, terr = kc_token()
+  local tok, terr = kc_token(r)
   if not tok then
     r:puts('<p class="msg err">Keycloak-Token: ' .. h(terr or "") .. '</p></div></div></body></html>')
     return
@@ -1169,7 +1169,7 @@ local function do_user_create(r, post)
       "ERR: Benutzername und Passwort sind Pflichtfelder")
   end
 
-  local tok, terr = kc_token()
+  local tok, terr = kc_token(r)
   if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
 
   local uid, cerr = kc_user_create(
@@ -1194,7 +1194,7 @@ end
 local function do_user_save(r, uid, post)
   if not uid or uid == "" then return show_users(r, "ERR: Keine UID") end
 
-  local tok, terr = kc_token()
+  local tok, terr = kc_token(r)
   if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
 
   kc_user_update(uid, {
@@ -1223,7 +1223,7 @@ local function do_user_delete(r, post)
   if KC_PROTECTED_USERS[username] then
     return show_users(r, "ERR: Systemnutzer k\xC3\xB6nnen nicht gel\xC3\xB6scht werden")
   end
-  local tok, terr = kc_token()
+  local tok, terr = kc_token(r)
   if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
   if kc_user_delete(uid, tok) then
     show_users(r, "OK Nutzer '" .. username .. "' gel\xC3\xB6scht")
@@ -1235,7 +1235,7 @@ end
 local function do_group_create(r, post)
   local gname = trim(post.gname or "")
   if gname == "" then return show_group_form(r, post, "ERR: Gruppenname fehlt") end
-  local tok, terr = kc_token()
+  local tok, terr = kc_token(r)
   if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
   local gid = kc_create_group(gname, tok)
   if gid then
@@ -1252,7 +1252,7 @@ local function do_group_delete(r, post)
   if KC_PROTECTED_GROUPS[gname] then
     return show_users(r, "ERR: Systemgruppen k\xC3\xB6nnen nicht gel\xC3\xB6scht werden")
   end
-  local tok, terr = kc_token()
+  local tok, terr = kc_token(r)
   if not tok then return show_users(r, "ERR Keycloak-Token: " .. (terr or "")) end
   local status = kc_api_write("DELETE", "/groups/" .. gid, nil, tok)
   if status == 204 then
@@ -1268,25 +1268,16 @@ end
 
 -- Get a service-account token via client_credentials grant.
 -- Returns token string or nil + error message.
-local function kc_token()
-  if KC_TOKEN_URL == "" or KC_CLIENT_ID == "" or KC_CLIENT_SECRET == "" then
-    return nil, "KEYCLOAK_ADMIN_URL / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET nicht gesetzt"
+-- Returns the OIDC access token of the currently logged-in user.
+-- mod_auth_openidc sets OIDC_access_token in the subprocess environment.
+-- Returns token string or nil + error message.
+local function kc_token(r)
+  if KC_ADMIN_URL == "" then
+    return nil, "KEYCLOAK_ADMIN_URL nicht gesetzt"
   end
-  local tmp_id  = os.tmpname()
-  local tmp_sec = os.tmpname()
-  io.open(tmp_id,  "w"):write(KC_CLIENT_ID):close()
-  io.open(tmp_sec, "w"):write(KC_CLIENT_SECRET):close()
-  local cmd = string.format(
-    'curl -s -k -X POST %s'
-    .. ' -d "grant_type=client_credentials"'
-    .. ' -d "client_id=$(cat %s)"'
-    .. ' -d "client_secret=$(cat %s)" 2>/dev/null',
-    KC_TOKEN_URL, tmp_id, tmp_sec)
-  local p = io.popen(cmd); local out = p:read("*a"); p:close()
-  os.remove(tmp_id); os.remove(tmp_sec)
-  local tok = out:match('"access_token"%s*:%s*"([^"]+)"')
-  if not tok then
-    return nil, "Token-Anfrage fehlgeschlagen: " .. out:sub(1, 120)
+  local tok = r and r.subprocess_env and r.subprocess_env["OIDC_access_token"]
+  if not tok or tok == "" then
+    return nil, "Kein OIDC-Token — bitte \xC3\xBCber HTTPS mit aktivem Login aufrufen"
   end
   return tok, nil
 end
@@ -1595,7 +1586,7 @@ local function show_kc_client_section(r, domain, msg)
 end
 
 local function do_kc_create(r, domain)
-  local tok, err = kc_token()
+  local tok, err = kc_token(r)
   if not tok then
     return show_list(r, "ERR Keycloak-Token: " .. (err or ""))
   end
@@ -1627,7 +1618,7 @@ local function do_kc_rotate(r, domain)
     return show_list(r, "ERR Kein Keycloak-Client f\xC3\xBCr " .. domain .. " konfiguriert")
   end
 
-  local tok, err = kc_token()
+  local tok, err = kc_token(r)
   if not tok then
     return show_list(r, "ERR Keycloak-Token: " .. (err or ""))
   end
@@ -2057,7 +2048,7 @@ function handle(r)
     if uid == "" then
       show_users(r, "ERR: Keine UID")
     else
-      local tok, terr = kc_token()
+      local tok, terr = kc_token(r)
       if not tok then
         show_users(r, "ERR Keycloak-Token: " .. (terr or ""))
       else
