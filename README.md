@@ -1,5 +1,7 @@
 # apache-oidc-proxy
 
+[🇩🇪 Deutsche Version](README.de.md)
+
 > Apache reverse proxy with built-in OIDC single sign-on, a web-based admin UI, and a live table-of-contents page for all your services.
 
 [![Docker Image](https://img.shields.io/badge/Docker-xtralarge71%2Fapache--oidc--proxy-blue?logo=docker)](https://hub.docker.com/r/xtralarge71/apache-oidc-proxy)
