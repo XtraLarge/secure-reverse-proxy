@@ -545,7 +545,10 @@ function parse(line)
     ["IIP"]    = siip(word(line,5));
     ["IPORT"]  = siport(word(line,5));
     ["SECURE"] = ssec(word(line,2));
-    ["USERS"]  = finalword(line,7):gsub("'", ""):gsub("|", ", ");
+    ["USERS"]  = (function()
+                   local u = finalword(line,7):gsub("'",""):gsub("|",", ")
+                   return u:match("^https?://") and "-" or u
+                 end)();
   });
 
 end
