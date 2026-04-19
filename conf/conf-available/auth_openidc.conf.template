@@ -9,10 +9,3 @@
 # Required here so mod_auth_openidc loads without errors when no vhost
 # defines it yet.
 OIDCCryptoPassphrase ${OIDC_CRYPTO_PASSPHRASE}
-
-# Pass OIDC claims only as environment variables, never as request headers.
-# Forwarding claims as headers would expose the full JWT access token and all
-# user attributes to every proxied backend — most backends don't need them,
-# and embedded devices (e.g. NETIO-230B) crash on oversized requests.
-# Sites that explicitly need header-based claims can override this per-VHost.
-OIDCPassClaimsAs environment
