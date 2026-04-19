@@ -394,8 +394,8 @@ local kc_list_users
 local kc_list_groups
 local htpasswd_list_users
 
-local PENDING_FILE = "/run/apache-pending-reload"
-local function set_pending_reload()  io.open(PENDING_FILE, "w"):close() end
+local PENDING_FILE = "/tmp/apache-pending-reload"
+local function set_pending_reload()  local f = io.open(PENDING_FILE, "w"); if f then f:close() end end
 local function clear_pending_reload() os.remove(PENDING_FILE) end
 local function has_pending_reload()
   local f = io.open(PENDING_FILE, "r")
