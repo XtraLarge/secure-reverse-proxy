@@ -308,9 +308,9 @@ local function topbar(active)
       .. '</div>')
     or ('<div class="topbar-nav">' .. nav(h(out), "\xC3\x97 Logout", "logout") .. '</div>')
   return '<div class="topbar">'
-    .. '<a class="topbar-back" href="/">\xE2\x86\x90 Zur\xC3\xBC\x63k</a>'
     .. '<a class="topbar-title" href="/admin-kc.lua">\xF0\x9F\x91\xA4 Keycloak Benutzer</a>'
     .. '<div class="topbar-nav">'
+    .. '<a class="topbar-back" href="/">\xE2\x86\x90</a>'
     .. nav("/admin-kc.lua",            "\xF0\x9F\x91\xA5 Benutzerliste", "list")
     .. nav("/admin-kc.lua?action=new", "+ Neuer Benutzer",               "new")
     .. '</div>'

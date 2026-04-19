@@ -304,9 +304,9 @@ local function topbar(title)
       .. '</div>')
     or ('<a class="topbar-nav" href="' .. h(logout_link) .. '">\xC3\x97 Logout</a>')
   return '<div class="topbar">'
-    .. '<a class="topbar-back" href="' .. h(toc_link) .. '">\xE2\x86\x90 Zur\xC3\xBC\x63k</a>'
     .. '<a class="topbar-title" href="/">\xE2\x9A\x99 ' .. h(title) .. '</a>'
     .. '<div class="topbar-nav">'
+    .. '<a class="topbar-back" href="' .. h(toc_link) .. '">\xE2\x86\x90</a>'
     .. '<a href="/?action=users">\xF0\x9F\x91\xA4 OIDC Auth</a>'
     .. '<a href="/?action=htpasswd">\xF0\x9F\x94\x91 Basic Auth</a>'
     .. '</div>'
@@ -355,11 +355,11 @@ local function show_list(r, msg)
 
   r:puts('<div class="main">')
   r:puts('<div class="applybar">')
+  r:puts('<a class="btn b-add" href="/?action=domain_new">+ Neue Domain</a>')
+  r:puts('<span class="dim">Änderungen erst nach "Anwenden" aktiv (graceful reload)</span>')
   r:puts('<form method="POST" action="/?action=apply">')
   r:puts('<button class="btn b-apply" type="submit">&#9654;&nbsp;Konfiguration anwenden</button>')
   r:puts('</form>')
-  r:puts('<a class="btn b-add" href="/?action=domain_new">+ Neue Domain</a>')
-  r:puts('<span class="dim">Änderungen erst nach "Anwenden" aktiv (graceful reload)</span>')
   r:puts('</div>')
 
   local files = list_conf_files()
