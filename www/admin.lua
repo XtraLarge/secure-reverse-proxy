@@ -394,6 +394,15 @@ local kc_list_users
 local kc_list_groups
 local htpasswd_list_users
 
+local PENDING_FILE = "/run/apache-pending-reload"
+local function set_pending_reload()  io.open(PENDING_FILE, "w"):close() end
+local function clear_pending_reload() os.remove(PENDING_FILE) end
+local function has_pending_reload()
+  local f = io.open(PENDING_FILE, "r")
+  if f then f:close(); return true end
+  return false
+end
+
 -- ── List page ─────────────────────────────────────────────────────────────────
 
 local function show_list(r, msg)
@@ -401,9 +410,18 @@ local function show_list(r, msg)
   if msg then r:puts(msg_html(msg)) end
 
   r:puts('<div class="main">')
+  if has_pending_reload() then
+    r:puts('<div style="background:#3a3a00;border:1px solid #666600;border-radius:6px;'
+      .. 'padding:.6em 1em;margin-bottom:1em;display:flex;align-items:center;gap:1em">')
+    r:puts('<span style="color:#ffee66;font-size:.95em">'
+      .. '\xE2\x9A\xA0\xEF\xB8\x8F  Nicht angewendete \xC3\x84nderungen — Konfiguration ist noch nicht aktiv.</span>')
+    r:puts('<form method="POST" action="/?action=apply" style="margin-left:auto">')
+    r:puts('<button class="btn b-apply" type="submit">&#9654;&nbsp;Jetzt anwenden</button>')
+    r:puts('</form></div>')
+  end
   r:puts('<div class="applybar">')
   r:puts('<a class="btn b-add" href="/?action=domain_new">+ Neue Domain</a>')
-  r:puts('<span class="dim">Änderungen erst nach "Anwenden" aktiv (graceful reload)</span>')
+  r:puts('<span class="dim">\xC3\x84nderungen erst nach "Anwenden" aktiv (graceful reload)</span>')
   r:puts('<form method="POST" action="/?action=apply" style="margin-left:auto">')
   r:puts('<button class="btn b-apply" type="submit">&#9654;&nbsp;Konfiguration anwenden</button>')
   r:puts('</form>')
@@ -698,6 +716,7 @@ local function do_save(r, p)
   end
 
   os.remove(fbak)
+  set_pending_reload()
   show_list(r, "OK: Gespeichert (Konfigurationstest erfolgreich) — Konfiguration noch anwenden!")
 end
 
@@ -744,6 +763,7 @@ local function do_delete(r, p)
   end
 
   os.remove(fbak)
+  set_pending_reload()
   show_list(r, "OK: Gelöscht (Konfigurationstest erfolgreich) — Konfiguration noch anwenden!")
 end
 
@@ -755,6 +775,7 @@ local function do_apply(r)
   -- prevents www-data from signalling root processes directly.
   local ret = os.execute("echo reload > /run/apache-reload.fifo 2>/dev/null")
   if ret == 0 or ret == true then
+    clear_pending_reload()
     show_list(r, "OK: Apache graceful reload ausgef\xC3\xBCh\x72t")
   else
     show_list(r, "ERR: Graceful reload fehlgeschlagen (Code: " .. tostring(ret) .. ")")
@@ -888,6 +909,7 @@ local function do_addon_save(r, p)
 
   -- Success: keep .bak as a restorable snapshot (overwrite any older .bak)
   -- .bak files are cleaned up only when the user explicitly restores or when no pre/post existed
+  set_pending_reload()
   show_list(r, "OK: AddOn gespeichert (Konfigurationstest erfolgreich) — Konfiguration noch anwenden!")
 end
 
@@ -937,6 +959,7 @@ local function do_addon_restore(r, p)
   -- Clean up .bak after successful restore
   os.remove(pre_bak)
   os.remove(post_bak)
+  set_pending_reload()
   show_list(r, "OK: AddOn auf letzte Version zurückgesetzt (Konfigurationstest erfolgreich) — noch anwenden!")
 end
 
@@ -2034,6 +2057,7 @@ local function do_domain_create(r, p)
       "Konfigurationstest fehlgeschlagen — Domain nicht angelegt.\n" .. (test_out or ""))
   end
 
+  set_pending_reload()
   show_list(r, "OK: Domain " .. domain .. " angelegt — Konfiguration noch anwenden!")
 end
 
