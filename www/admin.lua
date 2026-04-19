@@ -305,6 +305,12 @@ function serializeUsers(form) {
   document.getElementById('users_val').value = val;
   return true;
 }
+function normalizeDest(input) {
+  var v = input.value.trim();
+  v = v.replace(/^[a-zA-Z]+:\/\//, function(m){ return m.toLowerCase(); });
+  if (/^https?:\/\/[^/]+$/.test(v)) v = v + '/';
+  input.value = v;
+}
 function filterSites(q) {
   q = q.toLowerCase();
   document.querySelectorAll('table tr').forEach(function(tr) {
@@ -566,7 +572,13 @@ local function show_form(r, fname, lineno, pre, errmsg)
 
   -- Destination
   r:puts('<div class="form-row"><label>Ziel-URL:</label>'
-    .. '<input name=dest value="' .. h((pre and pre.dest) or "") .. '" placeholder="http://10.0.0.1:8080/" required></div>')
+    .. '<input name=dest id=dest_input onblur="normalizeDest(this)"'
+    .. ' value="' .. h((pre and pre.dest) or "") .. '" placeholder="http://10.0.0.1:8080/" required></div>')
+  r:puts('<div class="form-row"><label></label>'
+    .. '<span class="dim" style="font-size:.8em">'
+    .. 'http:// oder https:// &mdash; Trailing-Slash wird automatisch erg\xC3\xA4nzt'
+    .. ' &mdash; Port optional (Standard: 80&nbsp;/&nbsp;443)'
+    .. '</span></div>')
 
   -- Build set of currently selected values for pre-selection
   local pre_sel = {}
@@ -645,6 +657,10 @@ local function do_save(r, p)
   local dest     = trim(p["dest"]    or "")
   local users    = trim(p["users"]   or "")
   local authtype = trim(p["authtype"] or "user")
+
+  -- Normalize dest: lowercase scheme, add trailing slash if no path present
+  dest = dest:gsub("^(%a+://)", function(s) return s:lower() end)
+  if dest:match("^https?://[^/]+$") then dest = dest .. "/" end
 
   -- Validate
   if fname == "" or fname:match("[/\\]") then
