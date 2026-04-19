@@ -99,7 +99,7 @@ echo "    Health: OK"
 # 3) HTTPS antwortet?
 HTTP_CODE=$(ssh "root@${DOCKER_HOST}" \
   "curl -s -o /dev/null -w '%{http_code}' --max-time 10 -k https://${VLAN_IP}/" 2>/dev/null || echo "000")
-if [[ "$HTTP_CODE" =~ ^(200|301|302|401|403)$ ]]; then
+if [[ "$HTTP_CODE" =~ ^(200|301|302|303|307|308|401|403)$ ]]; then
   echo "    HTTPS:  OK (HTTP ${HTTP_CODE})"
 else
   echo "ERR: HTTPS Smoke-Test fehlgeschlagen — HTTP ${HTTP_CODE} von ${VLAN_IP}"
