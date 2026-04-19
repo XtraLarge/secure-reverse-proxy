@@ -461,6 +461,13 @@ local function show_list(r, msg)
       .. '<a class="btn b-add" href="/?action=new&amp;file=' .. h(fname) .. '">+ Hinzufügen</a>'
       .. '</h2>')
 
+    -- KC client strip — inline, directly below the heading
+    if KC_ADMIN_URL ~= "" then
+      for _, domain in ipairs(domains_ordered) do
+        show_kc_client_section(r, domain, nil, true)
+      end
+    end
+
     if entries == 0 then
       r:puts('<p class="dim">Keine VHost-Einträge in dieser Datei.</p>')
     else
@@ -505,13 +512,6 @@ local function show_list(r, msg)
       r:puts('</table>')
     end
     r:puts('</div>')
-
-    -- Keycloak client sections — one per unique domain in this file
-    if KC_ADMIN_URL ~= "" then
-      for _, domain in ipairs(domains_ordered) do
-        show_kc_client_section(r, domain)
-      end
-    end
 
     ::continue::
   end
@@ -1873,18 +1873,49 @@ local function read_oidc_client_conf(domain)
 end
 
 -- Show or handle Keycloak client section for a domain
-show_kc_client_section = function(r, domain, msg)
+show_kc_client_section = function(r, domain, msg, inline)
   local existing   = read_oidc_client_conf(domain)
   local target_cid = kc_client_id(domain)   -- proxy-<domain>
 
+  if inline then
+    -- Compact strip inside the domain card (no own card/h2 wrapper)
+    local sep = 'border-top:1px solid #1a1a3e;margin:.6em 0 .8em;padding:.5em 0 .3em;'
+      .. 'display:flex;align-items:center;gap:1em;flex-wrap:wrap'
+    r:puts('<div style="' .. sep .. '">')
+    r:puts('\xF0\x9F\x94\x91 <span style="color:#aaa;font-size:.85em">Keycloak-Client</span>')
+    if msg then
+      local cls = msg:sub(1,3) == "ERR" and "color:#ff6666" or "color:#99ff99"
+      r:puts('<span style="' .. cls .. ';font-size:.85em">' .. h(msg) .. '</span>')
+    end
+    if KC_ADMIN_URL == "" then
+      r:puts('<span class="dim">KEYCLOAK_ADMIN_URL nicht gesetzt</span>')
+    elseif existing then
+      r:puts('<code style="color:#99ff99;font-size:.85em">\xE2\x9C\x94 ' .. h(existing.client_id) .. '</code>')
+      r:puts('<span style="color:#666;font-size:.8em">Gruppen: '
+        .. '<code>' .. h(domain) .. '-admins</code> / <code>' .. h(domain) .. '-users</code></span>')
+      r:puts('<form method="POST" action="/?action=kc_rotate&domain=' .. h(domain) .. '" style="margin:0">')
+      r:puts('<button class="btn b-warn" type="submit" style="font-size:.8em;padding:.2em .6em">'
+        .. '&#x21BA;&nbsp;Secret rotieren</button>')
+      r:puts('</form>')
+    else
+      r:puts('<span style="color:#aaa;font-size:.85em">Kein eigener Client — globaler Client <code>'
+        .. h(KC_CLIENT_ID) .. '</code> aktiv</span>')
+      r:puts('<form method="POST" action="/?action=kc_create&domain=' .. h(domain) .. '" style="margin:0">')
+      r:puts('<button class="btn b-add" type="submit" style="font-size:.8em;padding:.2em .6em">'
+        .. '&#x2B;&nbsp;Client <code>' .. h(target_cid) .. '</code> anlegen</button>')
+      r:puts('</form>')
+    end
+    r:puts('</div>')
+    return
+  end
+
+  -- Full-card mode (used when shown standalone after an action)
   r:puts('<div class="card" style="margin-top:1em">')
   r:puts('<h2>\xF0\x9F\x94\x91 Keycloak-Client &mdash; <code>' .. h(domain) .. '</code></h2>')
-
   if msg then
     local cls = msg:sub(1,3) == "ERR" and "err" or "ok"
     r:puts('<div class="msg ' .. cls .. '">' .. h(msg) .. '</div>')
   end
-
   if KC_ADMIN_URL == "" then
     r:puts('<p class="hint">KEYCLOAK_ADMIN_URL nicht gesetzt — Keycloak-Integration nicht verf\xC3\xBCgbar.</p>')
   elseif existing then
