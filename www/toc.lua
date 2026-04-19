@@ -206,7 +206,6 @@ end
 function ssec (S)
   local T;
   if endswith(S,"alias")   then T="-"
-    elseif endswith(S,"any")   then T="OpenID Connect"
     elseif endswith(S,"oidc")  then T="OpenID Connect"
     elseif endswith(S,"basic") then T="Basic"
     elseif endswith(S,"ccert") then T="Client Certificate"
@@ -546,7 +545,12 @@ function parse(line)
     ["IPORT"]  = siport(word(line,5));
     ["SECURE"] = ssec(word(line,2));
     ["USERS"]  = (function()
-                   local u = finalword(line,7):gsub("'",""):gsub("|",", ")
+                   -- First quoted field at position 6+ is the users list.
+                   -- For VHost_Proxy_OIDC: 'users' 'groups' — take only users.
+                   -- For VHost_Proxy / VHost_Alias: no quoted field → finalword
+                   -- falls through to destination URL → treated as unrestricted.
+                   local first_quoted = line:match("'([^']*)'")
+                   local u = first_quoted and first_quoted:gsub("|",", ") or finalword(line,7):gsub("'","")
                    return u:match("^https?://") and "-" or u
                  end)();
   });

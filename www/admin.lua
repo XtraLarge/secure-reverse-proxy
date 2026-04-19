@@ -1,7 +1,7 @@
 --
 -- admin.lua — Proxy VHost Admin Interface
 --
--- Served on admin.DOMAIN — OIDC-protected via CLIENTOIDC_CLAIM.
+-- Served on admin.DOMAIN — OIDC-protected via CLIENTOIDC.
 -- Reads/writes /etc/apache2/sites-admin/*.conf (domain configs) and
 -- /etc/apache2/AddOn/<domain>/<site>.preconfig|postconfig (AddOn snippets).
 -- Both volumes must be mounted read-write.
@@ -35,9 +35,7 @@ local KC_LOGOUT_URL = KC_TOKEN_URL:gsub("/token$", "/logout")
 
 local MACRO_TYPES = {
   "VHost_Proxy",
-  "VHost_Proxy_OIDC_User",
-  "VHost_Proxy_OIDC_Any",
-  "VHost_Proxy_OIDC_Group",
+  "VHost_Proxy_OIDC",
   "VHost_Proxy_Basic",
   "VHost_Alias",
 }
@@ -73,42 +71,59 @@ end
 
 local function parse_vhost_line(line)
   local raw = trim(line)
-  -- Extract trailing quoted field (users or auth entry)
-  local users = raw:match("'([^']*)'%s*$") or ""
-  local base  = raw:gsub("%s*'[^']*'%s*$", "")
 
+  -- Extract all quoted fields in order
+  local quoted = {}
+  for q in raw:gmatch("'([^']*)'") do table.insert(quoted, q) end
+
+  -- Strip all quoted fields to get positional parts
+  local base = raw:gsub("%s*'[^']*'", "")
   local parts = {}
   for w in base:gmatch("%S+") do table.insert(parts, w) end
-  -- parts: [1]=Use [2]=Macro [3]=name [4]=domain [5]=dest [6]=authtype(Basic)
+  -- parts: [1]=Use [2]=Macro [3]=name [4]=domain [5]=dest [6]=authtype(Basic only)
 
   if #parts < 4 then return nil end
 
   local macro = parts[2]
   local m     = macro:lower()
-  local result = {
+
+  -- Backward compat: map old OIDC macro names to the unified VHost_Proxy_OIDC
+  if m == "vhost_proxy_oidc_user" then
+    macro = "VHost_Proxy_OIDC"; m = "vhost_proxy_oidc"
+    quoted = { quoted[1] or "", "" }
+  elseif m == "vhost_proxy_oidc_group" then
+    macro = "VHost_Proxy_OIDC"; m = "vhost_proxy_oidc"
+    quoted = { "", quoted[1] or "" }
+  elseif m == "vhost_proxy_oidc_any" then
+    macro = "VHost_Proxy_OIDC"; m = "vhost_proxy_oidc"
+    quoted = { "", "" }
+  end
+
+  return {
     macro    = macro,
     name     = parts[3] or "",
     domain   = parts[4] or "",
     dest     = parts[5] or "",
-    users    = users,
+    users    = (m == "vhost_proxy_oidc") and (quoted[1] or "") or (quoted[1] or ""),
+    groups   = (m == "vhost_proxy_oidc") and (quoted[2] or "") or "",
     authtype = (m == "vhost_proxy_basic") and (parts[6] or "user") or "",
     raw      = raw,
   }
-  return result
 end
 
-local function build_line(macro, name, domain, dest, users, authtype)
+local function build_line(macro, name, domain, dest, users, groups, authtype)
   local m = trim(macro):lower()
   name     = trim(name)
   domain   = trim(domain)
   dest     = trim(dest)
   users    = trim(users)
+  groups   = trim(groups or "")
   authtype = trim(authtype ~= "" and authtype or "user")
 
-  if m == "vhost_proxy" or m == "vhost_proxy_oidc_any" or m == "vhost_alias" then
+  if m == "vhost_proxy" or m == "vhost_alias" then
     return string.format("Use %-28s  %-20s  %-25s  %s", macro, name, domain, dest)
-  elseif m == "vhost_proxy_oidc_user" or m == "vhost_proxy_oidc_group" then
-    return string.format("Use %-28s  %-20s  %-25s  %-35s  '%s'", macro, name, domain, dest, users)
+  elseif m == "vhost_proxy_oidc" then
+    return string.format("Use %-28s  %-20s  %-25s  %-35s  '%-20s'  '%s'", macro, name, domain, dest, users, groups)
   elseif m == "vhost_proxy_basic" then
     return string.format("Use %-28s  %-20s  %-25s  %-35s  %-6s  '%s'", macro, name, domain, dest, authtype, users)
   end
@@ -278,31 +293,34 @@ a.btn,button.btn{padding:4px 11px;border:none;border-radius:3px;cursor:pointer;
 local JS = [[<script>
 function onMacroChange(sel) {
   var m = sel.value.toLowerCase();
-  document.getElementById('row_oidc_users').style.display  = m === 'vhost_proxy_oidc_user'  ? '' : 'none';
-  document.getElementById('row_group_users').style.display = m === 'vhost_proxy_oidc_group' ? '' : 'none';
-  document.getElementById('row_basic_users').style.display = m === 'vhost_proxy_basic'      ? '' : 'none';
-  document.getElementById('row_auth').style.display        = m === 'vhost_proxy_basic'      ? '' : 'none';
+  document.getElementById('row_oidc').style.display        = m === 'vhost_proxy_oidc'   ? '' : 'none';
+  document.getElementById('row_basic_users').style.display = m === 'vhost_proxy_basic'  ? '' : 'none';
+  document.getElementById('row_auth').style.display        = m === 'vhost_proxy_basic'  ? '' : 'none';
 }
 function serializeUsers(form) {
   var m = form.querySelector('[name=macro]').value.toLowerCase();
-  var val = '';
-  var sel, fb;
-  if (m === 'vhost_proxy_oidc_user') {
-    sel = document.getElementById('sel_oidc_users');
-    fb  = document.getElementById('fb_oidc');
-  } else if (m === 'vhost_proxy_oidc_group') {
-    sel = document.getElementById('sel_group_users');
-    fb  = document.getElementById('fb_group');
+  if (m === 'vhost_proxy_oidc') {
+    var uSel = document.getElementById('sel_oidc_users');
+    var uFb  = document.getElementById('fb_oidc');
+    document.getElementById('users_val').value = uSel
+      ? Array.from(uSel.selectedOptions).map(function(o){return o.value;}).join('|')
+      : (uFb ? uFb.value : '');
+    var gSel = document.getElementById('sel_oidc_groups');
+    var gFb  = document.getElementById('fb_oidc_groups');
+    document.getElementById('groups_val').value = gSel
+      ? Array.from(gSel.selectedOptions).map(function(o){return o.value;}).join('|')
+      : (gFb ? gFb.value : '');
   } else if (m === 'vhost_proxy_basic') {
-    sel = document.getElementById('sel_basic_users');
-    fb  = document.getElementById('fb_basic');
+    var sel = document.getElementById('sel_basic_users');
+    var fb  = document.getElementById('fb_basic');
+    document.getElementById('users_val').value = sel
+      ? Array.from(sel.selectedOptions).map(function(o){return o.value;}).join('|')
+      : (fb ? fb.value : '');
+    document.getElementById('groups_val').value = '';
+  } else {
+    document.getElementById('users_val').value  = '';
+    document.getElementById('groups_val').value = '';
   }
-  if (sel) {
-    val = Array.from(sel.selectedOptions).map(function(o){return o.value;}).join('|');
-  } else if (fb) {
-    val = fb.value;
-  }
-  document.getElementById('users_val').value = val;
   return true;
 }
 </script>]]
@@ -377,11 +395,10 @@ end
 local function macro_tag(m)
   local ml = (m or ""):lower()
   local cls = "tag"
-  if ml:find("basic")   then cls = cls .. " tag-basic"
-  elseif ml:find("_any")   then cls = cls .. " tag-oidc"
-  elseif ml:find("oidc")   then cls = cls .. " tag-claim"
-  elseif ml:find("alias")  then cls = cls .. " tag-alias"
-  else                          cls = cls .. " tag-proxy" end
+  if ml:find("basic")  then cls = cls .. " tag-basic"
+  elseif ml:find("oidc")  then cls = cls .. " tag-oidc"
+  elseif ml:find("alias") then cls = cls .. " tag-alias"
+  else                         cls = cls .. " tag-proxy" end
   return '<span class="' .. cls .. '">' .. h(m) .. '</span>'
 end
 
@@ -455,7 +472,7 @@ local function show_list(r, msg)
     if entries == 0 then
       r:puts('<p class="dim">Keine VHost-Einträge in dieser Datei.</p>')
     else
-      r:puts('<table><tr><th>Typ</th><th>Name</th><th>Domain</th><th>Ziel</th><th>Benutzer</th><th>Aktionen</th></tr>')
+      r:puts('<table><tr><th>Typ</th><th>Name</th><th>Domain</th><th>Ziel</th><th>Zugang</th><th>Aktionen</th></tr>')
       for lineno, line in ipairs(lines) do
         if is_vhost_line(line) and not is_no_admin(lines, lineno) then
           local v = parse_vhost_line(line)
@@ -471,7 +488,11 @@ local function show_list(r, msg)
             r:puts('<td>' .. h(v.name) .. addon_tag .. '</td>')
             r:puts('<td>' .. h(v.domain) .. '</td>')
             r:puts('<td style="font-family:monospace;font-size:.82em">' .. h(v.dest) .. '</td>')
-            r:puts('<td style="font-size:.82em">' .. h(v.users) .. '</td>')
+            local zugang = v.users ~= "" and v.users or ""
+            if v.groups and v.groups ~= "" then
+              zugang = zugang ~= "" and (zugang .. " / " .. v.groups) or v.groups
+            end
+            r:puts('<td style="font-size:.82em">' .. h(zugang) .. '</td>')
             r:puts('<td><div class="actions">')
             -- Edit
             r:puts('<a class="btn b-edit" href="/?action=edit&amp;file='
@@ -532,7 +553,8 @@ local function show_form(r, fname, lineno, pre, errmsg)
 
   r:puts('<form method="POST" action="/?action=save" onsubmit="return serializeUsers(this)">')
   r:puts('<input type=hidden name=file value="' .. h(fname) .. '">')
-  r:puts('<input type=hidden name=users id=users_val value="">')
+  r:puts('<input type=hidden name=users  id=users_val  value="">')
+  r:puts('<input type=hidden name=groups id=groups_val value="">')
   if lineno then
     r:puts('<input type=hidden name=line value="' .. lineno .. '">')
     r:puts('<input type=hidden name=check value="' .. h(pre and pre.raw or "") .. '">')
@@ -559,20 +581,25 @@ local function show_form(r, fname, lineno, pre, errmsg)
   r:puts('<div class="form-row"><label>Ziel-URL:</label>'
     .. '<input name=dest value="' .. h((pre and pre.dest) or "") .. '" placeholder="http://10.0.0.1:8080/" required></div>')
 
-  -- Build set of currently selected values for pre-selection
-  local pre_sel = {}
-  if pre and (pre.users or "") ~= "" then
-    for v in pre.users:gmatch("[^|]+") do pre_sel[trim(v)] = true end
+  -- Build sets of currently selected users / groups for pre-selection
+  local pre_sel_users  = {}
+  local pre_sel_groups = {}
+  if pre and (pre.users  or "") ~= "" then
+    for v in pre.users:gmatch("[^|]+")  do pre_sel_users[trim(v)]  = true end
+  end
+  if pre and (pre.groups or "") ~= "" then
+    for v in pre.groups:gmatch("[^|]+") do pre_sel_groups[trim(v)] = true end
   end
   local sel_style = "min-width:180px;background:#0d0d1a;color:#ddd;border:1px solid #2a2a4e;padding:.3em"
 
-  -- OIDC users multi-select
-  r:puts('<div class="form-row" id=row_oidc_users style="display:' .. (cur == "vhost_proxy_oidc_user" and "" or "none") .. '">')
-  r:puts('<label>Benutzer:</label>')
+  -- OIDC combined section (users + groups)
+  r:puts('<div id=row_oidc style="display:' .. (cur == "vhost_proxy_oidc" and "" or "none") .. '">')
+  -- Users
+  r:puts('<div class="form-row"><label>Benutzer:</label>')
   if kc_users_list then
     r:puts('<select multiple size=6 id=sel_oidc_users style="' .. sel_style .. '">')
     for _, u in ipairs(kc_users_list) do
-      local s = pre_sel[u.username] and ' selected' or ''
+      local s = pre_sel_users[u.username] and ' selected' or ''
       r:puts('<option value="' .. h(u.username) .. '"' .. s .. '>' .. h(u.username) .. '</option>')
     end
     r:puts('</select>')
@@ -580,20 +607,19 @@ local function show_form(r, fname, lineno, pre, errmsg)
     r:puts('<input id=fb_oidc value="' .. h((pre and pre.users) or "") .. '" placeholder="alice|bob">')
   end
   r:puts('</div>')
-
-  -- OIDC group multi-select
-  r:puts('<div class="form-row" id=row_group_users style="display:' .. (cur == "vhost_proxy_oidc_group" and "" or "none") .. '">')
-  r:puts('<label>Gruppen:</label>')
+  -- Groups
+  r:puts('<div class="form-row"><label>Gruppen:</label>')
   if kc_groups_list then
-    r:puts('<select multiple size=6 id=sel_group_users style="' .. sel_style .. '">')
+    r:puts('<select multiple size=6 id=sel_oidc_groups style="' .. sel_style .. '">')
     for _, g in ipairs(kc_groups_list) do
-      local s = pre_sel[g.name] and ' selected' or ''
+      local s = pre_sel_groups[g.name] and ' selected' or ''
       r:puts('<option value="' .. h(g.name) .. '"' .. s .. '>' .. h(g.name) .. '</option>')
     end
     r:puts('</select>')
   else
-    r:puts('<input id=fb_group value="' .. h((pre and pre.users) or "") .. '" placeholder="groupname">')
+    r:puts('<input id=fb_oidc_groups value="' .. h((pre and pre.groups) or "") .. '" placeholder="editors|admins">')
   end
+  r:puts('</div>')
   r:puts('</div>')
 
   -- Basic users multi-select
@@ -635,6 +661,7 @@ local function do_save(r, p)
   local domain   = trim(p["domain"]  or "")
   local dest     = trim(p["dest"]    or "")
   local users    = trim(p["users"]   or "")
+  local groups   = trim(p["groups"]  or "")
   local authtype = trim(p["authtype"] or "user")
 
   -- Validate
@@ -643,26 +670,31 @@ local function do_save(r, p)
   end
   if not validate_name(name) then
     return show_form(r, fname, lineno,
-      {macro=macro,name=name,domain=domain,dest=dest,users=users,authtype=authtype,raw=check},
+      {macro=macro,name=name,domain=domain,dest=dest,users=users,groups=groups,authtype=authtype,raw=check},
       "Ungültiger Name (a-z, 0-9, -, _ erlaubt)")
   end
   if not validate_domain(domain) then
     return show_form(r, fname, lineno,
-      {macro=macro,name=name,domain=domain,dest=dest,users=users,authtype=authtype,raw=check},
+      {macro=macro,name=name,domain=domain,dest=dest,users=users,groups=groups,authtype=authtype,raw=check},
       "Ungültige Domain")
   end
   if not validate_dest(dest) then
     return show_form(r, fname, lineno,
-      {macro=macro,name=name,domain=domain,dest=dest,users=users,authtype=authtype,raw=check},
+      {macro=macro,name=name,domain=domain,dest=dest,users=users,groups=groups,authtype=authtype,raw=check},
       "Ungültige Ziel-URL (keine Sonderzeichen ; | ` $ < >)")
   end
   if users ~= "" and not validate_users(users) then
     return show_form(r, fname, lineno,
-      {macro=macro,name=name,domain=domain,dest=dest,users=users,authtype=authtype,raw=check},
+      {macro=macro,name=name,domain=domain,dest=dest,users=users,groups=groups,authtype=authtype,raw=check},
       "Ungültige Benutzer (a-z, 0-9, ., @, _, |, - erlaubt)")
   end
+  if groups ~= "" and not validate_users(groups) then
+    return show_form(r, fname, lineno,
+      {macro=macro,name=name,domain=domain,dest=dest,users=users,groups=groups,authtype=authtype,raw=check},
+      "Ungültige Gruppen (a-z, 0-9, ., @, _, |, - erlaubt)")
+  end
 
-  local new_line = build_line(macro, name, domain, dest, users, authtype)
+  local new_line = build_line(macro, name, domain, dest, users, groups, authtype)
   if not new_line then
     return show_form(r, fname, lineno, nil, "Unbekannter Macro-Typ: " .. macro)
   end

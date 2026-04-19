@@ -74,10 +74,13 @@
   OIDCProviderBackChannelLogoutSupported On
 </Macro>
 
-# CLIENTOIDC_VALIDUSER $(SITENAME) $(DOMAINNAME)
-# Protects a vhost with OIDC — any authenticated user is allowed.
-# GeoIP country check applies; internal networks bypass both checks.
-<Macro CLIENTOIDC_VALIDUSER $(SITENAME) $(DOMAINNAME)>
+# CLIENTOIDC $(SITENAME) $(DOMAINNAME) $(USERS) $(GROUPS)
+# Protects a vhost with OIDC — access requires country check plus EITHER a matching
+# username OR a matching group.  Pass '' for $(USERS) or $(GROUPS) to skip that check.
+# $(USERS):  pipe-separated usernames matched against preferred_username claim, e.g. 'alice|bob'
+# $(GROUPS): pipe-separated group names matched against groups claim, e.g. 'editors|admins'
+# GeoIP country check applies; internal networks bypass all checks.
+<Macro CLIENTOIDC $(SITENAME) $(DOMAINNAME) $(USERS) $(GROUPS)>
   USE OIDCBASE $(SITENAME) $(DOMAINNAME)
 
   GeoIPEnable On
@@ -91,10 +94,13 @@
       # Internal networks always pass through
       Include /etc/apache2/conf-runtime/internal-networks.conf
 
-      # External: must be from an allowed country AND authenticated
+      # External: must be from an allowed country AND match users or groups
       <RequireAll>
         Require env AllowCountry
-        Require valid-user
+        <RequireAny>
+          Require claim "preferred_username~^(?i)$(USERS)$"
+          Require claim "groups~^(?i)$(GROUPS)$"
+        </RequireAny>
       </RequireAll>
     </RequireAny>
   </Location>
@@ -109,51 +115,16 @@
   </Location>
 </Macro>
 
-# CLIENTOIDC_CLAIM $(SITENAME) $(DOMAINNAME) $(AUTHORENTRY)
-# Protects a vhost with OIDC — only users matching $(AUTHORENTRY) are allowed.
-# $(AUTHORENTRY) is a pipe-separated list matched case-insensitively against
-# the preferred_username claim, e.g. 'alice|bob'.
-# GeoIP country check applies; internal networks bypass both checks.
-<Macro CLIENTOIDC_CLAIM $(SITENAME) $(DOMAINNAME) $(AUTHORENTRY)>
-  USE OIDCBASE $(SITENAME) $(DOMAINNAME)
-
-  GeoIPEnable On
-  SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-
-  <Location />
-    AuthType openid-connect
-    OIDCUnAutzAction 403
-
-    <RequireAny>
-      # Internal networks always pass through
-      Include /etc/apache2/conf-runtime/internal-networks.conf
-
-      # External: must be from an allowed country AND match the allowed user list
-      <RequireAll>
-        Require env AllowCountry
-        Require claim "preferred_username~^(?i)$(AUTHORENTRY)$"
-      </RequireAll>
-    </RequireAny>
-  </Location>
-
-  # OIDC redirect URI — must be accessible but serves no real content
-  <Location ${OIDC_REDIRECT_PATH}>
-    AuthType openid-connect
-    <RequireAny>
-      Require valid-user
-      Include /etc/apache2/conf-runtime/internal-networks.conf
-    </RequireAny>
-  </Location>
-</Macro>
-
-# VHost_Proxy_OIDC_User $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS)
+# VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS) $(GROUPS)
 # Full vhost with OIDC auth + reverse proxy.
-# Only users matching $(USERS) (pipe-separated, case-insensitive regex) are allowed.
+# Access requires EITHER a matching username OR a matching group (both checked, OR logic).
+# Pass '' to skip one side, e.g. users only: '...' '' — groups only: '' '...'
 #
 # Examples:
-#   Use VHost_Proxy_OIDC_User  mgmt  example.com  http://10.0.0.6:9000/  'alice|bob'
-#   Use VHost_Proxy_OIDC_User  dms   example.com  http://10.0.0.7:8000/  'alice'
-<Macro VHost_Proxy_OIDC_User $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS)>
+#   Use VHost_Proxy_OIDC  wiki   example.com  http://10.0.0.8:3000/  'alice|bob'  ''
+#   Use VHost_Proxy_OIDC  admin  example.com  http://10.0.0.9:8080/  ''           'admins'
+#   Use VHost_Proxy_OIDC  tools  example.com  http://10.0.0.10:80/   'alice'      'editors'
+<Macro VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS) $(GROUPS)>
   <VirtualHost *:80>
     ServerName $(SITENAME).$(DOMAINNAME)
     USE LOGGING $(SITENAME) $(DOMAINNAME)
@@ -167,106 +138,7 @@
     USE DEFAULTS
     USE SSL $(DOMAINNAME)
     USE SECURITY_HEADERS
-    USE CLIENTOIDC_CLAIM $(SITENAME) $(DOMAINNAME) '$(USERS)'
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
-    USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
-  </VirtualHost>
-</Macro>
-
-# VHost_Proxy_OIDC_Any $(SITENAME) $(DOMAINNAME) $(DESTINATION)
-# Full vhost with OIDC auth + reverse proxy.
-# Any authenticated user is allowed (GeoIP still applies).
-# Use this only when you intentionally want to allow all OIDC users;
-# for most cases VHost_Proxy_OIDC_User with an explicit user list is preferred.
-#
-# Example:
-#   Use VHost_Proxy_OIDC_Any  monitor  example.com  http://10.0.0.5:3000/
-<Macro VHost_Proxy_OIDC_Any $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
-  <VirtualHost *:80>
-    ServerName $(SITENAME).$(DOMAINNAME)
-    USE LOGGING $(SITENAME) $(DOMAINNAME)
-    USE DEFAULTS
-    USE REWRITE2URL "https://$(SITENAME).$(DOMAINNAME)"
-  </VirtualHost>
-
-  <VirtualHost *:443>
-    ServerName $(SITENAME).$(DOMAINNAME)
-    USE LOGGING $(SITENAME) $(DOMAINNAME)
-    USE DEFAULTS
-    USE SSL $(DOMAINNAME)
-    USE SECURITY_HEADERS
-    USE CLIENTOIDC_VALIDUSER $(SITENAME) $(DOMAINNAME)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
-    USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
-  </VirtualHost>
-</Macro>
-
-# VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION)
-# Full vhost with reverse proxy and GeoIP country lock — no OIDC.
-# Use for services that handle their own auth (identity provider, file server, etc.)
-# Internal networks always pass through; external traffic must come from
-# an allowed country (${GEOIP_ALLOW_COUNTRIES}).
-# CLIENTOIDC_GROUP $(SITENAME) $(DOMAINNAME) $(GROUP)
-# Protects a vhost with OIDC — only members of group $(GROUP) are allowed.
-# $(GROUP) is a pipe-separated list matched case-insensitively against the
-# groups claim, e.g. 'editors|reviewers'.
-# GeoIP country check applies; internal networks bypass both checks.
-<Macro CLIENTOIDC_GROUP $(SITENAME) $(DOMAINNAME) $(GROUP)>
-  USE OIDCBASE $(SITENAME) $(DOMAINNAME)
-
-  GeoIPEnable On
-  SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-
-  <Location />
-    AuthType openid-connect
-    OIDCUnAutzAction 403
-
-    <RequireAny>
-      # Internal networks always pass through
-      Include /etc/apache2/conf-runtime/internal-networks.conf
-
-      # External: must be from an allowed country AND be in the required group
-      <RequireAll>
-        Require env AllowCountry
-        Require claim "groups~^(?i)$(GROUP)$"
-      </RequireAll>
-    </RequireAny>
-  </Location>
-
-  # OIDC redirect URI — must be accessible but serves no real content
-  <Location ${OIDC_REDIRECT_PATH}>
-    AuthType openid-connect
-    <RequireAny>
-      Require valid-user
-      Include /etc/apache2/conf-runtime/internal-networks.conf
-    </RequireAny>
-  </Location>
-</Macro>
-
-# VHost_Proxy_OIDC_Group $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(GROUP)
-# Full vhost with OIDC auth + reverse proxy.
-# Only members of group $(GROUP) (pipe-separated, case-insensitive regex) are allowed.
-#
-# Examples:
-#   Use VHost_Proxy_OIDC_Group  wiki   example.com  http://10.0.0.8:3000/  'editors'
-#   Use VHost_Proxy_OIDC_Group  admin  example.com  http://10.0.0.9:8080/  'admins|superusers'
-<Macro VHost_Proxy_OIDC_Group $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(GROUP)>
-  <VirtualHost *:80>
-    ServerName $(SITENAME).$(DOMAINNAME)
-    USE LOGGING $(SITENAME) $(DOMAINNAME)
-    USE DEFAULTS
-    USE REWRITE2URL "https://$(SITENAME).$(DOMAINNAME)"
-  </VirtualHost>
-
-  <VirtualHost *:443>
-    ServerName $(SITENAME).$(DOMAINNAME)
-    USE LOGGING $(SITENAME) $(DOMAINNAME)
-    USE DEFAULTS
-    USE SSL $(DOMAINNAME)
-    USE SECURITY_HEADERS
-    USE CLIENTOIDC_GROUP $(SITENAME) $(DOMAINNAME) '$(GROUP)'
+    USE CLIENTOIDC $(SITENAME) $(DOMAINNAME) '$(USERS)' '$(GROUPS)'
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
     USE PROXY $(DESTINATION)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
