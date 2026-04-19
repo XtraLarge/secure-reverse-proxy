@@ -317,7 +317,7 @@ if TOC_DOMAIN == "" then
   end
 end
 
-local function topbar(title)
+local function topbar(title, back_url)
   local toc_link  = TOC_DOMAIN ~= "" and ("https://toc."    .. TOC_DOMAIN) or "/"
   local logout_link = TOC_DOMAIN ~= "" and ("https://logout." .. TOC_DOMAIN) or "/logout"
   local user_block = ADMIN_REMOTE_USER ~= ""
@@ -329,7 +329,7 @@ local function topbar(title)
   return '<div class="topbar">'
     .. '<a class="topbar-title" href="/">\xE2\x9A\x99 ' .. h(title) .. '</a>'
     .. '<div class="topbar-nav">'
-    .. '<a class="topbar-back" href="' .. h(toc_link) .. '">\xE2\x86\x90</a>'
+    .. '<a class="topbar-back" href="' .. h(back_url or toc_link) .. '">\xE2\x86\x90</a>'
     .. '<a href="/?action=users">\xF0\x9F\x91\xA4 OIDC Auth</a>'
     .. '<a href="/?action=htpasswd">\xF0\x9F\x94\x91 Basic Auth</a>'
     .. '</div>'
@@ -337,12 +337,12 @@ local function topbar(title)
     .. '</div>'
 end
 
-local function page_head(title)
+local function page_head(title, back_url)
   return "<!DOCTYPE html><html lang=de><head><meta charset=UTF-8>"
     .. "<meta name=viewport content='width=device-width,initial-scale=1'>"
     .. "<title>" .. h(title) .. " — Proxy Admin</title>"
     .. CSS .. JS .. "</head><body>"
-    .. topbar(title)
+    .. topbar(title, back_url)
 end
 
 local function msg_html(txt)
@@ -1057,7 +1057,7 @@ local KC_PROTECTED_GROUPS = { ["global-admins"]=true, ["global-users"]=true }
 -- Shown when the OIDC token does not have Keycloak admin rights.
 -- Instructs the user to log out and re-login with an account that has the roles.
 local function show_kc_login(r, errmsg)
-  r:puts(page_head("Keine Admin-Rechte"))
+  r:puts(page_head("Keine Admin-Rechte", "/"))
   r:puts('<div class="main"><div class="card">')
   r:puts('<h2>Keycloak-Admin-Rechte erforderlich</h2>')
   if errmsg and errmsg ~= "needs_login" then
@@ -1077,7 +1077,7 @@ end
 -- ── User/group pages ──────────────────────────────────────────────────────────
 
 local function show_users(r, msg)
-  r:puts(page_head("Nutzerverwaltung"))
+  r:puts(page_head("Nutzerverwaltung", "/"))
   r:puts('<div class="main">')
   if msg then r:puts(msg_html(msg)) end
   r:puts('<div class="applybar">')
@@ -1201,7 +1201,7 @@ local function show_user_form(r, uid, pre, msg)
 
   -- Fetch all data BEFORE writing any HTML to avoid double-page output on error
   if KC_ADMIN_URL == "" then
-    r:puts(page_head(is_new and "Neuer Nutzer" or "Nutzer bearbeiten"))
+    r:puts(page_head(is_new and "Neuer Nutzer" or "Nutzer bearbeiten", "/?action=users"))
     r:puts('<div class="main"><div class="card">')
     r:puts('<h2>' .. (is_new and "Neuer Nutzer" or "Nutzer bearbeiten") .. '</h2>')
     r:puts('<p class="dim">KEYCLOAK_ADMIN_URL nicht gesetzt.</p></div></div></body></html>')
@@ -1227,7 +1227,7 @@ local function show_user_form(r, uid, pre, msg)
   end
 
   -- Now render the page
-  r:puts(page_head(is_new and "Neuer Nutzer" or "Nutzer bearbeiten"))
+  r:puts(page_head(is_new and "Neuer Nutzer" or "Nutzer bearbeiten", "/?action=users"))
   r:puts('<div class="main"><div class="card">')
   r:puts('<h2>' .. (is_new and "Neuer Nutzer" or "Nutzer bearbeiten: <code>" .. h((pre or {}).username or "") .. "</code>") .. '</h2>')
   if msg then r:puts(msg_html(msg)) end
@@ -1304,7 +1304,7 @@ end
 
 -- Render the new group form.
 local function show_group_form(r, pre, msg)
-  r:puts(page_head("Neue Gruppe"))
+  r:puts(page_head("Neue Gruppe", "/"))
   r:puts('<div class="main"><div class="card"><h2>Neue Gruppe anlegen</h2>')
   if msg then r:puts(msg_html(msg)) end
   r:puts('<form method="POST" action="/?action=group_create">')
@@ -2180,7 +2180,7 @@ local function htpasswd_del(username)
 end
 
 local function show_htpasswd(r, msg)
-  r:puts(page_head("BasicAuth Benutzer"))
+  r:puts(page_head("BasicAuth Benutzer", "/"))
   if msg then r:puts(msg_html(msg)) end
   r:puts('<div class="main">')
 
@@ -2219,7 +2219,7 @@ local function show_htpasswd(r, msg)
 end
 
 local function show_htpasswd_edit(r, username, msg)
-  r:puts(page_head("Passwort \xC3\xA4ndern"))
+  r:puts(page_head("Passwort \xC3\xA4ndern", "/"))
   if msg then r:puts(msg_html(msg)) end
   r:puts('<div class="main"><div class="card">')
   r:puts('<h2>Passwort f\xC3\xBCr <strong>' .. h(username) .. '</strong></h2>')
