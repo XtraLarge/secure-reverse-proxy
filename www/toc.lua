@@ -10,6 +10,7 @@ T           = {"STATUS", "NAME", "DOMAIN", "TYP",  "DEST",        "IPROT",      
 TT          = {"Status", "Name", "Domain", "Type", "Destination", "Int. Proto.", "Int. IP", "Int. Port", "Secured", "Users"}
 A           = {};
 A_seen      = {};   -- dedup set: "name.domain" keys already inserted into A
+ADMIN_USERS = {};   -- domain → pipe-separated admin user pattern (from Admin_VHost lines)
 
 
 --
@@ -529,6 +530,16 @@ function parse(line)
 # USE Domain_Final example.com www
 
   --]]
+  -- Collect admin user list from Admin_VHost lines
+  if startswith(string.lower(all_trim(line)), "use admin_vhost") then
+    local domain  = string.lower(word(line, 3))
+    local pattern = word(line, 4):gsub("'", "")
+    if domain ~= "" and pattern ~= "" then
+      ADMIN_USERS[domain] = pattern
+    end
+    return
+  end
+
   -- Only process VHost_* macros (skip Domain_*, Admin_VHost, comments, etc.)
   if not startswith(string.lower(all_trim(line)), "use vhost_") then return end
 
@@ -667,7 +678,16 @@ window.onload = function() {
 
   local ADMINLINK = ""
   if DOMAIN and DOMAIN ~= "" then
-    ADMINLINK = "  <a href=\"https://admin." .. DOMAIN .. "\">&#9881; Admin</a>\n"
+    local admins = ADMIN_USERS[string.lower(DOMAIN)]
+    if admins then
+      local u = string.lower(REMOTE_USER)
+      for a in (admins:lower() .. "|"):gmatch("([^|]+)|") do
+        if all_trim(a) == u then
+          ADMINLINK = "  <a href=\"https://admin." .. DOMAIN .. "\">&#9881; Admin</a>\n"
+          break
+        end
+      end
+    end
   end
 
   local PAGE = "<!DOCTYPE html>\n<html lang=de>\n<head>\n" ..

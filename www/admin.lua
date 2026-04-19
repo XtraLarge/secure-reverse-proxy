@@ -305,6 +305,13 @@ function serializeUsers(form) {
   document.getElementById('users_val').value = val;
   return true;
 }
+function filterSites(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll('table tr').forEach(function(tr) {
+    if (!tr.querySelector('td')) return;
+    tr.style.display = tr.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+  });
+}
 </script>]]
 
 -- Debug mode: set LUA_DEBUG=1 in proxy.env to enable, remove to disable.
@@ -426,6 +433,12 @@ local function show_list(r, msg)
   r:puts('<button class="btn b-apply" type="submit">&#9654;&nbsp;Konfiguration anwenden</button>')
   r:puts('</form>')
   r:puts('</div>')
+
+  r:puts('<div class="card" style="padding:.5em 1em;margin-bottom:.5em">'
+    .. '<input id=filter_sites oninput="filterSites(this.value)" placeholder="\xF0\x9F\x94\x8D Suchen\xE2\x80\xA6"'
+    .. ' style="width:100%;box-sizing:border-box;background:#0d0d1a;color:#ddd;'
+    .. 'border:1px solid #2a2a4e;border-radius:4px;padding:.4em .7em;font-size:.95em">'
+    .. '</div>')
 
   local files = list_conf_files()
   for _, fpath in ipairs(files) do
