@@ -215,7 +215,11 @@ body{font-family:Arial,sans-serif;background:#0d0d1a;color:#ddd;min-height:100vh
   border:1px solid #2a2a4e;border-radius:3px;padding:3px 10px;
   background:#0a0a22;transition:background .15s}
 .topbar-nav a:hover{background:#0f3460;color:#00d4ff}
-.topbar-user{color:#888;font-size:.8em;white-space:nowrap;padding-left:.5em}
+.topbar-user-block{display:flex;flex-direction:column;align-items:flex-end;
+  gap:.15em;margin-left:.7em;line-height:1.3}
+.topbar-user{color:#aaa;font-size:.85em;font-family:Arial,sans-serif;white-space:nowrap}
+.topbar-logout{color:#666;font-size:.75em;text-decoration:none;white-space:nowrap}
+.topbar-logout:hover{color:#ff9999}
 .main{padding:1.2em}
 h2{color:#7ecfff;font-size:1em;margin:0 0 .7em;border-bottom:1px solid #2a2a4e;padding-bottom:.3em}
 table{border-collapse:collapse;width:100%;font-size:.88em}
@@ -289,18 +293,20 @@ end
 local function topbar(title)
   local toc_link  = TOC_DOMAIN ~= "" and ("https://toc."    .. TOC_DOMAIN) or "/"
   local logout_link = TOC_DOMAIN ~= "" and ("https://logout." .. TOC_DOMAIN) or "/logout"
-  local user_span = ADMIN_REMOTE_USER ~= ""
-    and ('<span class="topbar-user">' .. h(ADMIN_REMOTE_USER) .. '</span>')
-    or  ''
+  local user_block = ADMIN_REMOTE_USER ~= ""
+    and ('<div class="topbar-user-block">'
+      .. '<span class="topbar-user">' .. h(ADMIN_REMOTE_USER) .. '</span>'
+      .. '<a class="topbar-logout" href="' .. h(logout_link) .. '">\xC3\x97 Logout</a>'
+      .. '</div>')
+    or ('<a class="topbar-nav" href="' .. h(logout_link) .. '">\xC3\x97 Logout</a>')
   return '<div class="topbar">'
     .. '<a class="topbar-title" href="/">\xE2\x9A\x99 ' .. h(title) .. '</a>'
     .. '<div class="topbar-nav">'
     .. '<a href="/?action=users">\xF0\x9F\x91\xA4 OIDC Auth</a>'
     .. '<a href="/?action=htpasswd">\xF0\x9F\x94\x91 Basic Auth</a>'
     .. '<a href="' .. h(toc_link) .. '">\xE2\x98\xB0 TOC</a>'
-    .. '<a href="' .. h(logout_link) .. '">\xC3\x97 Logout</a>'
     .. '</div>'
-    .. user_span
+    .. user_block
     .. '</div>'
 end
 
