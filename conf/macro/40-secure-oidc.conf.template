@@ -24,7 +24,7 @@
 
 # OIDCBASE $(SITENAME) $(DOMAINNAME)
 # Sets global mod_auth_openidc directives for one vhost.
-# Used internally by CLIENTOIDC_* — you rarely need this directly.
+# Used internally by CLIENTOIDC — you rarely need this directly.
 <Macro OIDCBASE $(SITENAME) $(DOMAINNAME)>
   OIDCProviderMetadataURL         ${OIDC_PROVIDER_METADATA_URL}
   # The OIDC provider (Keycloak) may use a self-signed or internal CA certificate
