@@ -107,7 +107,7 @@ local function build_line(macro, name, domain, dest, users, authtype)
 
   if m == "vhost_proxy" or m == "vhost_proxy_oidc_any" or m == "vhost_alias" then
     return string.format("Use %-28s  %-20s  %-25s  %s", macro, name, domain, dest)
-  elseif m == "vhost_proxy_oidc" or m == "vhost_proxy_oidc_group" then
+  elseif m == "vhost_proxy_oidc_user" or m == "vhost_proxy_oidc_group" then
     return string.format("Use %-28s  %-20s  %-25s  %-35s  '%s'", macro, name, domain, dest, users)
   elseif m == "vhost_proxy_basic" then
     return string.format("Use %-28s  %-20s  %-25s  %-35s  %-6s  '%s'", macro, name, domain, dest, authtype, users)
@@ -278,7 +278,7 @@ a.btn,button.btn{padding:4px 11px;border:none;border-radius:3px;cursor:pointer;
 local JS = [[<script>
 function onMacroChange(sel) {
   var m = sel.value.toLowerCase();
-  document.getElementById('row_oidc_users').style.display  = m === 'vhost_proxy_oidc'       ? '' : 'none';
+  document.getElementById('row_oidc_users').style.display  = m === 'vhost_proxy_oidc_user'  ? '' : 'none';
   document.getElementById('row_group_users').style.display = m === 'vhost_proxy_oidc_group' ? '' : 'none';
   document.getElementById('row_basic_users').style.display = m === 'vhost_proxy_basic'      ? '' : 'none';
   document.getElementById('row_auth').style.display        = m === 'vhost_proxy_basic'      ? '' : 'none';
@@ -287,7 +287,7 @@ function serializeUsers(form) {
   var m = form.querySelector('[name=macro]').value.toLowerCase();
   var val = '';
   var sel, fb;
-  if (m === 'vhost_proxy_oidc') {
+  if (m === 'vhost_proxy_oidc_user') {
     sel = document.getElementById('sel_oidc_users');
     fb  = document.getElementById('fb_oidc');
   } else if (m === 'vhost_proxy_oidc_group') {
@@ -551,7 +551,7 @@ local function show_form(r, fname, lineno, pre, errmsg)
   local sel_style = "min-width:180px;background:#0d0d1a;color:#ddd;border:1px solid #2a2a4e;padding:.3em"
 
   -- OIDC users multi-select
-  r:puts('<div class="form-row" id=row_oidc_users style="display:' .. (cur == "vhost_proxy_oidc" and "" or "none") .. '">')
+  r:puts('<div class="form-row" id=row_oidc_users style="display:' .. (cur == "vhost_proxy_oidc_user" and "" or "none") .. '">')
   r:puts('<label>Benutzer:</label>')
   if kc_users_list then
     r:puts('<select multiple size=6 id=sel_oidc_users style="' .. sel_style .. '">')
