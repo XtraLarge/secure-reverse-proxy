@@ -2,6 +2,10 @@
 .env
 ssl/
 
+# Local dev notes — contain private IPs, domains, prod paths (not for public repo)
+CLAUDE.md
+CLAUDE.local.md
+
 # Runtime generated configs
 sites-enabled/
 AddOn/
