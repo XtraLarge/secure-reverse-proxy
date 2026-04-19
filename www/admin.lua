@@ -415,9 +415,7 @@ local function show_list(r, msg)
       .. 'padding:.6em 1em;margin-bottom:1em;display:flex;align-items:center;gap:1em">')
     r:puts('<span style="color:#ffee66;font-size:.95em">'
       .. '\xE2\x9A\xA0\xEF\xB8\x8F  Nicht angewendete \xC3\x84nderungen — Konfiguration ist noch nicht aktiv.</span>')
-    r:puts('<form method="POST" action="/?action=apply" style="margin-left:auto">')
-    r:puts('<button class="btn b-apply" type="submit">&#9654;&nbsp;Jetzt anwenden</button>')
-    r:puts('</form></div>')
+    r:puts('</div>')
   end
   r:puts('<div class="applybar">')
   r:puts('<a class="btn b-add" href="/?action=domain_new">+ Neue Domain</a>')
