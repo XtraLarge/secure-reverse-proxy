@@ -208,7 +208,72 @@
 # Use for services that handle their own auth (identity provider, file server, etc.)
 # Internal networks always pass through; external traffic must come from
 # an allowed country (${GEOIP_ALLOW_COUNTRIES}).
-<Macro VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
+# CLIENTOIDC_GROUP $(SITENAME) $(DOMAINNAME) $(GROUP)
+# Protects a vhost with OIDC — only members of group $(GROUP) are allowed.
+# $(GROUP) is a pipe-separated list matched case-insensitively against the
+# groups claim, e.g. 'editors|reviewers'.
+# GeoIP country check applies; internal networks bypass both checks.
+<Macro CLIENTOIDC_GROUP $(SITENAME) $(DOMAINNAME) $(GROUP)>
+  USE OIDCBASE $(SITENAME) $(DOMAINNAME)
+
+  GeoIPEnable On
+  SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
+
+  <Location />
+    AuthType openid-connect
+    OIDCUnAutzAction 403
+
+    <RequireAny>
+      # Internal networks always pass through
+      Include /etc/apache2/conf-runtime/internal-networks.conf
+
+      # External: must be from an allowed country AND be in the required group
+      <RequireAll>
+        Require env AllowCountry
+        Require claim "groups~^(?i)$(GROUP)$"
+      </RequireAll>
+    </RequireAny>
+  </Location>
+
+  # OIDC redirect URI — must be accessible but serves no real content
+  <Location ${OIDC_REDIRECT_PATH}>
+    AuthType openid-connect
+    <RequireAny>
+      Require valid-user
+      Include /etc/apache2/conf-runtime/internal-networks.conf
+    </RequireAny>
+  </Location>
+</Macro>
+
+# VHost_Proxy_OIDC_Group $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(GROUP)
+# Full vhost with OIDC auth + reverse proxy.
+# Only members of group $(GROUP) (pipe-separated, case-insensitive regex) are allowed.
+#
+# Examples:
+#   Use VHost_Proxy_OIDC_Group  wiki   example.com  http://10.0.0.8:3000/  'editors'
+#   Use VHost_Proxy_OIDC_Group  admin  example.com  http://10.0.0.9:8080/  'admins|superusers'
+<Macro VHost_Proxy_OIDC_Group $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(GROUP)>
+  <VirtualHost *:80>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE REWRITE2URL "https://$(SITENAME).$(DOMAINNAME)"
+  </VirtualHost>
+
+  <VirtualHost *:443>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE SSL $(DOMAINNAME)
+    USE SECURITY_HEADERS
+    USE CLIENTOIDC_GROUP $(SITENAME) $(DOMAINNAME) '$(GROUP)'
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    USE PROXY $(DESTINATION)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+  </VirtualHost>
+</Macro>
+
+# VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION)
   <VirtualHost *:80>
     ServerName $(SITENAME).$(DOMAINNAME)
     USE LOGGING $(SITENAME) $(DOMAINNAME)

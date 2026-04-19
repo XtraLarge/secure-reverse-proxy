@@ -37,6 +37,7 @@ local MACRO_TYPES = {
   "VHost_Proxy",
   "VHost_Proxy_OIDC",
   "VHost_Proxy_OIDC_Any",
+  "VHost_Proxy_OIDC_Group",
   "VHost_Proxy_Basic",
   "VHost_Alias",
 }
@@ -106,7 +107,7 @@ local function build_line(macro, name, domain, dest, users, authtype)
 
   if m == "vhost_proxy" or m == "vhost_proxy_oidc_any" or m == "vhost_alias" then
     return string.format("Use %-28s  %-20s  %-25s  %s", macro, name, domain, dest)
-  elseif m == "vhost_proxy_oidc" then
+  elseif m == "vhost_proxy_oidc" or m == "vhost_proxy_oidc_group" then
     return string.format("Use %-28s  %-20s  %-25s  %-35s  '%s'", macro, name, domain, dest, users)
   elseif m == "vhost_proxy_basic" then
     return string.format("Use %-28s  %-20s  %-25s  %-35s  %-6s  '%s'", macro, name, domain, dest, authtype, users)
@@ -275,14 +276,34 @@ a.btn,button.btn{padding:4px 11px;border:none;border-radius:3px;cursor:pointer;
 </style>]]
 
 local JS = [[<script>
-var NEEDS_USERS  = {vhost_proxy_oidc:1, vhost_proxy_basic:1};
-var NEEDS_AUTH   = {vhost_proxy_basic:1};
 function onMacroChange(sel) {
   var m = sel.value.toLowerCase();
-  document.getElementById('row_users').style.display  = NEEDS_USERS[m]  ? '' : 'none';
-  document.getElementById('row_auth').style.display   = NEEDS_AUTH[m]   ? '' : 'none';
-  document.getElementById('lbl_users').textContent    =
-    m === 'vhost_proxy_basic' ? 'Passwort-Eintrag:' : 'Benutzer (|getrennt):';
+  document.getElementById('row_oidc_users').style.display  = m === 'vhost_proxy_oidc'       ? '' : 'none';
+  document.getElementById('row_group_users').style.display = m === 'vhost_proxy_oidc_group' ? '' : 'none';
+  document.getElementById('row_basic_users').style.display = m === 'vhost_proxy_basic'      ? '' : 'none';
+  document.getElementById('row_auth').style.display        = m === 'vhost_proxy_basic'      ? '' : 'none';
+}
+function serializeUsers(form) {
+  var m = form.querySelector('[name=macro]').value.toLowerCase();
+  var val = '';
+  var sel, fb;
+  if (m === 'vhost_proxy_oidc') {
+    sel = document.getElementById('sel_oidc_users');
+    fb  = document.getElementById('fb_oidc');
+  } else if (m === 'vhost_proxy_oidc_group') {
+    sel = document.getElementById('sel_group_users');
+    fb  = document.getElementById('fb_group');
+  } else if (m === 'vhost_proxy_basic') {
+    sel = document.getElementById('sel_basic_users');
+    fb  = document.getElementById('fb_basic');
+  }
+  if (sel) {
+    val = Array.from(sel.selectedOptions).map(function(o){return o.value;}).join('|');
+  } else if (fb) {
+    val = fb.value;
+  }
+  document.getElementById('users_val').value = val;
+  return true;
 }
 </script>]]
 
@@ -369,6 +390,9 @@ local show_kc_client_section
 local kc_token
 local json_enc
 local kc_create_group
+local kc_list_users
+local kc_list_groups
+local htpasswd_list_users
 
 -- ── List page ─────────────────────────────────────────────────────────────────
 
@@ -473,13 +497,26 @@ end
 
 local function show_form(r, fname, lineno, pre, errmsg)
   local title = lineno and "Eintrag bearbeiten" or "Neuer Eintrag"
+
+  -- Load selection data before any HTML output
+  local ht_users = htpasswd_list_users()
+  local kc_users_list, kc_groups_list = nil, nil
+  if KC_ADMIN_URL ~= "" then
+    local tok, _ = kc_token(r)
+    if tok then
+      kc_users_list, _ = kc_list_users(tok)
+      kc_groups_list, _ = kc_list_groups(tok)
+    end
+  end
+
   r:puts(page_head(title))
   r:puts('<div class="main"><div class="card">')
   r:puts('<h2>' .. title .. ' — ' .. h(fname) .. '</h2>')
   if errmsg then r:puts(msg_html("ERR: " .. errmsg)) end
 
-  r:puts('<form method="POST" action="/?action=save">')
+  r:puts('<form method="POST" action="/?action=save" onsubmit="return serializeUsers(this)">')
   r:puts('<input type=hidden name=file value="' .. h(fname) .. '">')
+  r:puts('<input type=hidden name=users id=users_val value="">')
   if lineno then
     r:puts('<input type=hidden name=line value="' .. lineno .. '">')
     r:puts('<input type=hidden name=check value="' .. h(pre and pre.raw or "") .. '">')
@@ -506,12 +543,58 @@ local function show_form(r, fname, lineno, pre, errmsg)
   r:puts('<div class="form-row"><label>Ziel-URL:</label>'
     .. '<input name=dest value="' .. h((pre and pre.dest) or "") .. '" placeholder="http://10.0.0.1:8080/" required></div>')
 
-  -- Users (OIDC_Claim + Basic)
-  local show_users = (cur == "vhost_proxy_oidc" or cur == "vhost_proxy_basic")
-  local lbl_users  = cur == "vhost_proxy_basic" and "Passwort-Eintrag:" or "Benutzer (|getrennt):"
-  r:puts('<div class="form-row" id=row_users style="display:' .. (show_users and "" or "none") .. '">')
-  r:puts('<label id=lbl_users>' .. lbl_users .. '</label>')
-  r:puts('<input name=users value="' .. h((pre and pre.users) or "") .. '" placeholder="alice|bob"></div>')
+  -- Build set of currently selected values for pre-selection
+  local pre_sel = {}
+  if pre and (pre.users or "") ~= "" then
+    for v in pre.users:gmatch("[^|]+") do pre_sel[trim(v)] = true end
+  end
+  local sel_style = "min-width:180px;background:#0d0d1a;color:#ddd;border:1px solid #2a2a4e;padding:.3em"
+
+  -- OIDC users multi-select
+  r:puts('<div class="form-row" id=row_oidc_users style="display:' .. (cur == "vhost_proxy_oidc" and "" or "none") .. '">')
+  r:puts('<label>Benutzer:</label>')
+  if kc_users_list then
+    r:puts('<select multiple size=6 id=sel_oidc_users style="' .. sel_style .. '">')
+    for _, u in ipairs(kc_users_list) do
+      local s = pre_sel[u.username] and ' selected' or ''
+      r:puts('<option value="' .. h(u.username) .. '"' .. s .. '>' .. h(u.username) .. '</option>')
+    end
+    r:puts('</select>')
+  else
+    r:puts('<input id=fb_oidc value="' .. h((pre and pre.users) or "") .. '" placeholder="alice|bob">')
+  end
+  r:puts('</div>')
+
+  -- OIDC group multi-select
+  r:puts('<div class="form-row" id=row_group_users style="display:' .. (cur == "vhost_proxy_oidc_group" and "" or "none") .. '">')
+  r:puts('<label>Gruppen:</label>')
+  if kc_groups_list then
+    r:puts('<select multiple size=6 id=sel_group_users style="' .. sel_style .. '">')
+    for _, g in ipairs(kc_groups_list) do
+      local s = pre_sel[g.name] and ' selected' or ''
+      r:puts('<option value="' .. h(g.name) .. '"' .. s .. '>' .. h(g.name) .. '</option>')
+    end
+    r:puts('</select>')
+  else
+    r:puts('<input id=fb_group value="' .. h((pre and pre.users) or "") .. '" placeholder="groupname">')
+  end
+  r:puts('</div>')
+
+  -- Basic users multi-select
+  r:puts('<div class="form-row" id=row_basic_users style="display:' .. (cur == "vhost_proxy_basic" and "" or "none") .. '">')
+  r:puts('<label>Passwort-Eintrag:</label>')
+  if #ht_users > 0 then
+    r:puts('<select multiple size=6 id=sel_basic_users style="' .. sel_style .. '">')
+    for _, u in ipairs(ht_users) do
+      local s = pre_sel[u] and ' selected' or ''
+      r:puts('<option value="' .. h(u) .. '"' .. s .. '>' .. h(u) .. '</option>')
+    end
+    r:puts('</select>')
+  else
+    r:puts('<input id=fb_basic value="' .. h((pre and pre.users) or "") .. '" placeholder="alice">')
+    r:puts('<span class="dim" style="font-size:.8em"> (keine htpasswd-Eintr\xC3\xA4ge vorhanden)</span>')
+  end
+  r:puts('</div>')
 
   -- AuthType (Basic only)
   local show_auth = (cur == "vhost_proxy_basic")
@@ -932,7 +1015,7 @@ end
 
 -- Fetch all users (max 500, skip service accounts).
 -- Returns (list, nil) on success or (nil, errmsg) on failure.
-local function kc_list_users(token)
+kc_list_users = function(token)
   local raw, status = kc_api_get("/users?max=500", token)
   if status ~= 200 then
     local detail = status == 403
@@ -952,7 +1035,7 @@ end
 
 -- Fetch all groups (flat list).
 -- Returns (list, nil) on success or (nil, errmsg) on failure.
-local function kc_list_groups(token)
+kc_list_groups = function(token)
   local raw, status = kc_api_get("/groups?max=200", token)
   if status ~= 200 then
     local detail = status == 403
@@ -1049,8 +1132,15 @@ end
 
 -- Accounts that must not be deleted via the UI.
 local KC_PROTECTED_USERS = { admin=true, claude=true }
--- Groups that must not be deleted via the UI.
-local KC_PROTECTED_GROUPS = { ["global-admins"]=true, ["global-users"]=true }
+-- Groups ending in -admins or -users (domain or global) must not be deleted via the UI.
+local function is_protected_group(name)
+  return name ~= nil and (name:match("%-admins$") ~= nil or name:match("%-users$") ~= nil)
+end
+-- Returns true if the currently logged-in user is a member of global-admins.
+local function is_global_admin(r)
+  local raw = (r.subprocess_env and r.subprocess_env["OIDC_CLAIM_groups"]) or ""
+  return raw:find("global%-admins") ~= nil
+end
 
 -- ── Keycloak insufficient-rights notice ───────────────────────────────────────
 
@@ -1173,14 +1263,15 @@ local function show_users(r, msg)
   end
   r:puts('<table><tr><th>Name</th><th>Typ</th><th>Aktionen</th></tr>')
   for _, g in ipairs(groups) do
-    local is_system = KC_PROTECTED_GROUPS[g.name] or false
+    local is_protected = is_protected_group(g.name)
+    local is_global    = (g.name or ""):match("^global%-") ~= nil
     r:puts('<tr>')
     r:puts('<td><code>' .. h(g.name or "") .. '</code></td>')
-    r:puts('<td>' .. (is_system
-      and '<span class="tag" style="background:#1a1a1a;color:#666">System</span>'
+    r:puts('<td>' .. (is_global
+      and '<span class="tag" style="background:#1a1a1a;color:#666">Global</span>'
       or  '<span class="tag">Domain</span>') .. '</td>')
     r:puts('<td><div class="actions">')
-    if not is_system then
+    if not is_protected then
       r:puts('<form method="POST" action="/?action=group_delete" style="display:inline"'
         .. ' onsubmit="return confirm(\'Gruppe &quot;' .. h(g.name or "") .. '&quot; l\xC3\xB6schen?\')">')
       r:puts('<input type=hidden name=gid   value="' .. h(g.id)   .. '">')
@@ -1282,13 +1373,16 @@ local function show_user_form(r, uid, pre, msg)
   r:puts('</div>')
 
   -- Group checkboxes
+  local is_gadmin = is_global_admin(r)
   r:puts('<div class="uf-field"><label>Gruppen</label>')
   r:puts('<div class="grp-checks">')
   for _, g in ipairs(all_groups) do
-    local checked = user_group_ids[g.id] and ' checked' or ''
-    r:puts('<label>')
-    r:puts('<input type="checkbox" class="grp-cb" value="' .. h(g.id) .. '"' .. checked .. '>')
-    r:puts('<span class="tag">' .. h(g.name or "") .. '</span>')
+    local checked   = user_group_ids[g.id] and ' checked' or ''
+    local is_global = (g.name or ""):match("^global%-") ~= nil
+    local disabled  = (is_global and not is_gadmin) and ' disabled' or ''
+    r:puts('<label' .. (disabled ~= "" and ' title="Nur Global-Admins k\xC3\xB6nnen diese Gruppe verwalten"' or '') .. '>')
+    r:puts('<input type="checkbox" class="grp-cb" value="' .. h(g.id) .. '"' .. checked .. disabled .. '>')
+    r:puts('<span class="tag"' .. (disabled ~= "" and ' style="opacity:.45"' or '') .. '>' .. h(g.name or "") .. '</span>')
     r:puts('</label>')
   end
   r:puts('</div></div>')
@@ -1392,6 +1486,16 @@ local function do_user_save(r, uid, post)
     id = trim(id)
     if id ~= "" then desired[#desired+1] = id end
   end
+  -- Non-global-admins cannot change global group memberships:
+  -- add back existing global memberships that were filtered out by disabled checkboxes.
+  if not is_global_admin(r) then
+    local cur_gmap = kc_user_group_map(uid, tok)
+    for gid2, gname in pairs(cur_gmap) do
+      if gname:match("^global%-") then
+        desired[#desired+1] = gid2
+      end
+    end
+  end
   local gerr = kc_user_set_groups(uid, desired, tok)
   if gerr then
     if gerr:find("401") then return show_users(r, nil) end
@@ -1437,8 +1541,8 @@ local function do_group_delete(r, post)
   local gname = trim(post.gname or "")
   
   if gid == "" then return show_users(r, "ERR: Keine GID") end
-  if KC_PROTECTED_GROUPS[gname] then
-    return show_users(r, "ERR: Systemgruppen k\xC3\xB6nnen nicht gel\xC3\xB6scht werden")
+  if is_protected_group(gname) then
+    return show_users(r, "ERR: Diese Gruppe kann nicht gel\xC3\xB6scht werden")
   end
   local tok, terr = kc_token(r)
   if not tok then return show_kc_login(r, terr) end
@@ -2126,7 +2230,7 @@ local function validate_htpasswd_user(s)
   return s and s ~= "" and s:match("^[%w%-%._]+$") ~= nil
 end
 
-local function htpasswd_list_users()
+htpasswd_list_users = function()
   local users = {}
   local f = io.open(HTPASSWD_FILE, "r")
   if not f then return users end
