@@ -378,14 +378,24 @@ local function show_user_list(r, token, msg)
   r:puts(msg_html(msg))
 
   -- API access error
+  local logout_link = TOC_DOMAIN ~= "" and ("https://logout." .. TOC_DOMAIN) or "/logout"
   if status == 403 then
-    r:puts('<div class="msg err"><strong>Zugriff verweigert (HTTP 403)</strong><br><br>')
-    r:puts('Der aktuelle Keycloak-Token hat keine <code>view-users</code>-Berechtigung.<br><br>')
-    r:puts('Lösung: In Keycloak → Users → &lt;Admin-User&gt; → Role Mappings →<br>')
-    r:puts('Client Roles → <code>realm-management</code> → Roles hinzufügen:<br>')
-    r:puts('<code>view-users</code>, <code>manage-users</code>, <code>query-roles</code><br><br>')
-    r:puts('Danach neu anmelden (Session erneuern), damit der Token die neuen Rollen enthält.')
-    r:puts('</div></div></body></html>')
+    r:puts('<div class="card" style="border-color:#3a3a00">'
+      .. '<h2 style="color:#ffee66;border-color:#3a3a00">Keycloak-Nutzerverwaltung nicht verf\xC3\xBCgbar</h2>'
+      .. '<p style="margin:.5em 0">Das angemeldete Konto hat keine Berechtigung, die Keycloak-Nutzerliste abzurufen.</p>'
+      .. '<p style="margin:.5em 0 1em">Bitte melden Sie sich ab und erneut mit einem Administrator-Konto an, oder wenden Sie sich an den Systemadministrator.</p>'
+      .. '<a class="btn b-warn" href="' .. h(logout_link) .. '">Abmelden</a>'
+      .. '</div>')
+    r:puts('</div></body></html>')
+    return apache2.OK
+  elseif status == 401 then
+    r:puts('<div class="card" style="border-color:#3a3a00">'
+      .. '<h2 style="color:#ffee66;border-color:#3a3a00">Keycloak-Nutzerverwaltung nicht verf\xC3\xBCgbar</h2>'
+      .. '<p style="margin:.5em 0">Kein g\xC3\xBCltiges Token f\xC3\xBCr den Zugriff auf Keycloak vorhanden.</p>'
+      .. '<p style="margin:.5em 0 1em">Bitte ab- und wieder anmelden.</p>'
+      .. '<a class="btn b-warn" href="' .. h(logout_link) .. '">Abmelden</a>'
+      .. '</div>')
+    r:puts('</div></body></html>')
     return apache2.OK
   elseif status ~= 200 and status ~= 0 then
     r:puts('<div class="msg err">Keycloak-API-Fehler (HTTP ' .. tostring(status) .. ')</div>')
@@ -394,7 +404,7 @@ local function show_user_list(r, token, msg)
   elseif status == 0 then
     r:puts('<div class="msg err"><strong>Keycloak nicht erreichbar</strong><br><br>')
     r:puts('URL: <code>' .. h(KC_URL) .. '</code><br>')
-    r:puts('Prüfe ob der Container Keycloak erreicht (extra_hosts / DNS).')
+    r:puts('Pr\xC3\xBCfe ob der Container Keycloak erreicht (extra_hosts / DNS).')
     r:puts('</div></div></body></html>')
     return apache2.OK
   end
