@@ -92,10 +92,6 @@ else
     log "Keycloak Admin URL: ${KEYCLOAK_ADMIN_URL}"
 fi
 
-# ── Sudoers rule: allow www-data to graceful-reload Apache ────────────────────
-echo "www-data ALL=(root) NOPASSWD: /bin/kill -USR1 1" > /etc/sudoers.d/apache-reload
-chmod 440 /etc/sudoers.d/apache-reload
-
 # ── Generate internal networks include ────────────────────────────────────────
 # INTERNAL_NETWORKS: comma-separated CIDRs that bypass GeoIP and auth entirely.
 # These are injected into an Apache Include file used inside the auth macros.
@@ -443,4 +439,15 @@ if [[ -n "${ACME_EMAIL:-}" ]]; then
 fi
 
 log "Starting Apache..."
+# ── Reload listener (root background process) ─────────────────────────────────
+# www-data cannot signal PID 1 directly (no-new-privileges prevents sudo/setuid).
+# A root process started here survives exec and handles the reload on behalf of www-data.
+RELOAD_FIFO="/run/apache-reload.fifo"
+rm -f "$RELOAD_FIFO"
+mkfifo "$RELOAD_FIFO"
+chmod 666 "$RELOAD_FIFO"
+(while true; do
+    read -r _ < "$RELOAD_FIFO" || sleep 1
+    kill -USR1 1 2>/dev/null
+done) &
 exec "$@"
