@@ -875,29 +875,40 @@ end
 
 -- Generic write (POST/PUT/DELETE) against the Keycloak Admin API.
 -- body may be nil for DELETE/PUT without body.
+-- Returns status, response_body (body may be empty for success responses).
 local function kc_api_write(method, path, body, token)
   local base = KC_BASE_URL
   local tmp_h = os.tmpname()
+  local tmp_o = os.tmpname()
   io.open(tmp_h,"w"):write("Authorization: Bearer " .. token):close()
   local cmd
   if body then
     local tmp_b = os.tmpname()
     io.open(tmp_b,"w"):write(body):close()
     cmd = string.format(
-      'curl -s -k -o /dev/null -w "%%{http_code}" -X %s'
+      'curl -s -k -o %s -w "%%{http_code}" -X %s'
       ..' -H @%s -H "Content-Type: application/json" --data @%s "%s%s" 2>/dev/null',
-      method, tmp_h, tmp_b, base, path)
+      tmp_o, method, tmp_h, tmp_b, base, path)
     local p = io.popen(cmd); local status = tonumber(p:read("*a") or "0"); p:close()
-    os.remove(tmp_h); os.remove(tmp_b)
-    return status
+    local f = io.open(tmp_o); local rbody = f and f:read("*a") or ""; if f then f:close() end
+    os.remove(tmp_h); os.remove(tmp_b); os.remove(tmp_o)
+    return status, rbody
   else
     cmd = string.format(
-      'curl -s -k -o /dev/null -w "%%{http_code}" -X %s -H @%s "%s%s" 2>/dev/null',
-      method, tmp_h, base, path)
+      'curl -s -k -o %s -w "%%{http_code}" -X %s -H @%s "%s%s" 2>/dev/null',
+      tmp_o, method, tmp_h, base, path)
     local p = io.popen(cmd); local status = tonumber(p:read("*a") or "0"); p:close()
-    os.remove(tmp_h)
-    return status
+    local f = io.open(tmp_o); local rbody = f and f:read("*a") or ""; if f then f:close() end
+    os.remove(tmp_h); os.remove(tmp_o)
+    return status, rbody
   end
+end
+
+-- Extract Keycloak error description from a JSON error response body.
+local function kc_errmsg(rbody)
+  return rbody:match('"error_description"%s*:%s*"([^"]+)"')
+      or rbody:match('"errorMessage"%s*:%s*"([^"]+)"')
+      or rbody:match('"error"%s*:%s*"([^"]+)"')
 end
 
 -- Parse a flat JSON object block into a Lua table (strings + booleans).
@@ -990,9 +1001,10 @@ local function kc_user_create(data, token)
     enabled   = true,
     credentials = {{ type="password", value=data.password, temporary=false }},
   })
-  local status = kc_api_write("POST", "/users", payload, token)
+  local status, rbody = kc_api_write("POST", "/users", payload, token)
   if status ~= 201 then
-    return nil, "Keycloak antwortete mit HTTP " .. tostring(status)
+    local detail = kc_errmsg(rbody)
+    return nil, detail or ("Keycloak antwortete mit HTTP " .. tostring(status))
   end
   -- Fetch the new user's UUID
   local found = json_arr_flat(kc_api_get(
@@ -1013,9 +1025,12 @@ local function kc_user_update(uid, data, token)
 end
 
 -- Reset a user's password.
+-- Returns nil on success, error string on failure.
 local function kc_user_reset_pw(uid, password, token)
-  return kc_api_write("PUT", "/users/" .. uid .. "/reset-password",
-    json_enc({type="password", value=password, temporary=false}), token) == 204
+  local status, rbody = kc_api_write("PUT", "/users/" .. uid .. "/reset-password",
+    json_enc({type="password", value=password, temporary=false}), token)
+  if status == 204 then return nil end
+  return kc_errmsg(rbody) or ("Keycloak antwortete mit HTTP " .. tostring(status))
 end
 
 -- Delete a user.
@@ -1337,7 +1352,12 @@ local function do_user_save(r, uid, post)
   }, tok)
 
   local pw = post.password or ""
-  if pw ~= "" then kc_user_reset_pw(uid, pw, tok) end
+  if pw ~= "" then
+    local pwerr = kc_user_reset_pw(uid, pw, tok)
+    if pwerr then
+      return show_users(r, "ERR: Passwort nicht gesetzt — " .. pwerr)
+    end
+  end
 
   local desired = {}
   for id in (trim(post.groups_csv or "")):gmatch("[^,]+") do
