@@ -21,7 +21,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl \
     perl \
     rsyslog \
-    sudo \
     && rm -rf /var/lib/apt/lists/* \
     && sed -i 's|^module(load="imklog".*|# imklog disabled — /proc/kmsg not available inside containers|' /etc/rsyslog.conf
 
