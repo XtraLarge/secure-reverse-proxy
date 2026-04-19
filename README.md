@@ -28,7 +28,7 @@ with per-row reachability status and a search filter.
 | | |
 |---|---|
 | **Single sign-on** | `mod_auth_openidc` — works with any OIDC/OAuth2 provider |
-| **Per-service user control** | Each vhost lists the allowed usernames (matched against the `preferred_username` claim) |
+| **Per-service access control** | Each vhost restricts access by username (`preferred_username` claim) or group membership (`groups` claim), or both |
 | **GeoIP country filter** | External traffic is restricted to a configurable list of countries |
 | **Table of contents** | OIDC-protected overview page (`toc.<domain>`) with live reachability checks |
 | **Admin UI** | Browser-based vhost editor at `admin.<domain>` — add, edit and reload vhosts without SSH |
@@ -250,7 +250,10 @@ USE Domain_Final example.com www
 Use VHost_Alias  <site>  <domain>  <target-url>
 
 # Reverse proxy — specific OIDC users only (pipe-separated, case-insensitive)
-Use VHost_Proxy_OIDC  <site>  <domain>  <backend-url>/  'alice|bob'
+Use VHost_Proxy_OIDC_User  <site>  <domain>  <backend-url>/  'alice|bob'
+
+# Reverse proxy — specific OIDC groups only (pipe-separated, case-insensitive)
+Use VHost_Proxy_OIDC_Group  <site>  <domain>  <backend-url>/  'editors|admins'
 
 # Reverse proxy — any authenticated OIDC user
 Use VHost_Proxy_OIDC_Any  <site>  <domain>  <backend-url>/
@@ -271,8 +274,9 @@ Use Admin_VHost  <domain>  'alice'
 USE Domain_Init example.com www
 
 Use VHost_Alias          www       example.com  https://www-backend.internal/
-Use VHost_Proxy_OIDC     app       example.com  http://10.0.0.5:8080/   'alice|bob'
-Use VHost_Proxy_OIDC_Any monitor   example.com  http://10.0.0.6:3000/
+Use VHost_Proxy_OIDC_User  app       example.com  http://10.0.0.5:8080/   'alice|bob'
+Use VHost_Proxy_OIDC_Group wiki      example.com  http://10.0.0.8:3000/   'editors'
+Use VHost_Proxy_OIDC_Any   monitor   example.com  http://10.0.0.6:3000/
 Use VHost_Proxy          idp       example.com  https://10.0.0.7:8443/
 Use Admin_VHost          example.com  'alice'
 
@@ -285,6 +289,7 @@ This creates the following vhosts:
 |---|---|---|
 | `https://www.example.com` | — | `https://www-backend.internal/` |
 | `https://app.example.com` | OIDC (alice or bob only) | `http://10.0.0.5:8080/` |
+| `https://wiki.example.com` | OIDC (group: editors) | `http://10.0.0.8:3000/` |
 | `https://monitor.example.com` | OIDC (any user) | `http://10.0.0.6:3000/` |
 | `https://idp.example.com` | none | `https://10.0.0.7:8443/` |
 | `https://toc.example.com` | OIDC (any user) | built-in TOC page |

@@ -28,7 +28,7 @@ aller Dienste mit Erreichbarkeitsstatus und Suchfilter.
 | | |
 |---|---|
 | **Single Sign-On** | `mod_auth_openidc` — kompatibel mit jedem OIDC/OAuth2-Provider |
-| **Benutzersteuerung pro Dienst** | Jeder VHost trägt die erlaubten Benutzernamen (abgeglichen gegen den `preferred_username`-Claim) |
+| **Zugriffskontrolle pro Dienst** | Jeder VHost beschränkt den Zugriff per Benutzername (`preferred_username`-Claim) oder Gruppenzugehörigkeit (`groups`-Claim) |
 | **GeoIP-Länderfilter** | Externer Zugriff nur aus konfigurierten Ländern |
 | **Inhaltsverzeichnis** | OIDC-geschützte Übersichtsseite (`toc.<domain>`) mit Live-Erreichbarkeitsprüfung |
 | **Admin-Oberfläche** | Browserbasierter VHost-Editor unter `admin.<domain>` — VHosts hinzufügen, bearbeiten und neu laden ohne SSH |
@@ -250,7 +250,10 @@ USE Domain_Final example.com www
 Use VHost_Alias  <site>  <domain>  <ziel-url>
 
 # Reverse Proxy — nur bestimmte OIDC-Benutzer (durch | getrennt, Groß-/Kleinschreibung egal)
-Use VHost_Proxy_OIDC  <site>  <domain>  <backend-url>/  'alice|bob'
+Use VHost_Proxy_OIDC_User  <site>  <domain>  <backend-url>/  'alice|bob'
+
+# Reverse Proxy — nur Mitglieder bestimmter Gruppen (durch | getrennt)
+Use VHost_Proxy_OIDC_Group  <site>  <domain>  <backend-url>/  'editors|admins'
 
 # Reverse Proxy — alle authentifizierten OIDC-Benutzer
 Use VHost_Proxy_OIDC_Any  <site>  <domain>  <backend-url>/
@@ -271,8 +274,9 @@ Use Admin_VHost  <domain>  'alice'
 USE Domain_Init example.com www
 
 Use VHost_Alias          www       example.com  https://www-backend.internal/
-Use VHost_Proxy_OIDC     app       example.com  http://10.0.0.5:8080/   'alice|bob'
-Use VHost_Proxy_OIDC_Any monitor   example.com  http://10.0.0.6:3000/
+Use VHost_Proxy_OIDC_User  app       example.com  http://10.0.0.5:8080/   'alice|bob'
+Use VHost_Proxy_OIDC_Group wiki      example.com  http://10.0.0.8:3000/   'editors'
+Use VHost_Proxy_OIDC_Any   monitor   example.com  http://10.0.0.6:3000/
 Use VHost_Proxy          idp       example.com  https://10.0.0.7:8443/
 Use Admin_VHost          example.com  'alice'
 
@@ -285,6 +289,7 @@ Daraus entstehen folgende VHosts:
 |---|---|---|
 | `https://www.example.com` | — | `https://www-backend.internal/` |
 | `https://app.example.com` | OIDC (nur alice und bob) | `http://10.0.0.5:8080/` |
+| `https://wiki.example.com` | OIDC (Gruppe: editors) | `http://10.0.0.8:3000/` |
 | `https://monitor.example.com` | OIDC (alle Benutzer) | `http://10.0.0.6:3000/` |
 | `https://idp.example.com` | keine | `https://10.0.0.7:8443/` |
 | `https://toc.example.com` | OIDC (alle Benutzer) | eingebaute TOC-Seite |
