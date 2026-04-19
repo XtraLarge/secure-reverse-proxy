@@ -1051,10 +1051,9 @@ local function show_users(r, msg)
   local users,  uerr = kc_list_users(tok)
   local groups, gerr = kc_list_groups(tok)
 
-  -- Show API errors prominently; 401 gets a user-friendly card
-  local is401 = (uerr and (uerr:find("HTTP 401") or uerr:find("HTTP 403")))
-             or (gerr and (gerr:find("HTTP 401") or gerr:find("HTTP 403")))
-  if is401 then
+  -- 403 = fehlende Keycloak-Rolle → Infokarte; 401 = unerwartetes Auth-Problem → ERR sichtbar lassen
+  local is403 = (uerr and uerr:find("HTTP 403")) or (gerr and gerr:find("HTTP 403"))
+  if is403 then
     local logout_link = TOC_DOMAIN ~= "" and ("https://logout." .. TOC_DOMAIN) or "/logout"
     r:puts('<div class="card" style="border-color:#3a3a00">'
       .. '<h2 style="color:#ffee66;border-color:#3a3a00">Keycloak-Nutzerverwaltung nicht verf\xC3\xBCgbar</h2>'
