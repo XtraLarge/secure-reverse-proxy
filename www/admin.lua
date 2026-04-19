@@ -1017,8 +1017,8 @@ local function show_kc_login(r, errmsg)
   r:puts('<p>Bitte abmelden und mit einem Account mit <code>manage-users</code>-Rolle '
     .. 'neu anmelden.</p>')
   r:puts('<div class="applybar">')
-  r:puts('<a class="btn b-del" href="/?logout">Abmelden &amp; neu einloggen</a>')
   r:puts('<a class="btn b-cancel" href="/">\xE2\x86\x90 \xC3\x9Cbersicht</a>')
+  r:puts('<a class="btn b-del" href="/?logout">Abmelden &amp; neu einloggen</a>')
   r:puts('</div></div></div></body></html>')
 end
 
@@ -1029,9 +1029,9 @@ local function show_users(r, msg)
   r:puts('<div class="main">')
   if msg then r:puts(msg_html(msg)) end
   r:puts('<div class="applybar">')
+  r:puts('<a class="btn b-cancel" href="/">\xE2\x86\x90 \xC3\x9Cbersicht</a>')
   r:puts('<a class="btn b-add" href="/?action=user_new">+ Neuer Nutzer</a>')
   r:puts('<a class="btn b-add" href="/?action=group_new">+ Neue Gruppe</a>')
-  r:puts('<a class="btn b-cancel" href="/">\xE2\x86\x90 \xC3\x9Cbersicht</a>')
   r:puts('</div>')
 
   if KC_ADMIN_URL == "" then
