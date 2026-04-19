@@ -92,6 +92,10 @@ else
     log "Keycloak Admin URL: ${KEYCLOAK_ADMIN_URL}"
 fi
 
+# ── Sudoers rule: allow www-data to graceful-reload Apache ────────────────────
+echo "www-data ALL=(root) NOPASSWD: /bin/kill -USR1 1" > /etc/sudoers.d/apache-reload
+chmod 440 /etc/sudoers.d/apache-reload
+
 # ── Generate internal networks include ────────────────────────────────────────
 # INTERNAL_NETWORKS: comma-separated CIDRs that bypass GeoIP and auth entirely.
 # These are injected into an Apache Include file used inside the auth macros.
