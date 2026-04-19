@@ -198,7 +198,7 @@ _gen_oidc_client_conf() {
         local conf="/etc/apache2/conf-runtime/oidc-client-${domain}.conf"
         printf 'OIDCClientID     %s\n' "$client_id"     > "$conf"
         printf 'OIDCClientSecret %s\n' "$client_secret" >> "$conf"
-        chmod 600 "$conf"
+        chmod 644 "$conf"
         log "Generated oidc-client-${domain}.conf (client_id: ${client_id})"
     fi
 }
