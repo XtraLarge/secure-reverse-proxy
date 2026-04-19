@@ -78,7 +78,9 @@
 # Protects a vhost with OIDC — access requires country check plus EITHER a matching
 # username OR a matching group.  Pass '' for $(USERS) or $(GROUPS) to skip that check.
 # $(USERS):  pipe-separated usernames matched against preferred_username claim, e.g. 'alice|bob'
+#            Use '.*' to allow any authenticated user.
 # $(GROUPS): pipe-separated group names matched against groups claim, e.g. 'editors|admins'
+#            Use '.*' to allow any group.  Pass '' to skip this check entirely.
 # GeoIP country check applies; internal networks bypass all checks.
 <Macro CLIENTOIDC $(SITENAME) $(DOMAINNAME) $(USERS) $(GROUPS)>
   USE OIDCBASE $(SITENAME) $(DOMAINNAME)
