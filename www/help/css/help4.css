@@ -1,19 +1,44 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
-canvas {
-  display: block;
-  z-index: -1;
-  position: absolute;
-  top: 0;
-  left: 0;
-}
+
 body {
   background: #0d0d1a;
   min-height: 100vh;
   overflow: hidden;
 }
+
+/* CRT scanlines overlay — pure CSS, zero CPU */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0, 0, 0, 0.18) 3px,
+    rgba(0, 0, 0, 0.18) 4px
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Vignette */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse at center,
+    transparent 50%,
+    rgba(0, 0, 0, 0.55) 100%
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
 .hidden {
   opacity: 0;
 }
+
 .console-container {
   font-family: 'Courier New', Courier, monospace;
   font-size: clamp(1.4em, 4vw, 3em);
@@ -32,7 +57,10 @@ body {
   margin: auto;
   text-shadow: 0 0 18px #00d4ff88, 0 0 40px #00d4ff44;
   letter-spacing: 0.04em;
+  z-index: 2;
+  animation: glitch 6s infinite;
 }
+
 .console-underscore {
   display: inline-block;
   position: relative;
@@ -41,7 +69,37 @@ body {
   color: #00d4ff;
   animation: blink 0.8s step-end infinite;
 }
+
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0; }
+}
+
+/* Glitch: fires briefly every 6s, otherwise clean */
+@keyframes glitch {
+  0%,  82%, 100% {
+    text-shadow: 0 0 18px #00d4ff88, 0 0 40px #00d4ff44;
+    transform: none;
+    clip-path: none;
+  }
+  83% {
+    text-shadow: -3px 0 #ff00cc, 3px 0 #00ffee;
+    transform: skewX(-2deg) translateX(2px);
+    clip-path: inset(5% 0 70% 0);
+  }
+  84% {
+    text-shadow: 3px 0 #ff00cc, -3px 0 #00ffee;
+    transform: skewX(1deg) translateX(-3px);
+    clip-path: inset(65% 0 5% 0);
+  }
+  85% {
+    text-shadow: -2px 0 #ff00cc, 2px 0 #00ffee;
+    transform: skewX(-1deg);
+    clip-path: inset(30% 0 40% 0);
+  }
+  86% {
+    text-shadow: 0 0 18px #00d4ff88, 0 0 40px #00d4ff44;
+    transform: none;
+    clip-path: none;
+  }
 }

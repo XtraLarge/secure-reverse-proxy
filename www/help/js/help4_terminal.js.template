@@ -16,6 +16,7 @@ function redirToReqTimed(redirect, time) {
   var dest = redirect
     ? "https://" + redirect
     : "https://" + window.location.host + "/";
+  if (window.stopMatrix) { window.stopMatrix(); }
   if (time > 0) {
     window.setTimeout(function () { location.href = dest; }, time);
   } else {
@@ -37,7 +38,8 @@ function consoleText(words, id, colors) {
     if (waiting) return;
 
     if (letterCount === 0) {
-      // finished erasing — advance to next word
+      // finished erasing — clear any remnant then advance to next word
+      target.innerHTML = '';
       waiting = true;
       window.setTimeout(function () {
         var usedWord  = words.shift();
@@ -54,7 +56,7 @@ function consoleText(words, id, colors) {
         waiting     = false;
       }, 800);
 
-    } else if (letterCount === words[0].length + 1) {
+    } else if (direction === 1 && letterCount === words[0].length + 1) {
       // finished typing — pause then erase
       waiting = true;
       window.setTimeout(function () {

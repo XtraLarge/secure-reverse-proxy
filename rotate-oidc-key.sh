@@ -27,8 +27,8 @@ echo "${NEW_KEY}" > "$PASSPHRASE_FILE"
 # Sessions encrypted with the old key will require re-authentication after rotation.
 printf 'OIDCCryptoPassphrase  "%s"\n' "${NEW_KEY}" > "$PASSPHRASE_CONF"
 
-if apache2ctl graceful 2>/dev/null; then
-    echo "[rotate-oidc-key] Passphrase rotated — graceful reload done ($(date -u +%FT%TZ))"
-else
-    echo "[rotate-oidc-key] WARNING: apache2ctl graceful failed (Apache not running?) — passphrase file updated anyway" >&2
-fi
+# Restart the container cleanly: SIGTERM to PID 1 (Apache, via exec in entrypoint).
+# Docker's restart policy brings the container back up with a fresh entrypoint run.
+# apachectl graceful is intentionally avoided — it leaves the container unhealthy.
+echo "[rotate-oidc-key] Passphrase rotated — restarting container ($(date -u +%FT%TZ))"
+kill -TERM 1

@@ -215,6 +215,7 @@ body{font-family:Arial,sans-serif;background:#0d0d1a;color:#ddd;min-height:100vh
   border:1px solid #2a2a4e;border-radius:3px;padding:3px 10px;
   background:#0a0a22;transition:background .15s}
 .topbar-nav a:hover{background:#0f3460;color:#00d4ff}
+.topbar-user{color:#888;font-size:.8em;white-space:nowrap;padding-left:.5em}
 .main{padding:1.2em}
 h2{color:#7ecfff;font-size:1em;margin:0 0 .7em;border-bottom:1px solid #2a2a4e;padding-bottom:.3em}
 table{border-collapse:collapse;width:100%;font-size:.88em}
@@ -270,6 +271,9 @@ function onMacroChange(sel) {
 }
 </script>]]
 
+-- Logged-in user (set in handle() from r.user; used by topbar).
+local ADMIN_REMOTE_USER = ""
+
 -- Use OIDC_COOKIE_DOMAIN (e.g. "example.com") as the authoritative domain.
 -- Fall back to parsing the first sites-admin conf filename if not set.
 local TOC_DOMAIN = os.getenv("OIDC_COOKIE_DOMAIN") or ""
@@ -285,6 +289,9 @@ end
 local function topbar(title)
   local toc_link  = TOC_DOMAIN ~= "" and ("https://toc."    .. TOC_DOMAIN) or "/"
   local logout_link = TOC_DOMAIN ~= "" and ("https://logout." .. TOC_DOMAIN) or "/logout"
+  local user_span = ADMIN_REMOTE_USER ~= ""
+    and ('<span class="topbar-user">' .. h(ADMIN_REMOTE_USER) .. '</span>')
+    or  ''
   return '<div class="topbar">'
     .. '<a class="topbar-title" href="/">\xE2\x9A\x99 ' .. h(title) .. '</a>'
     .. '<div class="topbar-nav">'
@@ -293,6 +300,7 @@ local function topbar(title)
     .. '<a href="' .. h(toc_link) .. '">\xE2\x98\xB0 TOC</a>'
     .. '<a href="' .. h(logout_link) .. '">\xC3\x97 Logout</a>'
     .. '</div>'
+    .. user_span
     .. '</div>'
 end
 
@@ -821,10 +829,15 @@ local function kc_api_get(path, token)
   local base = KC_BASE_URL
   local tmp = os.tmpname()
   io.open(tmp,"w"):write("Authorization: Bearer " .. token):close()
-  local cmd = string.format('curl -s -k -H @%s "%s%s" 2>/dev/null', tmp, base, path)
+  -- Append "\nHTTP_STATUS:NNN" so we can detect non-200 responses.
+  local cmd = string.format(
+    'curl -s -k -H @%s -w "\\nHTTP_STATUS:%%{http_code}" "%s%s" 2>/dev/null',
+    tmp, base, path)
   local p = io.popen(cmd); local out = p:read("*a"); p:close()
   os.remove(tmp)
-  return out
+  local body   = out:gsub("\nHTTP_STATUS:%d+%s*$", "")
+  local status = tonumber(out:match("\nHTTP_STATUS:(%d+)")) or 0
+  return body, status
 end
 
 -- Generic write (POST/PUT/DELETE) against the Keycloak Admin API.
@@ -874,20 +887,36 @@ local function json_arr_flat(s)
 end
 
 -- Fetch all users (max 500, skip service accounts).
+-- Returns (list, nil) on success or (nil, errmsg) on failure.
 local function kc_list_users(token)
-  local all = json_arr_flat(kc_api_get("/users?max=500", token))
+  local raw, status = kc_api_get("/users?max=500", token)
+  if status ~= 200 then
+    local detail = status == 403
+      and " \xE2\x80\x94 Account ben\xC3\xB6tigt manage-users / view-users Rolle in Keycloak"
+      or  ""
+    return nil, "Keycloak /users: HTTP " .. tostring(status) .. detail
+  end
+  local all = json_arr_flat(raw)
   local out = {}
   for _, u in ipairs(all) do
     if not (u.username or ""):match("^service%-account%-") then
       out[#out+1] = u
     end
   end
-  return out
+  return out, nil
 end
 
 -- Fetch all groups (flat list).
+-- Returns (list, nil) on success or (nil, errmsg) on failure.
 local function kc_list_groups(token)
-  return json_arr_flat(kc_api_get("/groups?max=200", token))
+  local raw, status = kc_api_get("/groups?max=200", token)
+  if status ~= 200 then
+    local detail = status == 403
+      and " \xE2\x80\x94 Account ben\xC3\xB6tigt view-groups Rolle in Keycloak"
+      or  ""
+    return nil, "Keycloak /groups: HTTP " .. tostring(status) .. detail
+  end
+  return json_arr_flat(raw), nil
 end
 
 -- Fetch group IDs a user belongs to; returns {id→name} map.
@@ -1013,14 +1042,21 @@ local function show_users(r, msg)
     return
   end
 
-  local users  = kc_list_users(tok)
-  local groups = kc_list_groups(tok)
+  local users,  uerr = kc_list_users(tok)
+  local groups, gerr = kc_list_groups(tok)
+
+  -- Show API errors prominently
+  if uerr then r:puts(msg_html("ERR: " .. uerr)) end
+  if gerr and gerr ~= uerr then r:puts(msg_html("ERR: " .. gerr)) end
+
+  users  = users  or {}
+  groups = groups or {}
 
   -- Users card
   r:puts('<div class="card">')
   r:puts('<h2>Nutzer (' .. #users .. ')</h2>')
   if #users == 0 then
-    r:puts('<p class="dim">Keine Nutzer gefunden.</p>')
+    r:puts('<p class="dim">' .. (uerr and "Keine Daten \xE2\x80\x94 siehe Fehler oben." or "Keine Nutzer gefunden.") .. '</p>')
   else
     r:puts('<table><tr>'
       .. '<th>Benutzername</th><th>E-Mail</th><th>Name</th><th>Gruppen</th><th>Aktionen</th>'
@@ -1056,6 +1092,11 @@ local function show_users(r, msg)
   -- Groups card
   r:puts('<div class="card">')
   r:puts('<h2>Gruppen (' .. #groups .. ')</h2>')
+  if #groups == 0 and gerr then
+    r:puts('<p class="dim">Keine Daten \xE2\x80\x94 siehe Fehler oben.</p></div>')
+    r:puts('</div></body></html>')
+    return
+  end
   r:puts('<table><tr><th>Name</th><th>Typ</th><th>Aktionen</th></tr>')
   for _, g in ipairs(groups) do
     local is_system = KC_PROTECTED_GROUPS[g.name] or false
@@ -1099,7 +1140,9 @@ local function show_user_form(r, uid, pre, msg)
     return
   end
 
-  local all_groups    = kc_list_groups(tok)
+  local all_groups, gerr2 = kc_list_groups(tok)
+  all_groups = all_groups or {}
+  if gerr2 then r:puts(msg_html("ERR: " .. gerr2)) end
   local user_group_ids = {}
   if not is_new then
     user_group_ids = kc_user_group_map(uid, tok)
@@ -2112,6 +2155,7 @@ end
 
 function handle(r)
   r.content_type = "text/html; charset=UTF-8"
+  ADMIN_REMOTE_USER = r.user or ""
 
   local get  = r:parseargs()
   local post = {}
