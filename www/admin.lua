@@ -1198,34 +1198,40 @@ end
 -- uid=nil → new user; uid=string → edit existing.
 local function show_user_form(r, uid, pre, msg)
   local is_new = (uid == nil or uid == "")
-  r:puts(page_head(is_new and "Neuer Nutzer" or "Nutzer bearbeiten"))
-  r:puts('<div class="main"><div class="card">')
-  r:puts('<h2>' .. (is_new and "Neuer Nutzer" or "Nutzer bearbeiten: <code>" .. h((pre or {}).username or "") .. "</code>") .. '</h2>')
-  if msg then r:puts(msg_html(msg)) end
 
+  -- Fetch all data BEFORE writing any HTML to avoid double-page output on error
   if KC_ADMIN_URL == "" then
+    r:puts(page_head(is_new and "Neuer Nutzer" or "Nutzer bearbeiten"))
+    r:puts('<div class="main"><div class="card">')
+    r:puts('<h2>' .. (is_new and "Neuer Nutzer" or "Nutzer bearbeiten") .. '</h2>')
     r:puts('<p class="dim">KEYCLOAK_ADMIN_URL nicht gesetzt.</p></div></div></body></html>')
     return
   end
 
   local tok, terr = kc_token(r)
   if not tok then
-    r:puts('<p class="msg err">Keycloak-Token: ' .. h(terr or "") .. '</p></div></div></body></html>')
+    show_kc_login(r, terr)
     return
   end
 
   local all_groups, gerr2 = kc_list_groups(tok)
   if gerr2 and gerr2:find("401") then
-    r:puts('</div></div></body></html>')
     show_kc_login(r, gerr2)
     return
   end
   all_groups = all_groups or {}
-  if gerr2 then r:puts(msg_html("ERR: " .. gerr2)) end
+
   local user_group_ids = {}
   if not is_new then
     user_group_ids = kc_user_group_map(uid, tok)
   end
+
+  -- Now render the page
+  r:puts(page_head(is_new and "Neuer Nutzer" or "Nutzer bearbeiten"))
+  r:puts('<div class="main"><div class="card">')
+  r:puts('<h2>' .. (is_new and "Neuer Nutzer" or "Nutzer bearbeiten: <code>" .. h((pre or {}).username or "") .. "</code>") .. '</h2>')
+  if msg then r:puts(msg_html(msg)) end
+  if gerr2 then r:puts(msg_html("ERR: " .. gerr2)) end
 
   local p = pre or {}
   local action_url = is_new
