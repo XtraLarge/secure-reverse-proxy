@@ -973,6 +973,7 @@ local function kc_user_group_map(uid, token)
 end
 
 -- Set user's group memberships to exactly the given list of group IDs.
+-- Returns nil on success, error string on first failure.
 local function kc_user_set_groups(uid, desired_ids, token)
   local current = kc_user_group_map(uid, token)
   local desired = {}
@@ -980,13 +981,19 @@ local function kc_user_set_groups(uid, desired_ids, token)
   -- Add new
   for id in pairs(desired) do
     if not current[id] then
-      kc_api_write("PUT", "/users/" .. uid .. "/groups/" .. id, nil, token)
+      local st, rb = kc_api_write("PUT", "/users/" .. uid .. "/groups/" .. id, nil, token)
+      if st ~= 204 then
+        return kc_errmsg(rb) or ("Gruppe setzen fehlgeschlagen: HTTP " .. tostring(st))
+      end
     end
   end
   -- Remove old
   for id in pairs(current) do
     if not desired[id] then
-      kc_api_write("DELETE", "/users/" .. uid .. "/groups/" .. id, nil, token)
+      local st, rb = kc_api_write("DELETE", "/users/" .. uid .. "/groups/" .. id, nil, token)
+      if st ~= 204 then
+        return kc_errmsg(rb) or ("Gruppe entfernen fehlgeschlagen: HTTP " .. tostring(st))
+      end
     end
   end
 end
@@ -1013,7 +1020,7 @@ local function kc_user_create(data, token)
   return found[1].id, nil
 end
 
--- Update user fields (email, firstName, lastName). Does not touch password or groups.
+-- Update user fields (email, firstName, lastName). Returns nil on success, error string on failure.
 local function kc_user_update(uid, data, token)
   local payload = json_enc({
     email     = data.email     or "",
@@ -1021,7 +1028,9 @@ local function kc_user_update(uid, data, token)
     lastName  = data.lastName  or "",
     enabled   = true,
   })
-  return kc_api_write("PUT", "/users/" .. uid, payload, token) == 204
+  local status, rbody = kc_api_write("PUT", "/users/" .. uid, payload, token)
+  if status == 204 then return nil end
+  return kc_errmsg(rbody) or ("Keycloak antwortete mit HTTP " .. tostring(status))
 end
 
 -- Reset a user's password.
@@ -1206,6 +1215,11 @@ local function show_user_form(r, uid, pre, msg)
   end
 
   local all_groups, gerr2 = kc_list_groups(tok)
+  if gerr2 and gerr2:find("401") then
+    r:puts('</div></div></body></html>')
+    show_kc_login(r, gerr2)
+    return
+  end
   all_groups = all_groups or {}
   if gerr2 then r:puts(msg_html("ERR: " .. gerr2)) end
   local user_group_ids = {}
@@ -1333,9 +1347,12 @@ local function do_user_create(r, post)
     id = trim(id)
     if id ~= "" then desired[#desired+1] = id end
   end
-  kc_user_set_groups(uid, desired, tok)
-
-  show_users(r, "OK Nutzer '" .. username .. "' angelegt")
+  local sgerr = kc_user_set_groups(uid, desired, tok)
+  if sgerr then
+    show_users(r, "OK Nutzer angelegt, aber Gruppen nicht gesetzt — " .. sgerr)
+  else
+    show_users(r, "OK Nutzer '" .. username .. "' angelegt")
+  end
 end
 
 local function do_user_save(r, uid, post)
@@ -1345,16 +1362,21 @@ local function do_user_save(r, uid, post)
   local tok, terr = kc_token(r)
   if not tok then return show_kc_login(r, terr) end
 
-  kc_user_update(uid, {
+  local uerr = kc_user_update(uid, {
     email     = trim(post.email     or ""),
     firstName = trim(post.firstName or ""),
     lastName  = trim(post.lastName  or ""),
   }, tok)
+  if uerr then
+    if uerr:find("401") then return show_kc_login(r, uerr) end
+    return show_users(r, "ERR: " .. uerr)
+  end
 
   local pw = post.password or ""
   if pw ~= "" then
     local pwerr = kc_user_reset_pw(uid, pw, tok)
     if pwerr then
+      if pwerr:find("401") then return show_kc_login(r, pwerr) end
       return show_users(r, "ERR: Passwort nicht gesetzt — " .. pwerr)
     end
   end
@@ -1364,7 +1386,11 @@ local function do_user_save(r, uid, post)
     id = trim(id)
     if id ~= "" then desired[#desired+1] = id end
   end
-  kc_user_set_groups(uid, desired, tok)
+  local gerr = kc_user_set_groups(uid, desired, tok)
+  if gerr then
+    if gerr:find("401") then return show_kc_login(r, gerr) end
+    return show_users(r, "ERR: Gruppen nicht gesetzt — " .. gerr)
+  end
 
   show_users(r, "OK Nutzer gespeichert")
 end
