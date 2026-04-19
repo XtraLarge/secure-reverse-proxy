@@ -166,7 +166,7 @@ printf 'OIDCRedisCacheDatabase           %s\n'  "${REDIS_DB}"
 printf 'Include /etc/apache2/conf-runtime/redis-auth.conf\n'
 printf 'OIDCProviderBackChannelLogoutSupported On\n'
 } > "$IAM_ADMIN_OIDC_FILE"
-chmod 600 "$IAM_ADMIN_OIDC_FILE"
+chmod 644 "$IAM_ADMIN_OIDC_FILE"
 log "Generated iam-admin-oidc.conf (redirect URI: https://iam.${OIDC_COOKIE_DOMAIN}${OIDC_REDIRECT_PATH})"
 
 # ── Generate per-domain OIDC client credential files ─────────────────────────
