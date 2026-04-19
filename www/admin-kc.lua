@@ -33,6 +33,11 @@
 
 local KC_URL    = os.getenv("KEYCLOAK_ADMIN_URL") or ""
 local KC_PREFIX = os.getenv("KEYCLOAK_ROLE_PREFIX") or ""
+local KC_LOGOUT_URL = (function()
+  local meta = os.getenv("OIDC_PROVIDER_METADATA_URL") or ""
+  return meta:gsub("/.well%-known/openid%-configuration$", "/protocol/openid-connect/logout")
+end)()
+local KC_CLIENT_ID_KC = os.getenv("OIDC_CLIENT_ID") or ""
 
 -- ── Minimal JSON decoder ──────────────────────────────────────────────────────
 -- Handles all structures returned by the Keycloak Admin API
@@ -381,7 +386,9 @@ local function show_user_list(r, token, msg)
   r:puts(msg_html(msg))
 
   -- API access error
-  local logout_link = TOC_DOMAIN ~= "" and ("https://logout." .. TOC_DOMAIN) or "/logout"
+  local _redir_kc = TOC_DOMAIN ~= "" and ("https://admin." .. TOC_DOMAIN .. "/admin-kc.lua") or "/admin-kc.lua"
+  local _cid_kc   = TOC_DOMAIN ~= "" and ("proxy-" .. TOC_DOMAIN) or KC_CLIENT_ID_KC
+  local logout_link = KC_LOGOUT_URL ~= "" and (KC_LOGOUT_URL .. "?post_logout_redirect_uri=" .. ue(_redir_kc) .. "&client_id=" .. ue(_cid_kc)) or _redir_kc
   if status == 403 then
     r:puts('<div class="card" style="border-color:#3a3a00">'
       .. '<h2 style="color:#ffee66;border-color:#3a3a00">Keycloak-Nutzerverwaltung nicht verf\xC3\xBCgbar</h2>'

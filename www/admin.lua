@@ -31,6 +31,7 @@ local KC_TOKEN_URL = (function()
   return meta:gsub("/.well%-known/openid%-configuration$",
                    "/protocol/openid-connect/token")
 end)()
+local KC_LOGOUT_URL = KC_TOKEN_URL:gsub("/token$", "/logout")
 
 local MACRO_TYPES = {
   "VHost_Proxy",
@@ -49,6 +50,12 @@ end
 
 local function trim(s)
   return (tostring(s or "")):match("^%s*(.-)%s*$")
+end
+
+local function ue(s)
+  return tostring(s or ""):gsub("([^A-Za-z0-9_%.~%-])", function(c)
+    return string.format("%%%02X", string.byte(c))
+  end)
 end
 
 local function is_vhost_line(line)
@@ -1037,7 +1044,10 @@ local function show_kc_login(r, errmsg)
   r:puts('<p>Bitte abmelden und mit einem Account mit <code>manage-users</code>-Rolle '
     .. 'neu anmelden.</p>')
   r:puts('<div class="applybar">')
-  r:puts('<a class="btn b-del" href="/?logout">Abmelden &amp; neu einloggen</a>')
+  local _redir = TOC_DOMAIN ~= "" and ("https://admin." .. TOC_DOMAIN .. "/?action=users") or "/?action=users"
+  local _cid   = TOC_DOMAIN ~= "" and kc_client_id(TOC_DOMAIN) or KC_CLIENT_ID
+  local _lo = KC_LOGOUT_URL ~= "" and (KC_LOGOUT_URL .. "?post_logout_redirect_uri=" .. ue(_redir) .. "&client_id=" .. ue(_cid)) or _redir
+  r:puts('<a class="btn b-del" href="' .. h(_lo) .. '">Abmelden &amp; neu einloggen</a>')
   r:puts('</div></div></div></body></html>')
 end
 
@@ -1073,7 +1083,9 @@ local function show_users(r, msg)
   local is403 = (uerr and uerr:find("HTTP 403")) or (gerr and gerr:find("HTTP 403"))
   local is401 = (uerr and uerr:find("HTTP 401")) or (gerr and gerr:find("HTTP 401"))
   if is403 or is401 then
-    local logout_link = TOC_DOMAIN ~= "" and ("https://logout." .. TOC_DOMAIN) or "/logout"
+    local _redir2 = TOC_DOMAIN ~= "" and ("https://admin." .. TOC_DOMAIN .. "/?action=users") or "/?action=users"
+    local _cid2   = TOC_DOMAIN ~= "" and kc_client_id(TOC_DOMAIN) or KC_CLIENT_ID
+    local logout_link = KC_LOGOUT_URL ~= "" and (KC_LOGOUT_URL .. "?post_logout_redirect_uri=" .. ue(_redir2) .. "&client_id=" .. ue(_cid2)) or _redir2
     local msg = is403
       and '<p style="margin:.5em 0">Das angemeldete Konto hat keine Berechtigung, die Keycloak-Nutzerliste abzurufen.</p>'
        .. '<p style="margin:.5em 0 1em">Bitte melden Sie sich ab und erneut mit einem Administrator-Konto an, oder wenden Sie sich an den Systemadministrator.</p>'
@@ -1571,7 +1583,8 @@ local function kc_create_client(domain, token)
     serviceAccountsEnabled = false,
     redirectUris           = { "https://*." .. domain .. "/protected" },
     webOrigins             = { "https://*." .. domain },
-    attributes             = { ["post.logout.redirect.uris"] = "https://logout." .. domain .. "/*" },
+    attributes             = { ["post.logout.redirect.uris"] = "https://logout." .. domain .. "/*"
+                               .. (TOC_DOMAIN ~= "" and ("##https://admin." .. TOC_DOMAIN .. "/*") or "") },
   })
   io.open(tmp_b,"w"):write(body):close()
 
