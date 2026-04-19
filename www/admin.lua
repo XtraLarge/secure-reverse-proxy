@@ -279,6 +279,22 @@ function onMacroChange(sel) {
 }
 </script>]]
 
+-- Debug mode: set LUA_DEBUG=1 in proxy.env to enable, remove to disable.
+local DEBUG = os.getenv("LUA_DEBUG") == "1"
+local function dbg(r, label, value)
+  if not DEBUG then return end
+  local s
+  if type(value) == "table" then
+    local t = {}
+    for k, v in pairs(value) do t[#t+1] = tostring(k) .. "=" .. tostring(v) end
+    s = "{" .. table.concat(t, ", ") .. "}"
+  else
+    s = tostring(value)
+  end
+  r:puts('<pre style="background:#111;color:#ff0;padding:.5em;margin:.3em 0">'
+    .. '[DEBUG] ' .. h(label) .. ': ' .. h(s) .. '</pre>')
+end
+
 -- Logged-in user (set in handle() from r.user; used by topbar).
 local ADMIN_REMOTE_USER = ""
 
@@ -2157,6 +2173,7 @@ local function do_htpasswd_set(r, post)
     else                   show_htpasswd(r, "ERR: " .. msg) end
   end
 
+  dbg(r, "htpasswd_set", {username=username, mode=mode})
   if not validate_htpasswd_user(username) then return err("Ung\xC3\xBCltiger Benutzername") end
   if password == ""           then return err("Passwort darf nicht leer sein") end
   if password ~= confirm      then return err("Passw\xC3\xB6rter stimmen nicht \xC3\xBCberein") end
@@ -2185,7 +2202,12 @@ function handle(r)
   local post = {}
   if r.method == "POST" then
     local _, body = r:parsebody(1024 * 64)
-    if type(body) == "table" then post = body end
+    if type(body) == "table" then
+      for k, v in pairs(body) do
+        post[k] = type(v) == "table" and v[1] or v
+      end
+    end
+    dbg(r, "parsebody", post)
   end
 
   -- Merge: GET params take precedence for routing, POST for data
