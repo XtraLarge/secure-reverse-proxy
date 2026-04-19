@@ -1051,9 +1051,20 @@ local function show_users(r, msg)
   local users,  uerr = kc_list_users(tok)
   local groups, gerr = kc_list_groups(tok)
 
-  -- Show API errors prominently
-  if uerr then r:puts(msg_html("ERR: " .. uerr)) end
-  if gerr and gerr ~= uerr then r:puts(msg_html("ERR: " .. gerr)) end
+  -- Show API errors prominently; 401 gets a user-friendly card
+  local is401 = (uerr and uerr:find("HTTP 401")) or (gerr and gerr:find("HTTP 401"))
+  if is401 then
+    local logout_link = TOC_DOMAIN ~= "" and ("https://logout." .. TOC_DOMAIN) or "/logout"
+    r:puts('<div class="card" style="border-color:#3a3a00">'
+      .. '<h2 style="color:#ffee66;border-color:#3a3a00">Keycloak-Nutzerverwaltung nicht verf\xC3\xBCgbar</h2>'
+      .. '<p style="margin:.5em 0">Das angemeldete Konto hat keine Berechtigung, die Keycloak-Nutzerliste abzurufen.</p>'
+      .. '<p style="margin:.5em 0 1em">Bitte melden Sie sich ab und erneut mit einem Administrator-Konto an, oder wenden Sie sich an den Systemadministrator.</p>'
+      .. '<a class="btn b-warn" href="' .. h(logout_link) .. '">Abmelden</a>'
+      .. '</div>')
+  else
+    if uerr then r:puts(msg_html("ERR: " .. uerr)) end
+    if gerr and gerr ~= uerr then r:puts(msg_html("ERR: " .. gerr)) end
+  end
 
   users  = users  or {}
   groups = groups or {}
