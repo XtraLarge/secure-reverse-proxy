@@ -1052,7 +1052,8 @@ local function show_users(r, msg)
   local groups, gerr = kc_list_groups(tok)
 
   -- Show API errors prominently; 401 gets a user-friendly card
-  local is401 = (uerr and uerr:find("HTTP 401")) or (gerr and gerr:find("HTTP 401"))
+  local is401 = (uerr and (uerr:find("HTTP 401") or uerr:find("HTTP 403")))
+             or (gerr and (gerr:find("HTTP 401") or gerr:find("HTTP 403")))
   if is401 then
     local logout_link = TOC_DOMAIN ~= "" and ("https://logout." .. TOC_DOMAIN) or "/logout"
     r:puts('<div class="card" style="border-color:#3a3a00">'
