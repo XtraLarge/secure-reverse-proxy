@@ -304,7 +304,6 @@ local function topbar(title)
     .. '<div class="topbar-nav">'
     .. '<a href="/?action=users">\xF0\x9F\x91\xA4 OIDC Auth</a>'
     .. '<a href="/?action=htpasswd">\xF0\x9F\x94\x91 Basic Auth</a>'
-    .. '<a href="' .. h(toc_link) .. '">\xE2\x98\xB0 TOC</a>'
     .. '</div>'
     .. user_block
     .. '</div>'
@@ -351,6 +350,8 @@ local function show_list(r, msg)
 
   r:puts('<div class="main">')
   r:puts('<div class="applybar">')
+  local toc_back = TOC_DOMAIN ~= "" and ("https://toc." .. TOC_DOMAIN) or "/"
+  r:puts('<a class="btn b-cancel" href="' .. h(toc_back) .. '">\xE2\x86\x90 TOC</a>')
   r:puts('<form method="POST" action="/?action=apply">')
   r:puts('<button class="btn b-apply" type="submit">&#9654;&nbsp;Konfiguration anwenden</button>')
   r:puts('</form>')
