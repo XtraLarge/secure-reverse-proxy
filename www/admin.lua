@@ -417,19 +417,15 @@ local function show_list(r, msg)
   if msg then r:puts(msg_html(msg)) end
 
   r:puts('<div class="main">')
-  if has_pending_reload() then
-    r:puts('<div style="background:#3a3a00;border:1px solid #666600;border-radius:6px;'
-      .. 'padding:.6em 1em;margin-bottom:1em;display:flex;align-items:center;gap:1em">')
-    r:puts('<span style="color:#ffee66;font-size:.95em">'
-      .. '\xE2\x9A\xA0\xEF\xB8\x8F  Nicht angewendete \xC3\x84nderungen — Konfiguration ist noch nicht aktiv.</span>')
-    r:puts('</div>')
-  end
   r:puts('<div class="applybar">')
   r:puts('<a class="btn b-add" href="/?action=domain_new">+ Neue Domain</a>')
-  r:puts('<span class="dim">\xC3\x84nderungen erst nach "Anwenden" aktiv (graceful reload)</span>')
-  r:puts('<form method="POST" action="/?action=apply" style="margin-left:auto">')
-  r:puts('<button class="btn b-apply" type="submit">&#9654;&nbsp;Konfiguration anwenden</button>')
-  r:puts('</form>')
+  if has_pending_reload() then
+    r:puts('<span style="color:#ffee66;font-size:.9em">'
+      .. '\xE2\x9A\xA0\xEF\xB8\x8F  Nicht angewendete \xC3\x84nderungen</span>')
+    r:puts('<form method="POST" action="/?action=apply" style="margin-left:auto">')
+    r:puts('<button class="btn b-apply" type="submit">&#9654;&nbsp;Konfiguration anwenden</button>')
+    r:puts('</form>')
+  end
   r:puts('</div>')
 
   r:puts('<div class="card" style="padding:.5em 1em;margin-bottom:.5em">'
