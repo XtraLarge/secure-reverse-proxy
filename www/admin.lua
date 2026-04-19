@@ -1374,7 +1374,7 @@ local function do_user_save(r, uid, post)
     lastName  = trim(post.lastName  or ""),
   }, tok)
   if uerr then
-    if uerr:find("401") then return show_kc_login(r, uerr) end
+    if uerr:find("401") then return show_users(r, nil) end
     return show_users(r, "ERR: " .. uerr)
   end
 
@@ -1382,7 +1382,7 @@ local function do_user_save(r, uid, post)
   if pw ~= "" then
     local pwerr = kc_user_reset_pw(uid, pw, tok)
     if pwerr then
-      if pwerr:find("401") then return show_kc_login(r, pwerr) end
+      if pwerr:find("401") then return show_users(r, nil) end
       return show_users(r, "ERR: Passwort nicht gesetzt — " .. pwerr)
     end
   end
@@ -1394,7 +1394,7 @@ local function do_user_save(r, uid, post)
   end
   local gerr = kc_user_set_groups(uid, desired, tok)
   if gerr then
-    if gerr:find("401") then return show_kc_login(r, gerr) end
+    if gerr:find("401") then return show_users(r, nil) end
     return show_users(r, "ERR: Gruppen nicht gesetzt — " .. gerr)
   end
 
