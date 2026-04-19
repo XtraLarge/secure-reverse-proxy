@@ -750,12 +750,13 @@ end
 -- ── Apply (POST) ──────────────────────────────────────────────────────────────
 
 local function do_apply(r)
-  -- apache2ctl graceful sends SIGUSR1 to the running master process
-  local ret = os.execute("/usr/sbin/apache2ctl graceful 2>/dev/null")
+  -- Send SIGUSR1 directly to PID 1 (Apache master) for a graceful reload.
+  -- apache2ctl graceful is intentionally avoided — it leaves the container unhealthy.
+  local ret = os.execute("kill -USR1 1 2>/dev/null")
   if ret == 0 or ret == true then
-    show_list(r, "OK: Apache graceful reload ausgeführt")
+    show_list(r, "OK: Apache graceful reload ausgef\xC3\xBCh\x72t")
   else
-    show_list(r, "ERR: apache2ctl graceful fehlgeschlagen (Code: " .. tostring(ret) .. ")")
+    show_list(r, "ERR: Graceful reload fehlgeschlagen (Code: " .. tostring(ret) .. ")")
   end
 end
 
@@ -1902,7 +1903,7 @@ local function do_kc_create(r, domain)
   end
 
   -- Graceful reload so Apache picks up the new IncludeOptional file
-  os.execute("apache2ctl graceful 2>/dev/null")
+  os.execute("kill -USR1 1 2>/dev/null")
 
   show_list(r, "OK Keycloak-Client '" .. kc_client_id(domain) .. "' angelegt und aktiviert")
 end
@@ -1941,7 +1942,7 @@ local function do_kc_rotate(r, domain)
   if not ok then
     return show_list(r, "ERR Conf-Datei schreiben: " .. (werr or ""))
   end
-  os.execute("apache2ctl graceful 2>/dev/null")
+  os.execute("kill -USR1 1 2>/dev/null")
   show_list(r, "OK Secret f\xC3\xBCr '" .. kc_client_id(domain) .. "' rotiert und aktiviert")
 end
 
