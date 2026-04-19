@@ -395,6 +395,38 @@ fi
 sleep 0.3   # give rsyslog time to create /dev/log before Apache starts
 log "rsyslog started"
 
+# ── Fix volume-mount permissions for www-data ─────────────────────────────────
+# Volume mounts arrive as root:root. Apache (www-data) needs write access to
+# specific paths. We fix ownership here at startup so admin.lua can write
+# without manual intervention on the host.
+_fix_owner() {
+    local path="$1" desc="$2"
+    [[ -e "$path" ]] || return 0
+    if chown -R www-data:www-data "$path" 2>/dev/null; then
+        log "Permissions OK: ${desc} → www-data"
+    else
+        log "WARNING: could not set ownership for ${desc} (${path}) — admin writes may fail"
+    fi
+}
+_check_writable() {
+    local path="$1" desc="$2"
+    [[ -e "$path" ]] || return 0
+    if ! su -s /bin/sh www-data -c "test -w '$path'" 2>/dev/null; then
+        log "WARNING: ${desc} (${path}) is not writable by www-data — admin writes will fail"
+    fi
+}
+
+# basic.htpasswd — htpasswd command runs as www-data, needs write access
+_fix_owner  "/etc/apache2/basic.htpasswd" "basic.htpasswd"
+# AddOn/ — admin.lua creates/updates preconfig|postconfig snippets
+_fix_owner  "/etc/apache2/AddOn"          "AddOn/"
+# sites-admin/ — admin.lua reads and writes VHost conf files
+_fix_owner  "/etc/apache2/sites-admin"    "sites-admin/"
+# Verify after fix
+_check_writable "/etc/apache2/basic.htpasswd" "basic.htpasswd"
+_check_writable "/etc/apache2/AddOn"          "AddOn/"
+_check_writable "/etc/apache2/sites-admin"    "sites-admin/"
+
 # ── Validate Apache config ────────────────────────────────────────────────────
 log "Testing Apache configuration..."
 apache2ctl configtest || die "Apache config test failed — check your site configs and env vars"
