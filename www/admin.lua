@@ -628,7 +628,7 @@ local function show_form(r, fname, lineno, pre, errmsg)
   if #ht_users > 0 then
     r:puts('<select multiple size=6 id=sel_basic_users style="' .. sel_style .. '">')
     for _, u in ipairs(ht_users) do
-      local s = pre_sel[u] and ' selected' or ''
+      local s = pre_sel_users[u] and ' selected' or ''
       r:puts('<option value="' .. h(u) .. '"' .. s .. '>' .. h(u) .. '</option>')
     end
     r:puts('</select>')
