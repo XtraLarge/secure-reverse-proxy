@@ -36,8 +36,8 @@ local KC_LOGOUT_URL = KC_TOKEN_URL:gsub("/token$", "/logout")
 local MACRO_TYPES = {
   "VHost_Proxy",
   "VHost_Proxy_OIDC_User",
-  "VHost_Proxy_OIDC_User_Any",
-  "VHost_Proxy_OIDC_User_Group",
+  "VHost_Proxy_OIDC_Any",
+  "VHost_Proxy_OIDC_Group",
   "VHost_Proxy_Basic",
   "VHost_Alias",
 }
