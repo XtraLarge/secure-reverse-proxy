@@ -227,6 +227,10 @@ body{font-family:Arial,sans-serif;background:#0d0d1a;color:#ddd;min-height:100vh
   border:1px solid #2a2a4e;border-radius:3px;padding:3px 10px;
   background:#0a0a22;transition:background .15s}
 .topbar-nav a:hover,.topbar-nav a.active{background:#0f3460;color:#00d4ff}
+.topbar-user-block{display:flex;flex-direction:column;align-items:flex-end;gap:.15em;line-height:1.3;margin-left:.7em}
+.topbar-user{color:#aaa;font-size:.85em;font-family:Arial,sans-serif;white-space:nowrap}
+.topbar-logout{color:#666;font-size:.75em;text-decoration:none;white-space:nowrap}
+.topbar-logout:hover{color:#ff9999}
 .main{padding:1.2em;max-width:1100px}
 h2{color:#7ecfff;font-size:1em;margin:0 0 .6em;border-bottom:1px solid #2a2a4e;padding-bottom:.3em}
 h3{color:#aaa;font-size:.9em;margin:.8em 0 .4em;font-weight:normal}
@@ -272,6 +276,9 @@ input[type=search],input[type=text].search{background:#060614;color:#ddd;
 code{background:#060614;color:#aaa;padding:1px 5px;border-radius:2px;font-size:.85em}
 </style>]]
 
+-- Logged-in user (set in handle() from r.user)
+local REMOTE_USER = ""
+
 -- Detect the domain from config files (for TOC/Logout links in topbar)
 local TOC_DOMAIN = ""
 do
@@ -290,15 +297,22 @@ local function topbar(active)
     local cls = active == key and ' class="active"' or ''
     return '<a href="' .. href .. '"' .. cls .. '>' .. label .. '</a>'
   end
+  local user_block = REMOTE_USER ~= ""
+    and ('<div class="topbar-user-block">'
+      .. '<span class="topbar-user">' .. h(REMOTE_USER) .. '</span>'
+      .. '<a class="topbar-logout" href="' .. h(out) .. '">\xC3\x97 Logout</a>'
+      .. '</div>')
+    or ('<div class="topbar-nav">' .. nav(h(out), "\xC3\x97 Logout", "logout") .. '</div>')
   return '<div class="topbar">'
     .. '<a class="topbar-title" href="/admin-kc.lua">\xF0\x9F\x91\xA4 Keycloak Benutzer</a>'
     .. '<div class="topbar-nav">'
-    .. nav("/admin-kc.lua",         "\xF0\x9F\x91\xA5 Benutzerliste",   "list")
-    .. nav("/admin-kc.lua?action=new", "+ Neuer Benutzer",                "new")
-    .. nav("/",                     "\xE2\x9A\x99 VHosts",              "vhosts")
-    .. nav(h(toc),                  "\xE2\x98\xB0 TOC",                 "toc")
-    .. nav(h(out),                  "\xC3\x97 Logout",                  "logout")
-    .. '</div></div>'
+    .. nav("/admin-kc.lua",            "\xF0\x9F\x91\xA5 Benutzerliste", "list")
+    .. nav("/admin-kc.lua?action=new", "+ Neuer Benutzer",               "new")
+    .. nav("/",                        "\xE2\x9A\x99 VHosts",            "vhosts")
+    .. nav(h(toc),                     "\xE2\x98\xB0 TOC",               "toc")
+    .. '</div>'
+    .. user_block
+    .. '</div>'
 end
 
 local function page_head(title, active)
@@ -771,6 +785,7 @@ end
 
 function handle(r)
   r.content_type = "text/html; charset=utf-8"
+  REMOTE_USER = r.user or ""
 
   -- Configuration check
   if KC_URL == "" then
