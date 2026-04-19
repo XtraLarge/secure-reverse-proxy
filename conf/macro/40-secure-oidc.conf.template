@@ -146,14 +146,14 @@
   </Location>
 </Macro>
 
-# VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS)
+# VHost_Proxy_OIDC_User $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS)
 # Full vhost with OIDC auth + reverse proxy.
 # Only users matching $(USERS) (pipe-separated, case-insensitive regex) are allowed.
 #
 # Examples:
-#   Use VHost_Proxy_OIDC  mgmt  example.com  http://10.0.0.6:9000/  'alice|bob'
-#   Use VHost_Proxy_OIDC  dms   example.com  http://10.0.0.7:8000/  'alice'
-<Macro VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS)>
+#   Use VHost_Proxy_OIDC_User  mgmt  example.com  http://10.0.0.6:9000/  'alice|bob'
+#   Use VHost_Proxy_OIDC_User  dms   example.com  http://10.0.0.7:8000/  'alice'
+<Macro VHost_Proxy_OIDC_User $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS)>
   <VirtualHost *:80>
     ServerName $(SITENAME).$(DOMAINNAME)
     USE LOGGING $(SITENAME) $(DOMAINNAME)
@@ -174,15 +174,15 @@
   </VirtualHost>
 </Macro>
 
-# VHost_Proxy_OIDC_Any $(SITENAME) $(DOMAINNAME) $(DESTINATION)
+# VHost_Proxy_OIDC_User_Any $(SITENAME) $(DOMAINNAME) $(DESTINATION)
 # Full vhost with OIDC auth + reverse proxy.
 # Any authenticated user is allowed (GeoIP still applies).
 # Use this only when you intentionally want to allow all OIDC users;
-# for most cases VHost_Proxy_OIDC with an explicit user list is preferred.
+# for most cases VHost_Proxy_OIDC_User with an explicit user list is preferred.
 #
 # Example:
-#   Use VHost_Proxy_OIDC_Any  monitor  example.com  http://10.0.0.5:3000/
-<Macro VHost_Proxy_OIDC_Any $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
+#   Use VHost_Proxy_OIDC_User_Any  monitor  example.com  http://10.0.0.5:3000/
+<Macro VHost_Proxy_OIDC_User_Any $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
   <VirtualHost *:80>
     ServerName $(SITENAME).$(DOMAINNAME)
     USE LOGGING $(SITENAME) $(DOMAINNAME)
@@ -245,14 +245,14 @@
   </Location>
 </Macro>
 
-# VHost_Proxy_OIDC_Group $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(GROUP)
+# VHost_Proxy_OIDC_User_Group $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(GROUP)
 # Full vhost with OIDC auth + reverse proxy.
 # Only members of group $(GROUP) (pipe-separated, case-insensitive regex) are allowed.
 #
 # Examples:
-#   Use VHost_Proxy_OIDC_Group  wiki   example.com  http://10.0.0.8:3000/  'editors'
-#   Use VHost_Proxy_OIDC_Group  admin  example.com  http://10.0.0.9:8080/  'admins|superusers'
-<Macro VHost_Proxy_OIDC_Group $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(GROUP)>
+#   Use VHost_Proxy_OIDC_User_Group  wiki   example.com  http://10.0.0.8:3000/  'editors'
+#   Use VHost_Proxy_OIDC_User_Group  admin  example.com  http://10.0.0.9:8080/  'admins|superusers'
+<Macro VHost_Proxy_OIDC_User_Group $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(GROUP)>
   <VirtualHost *:80>
     ServerName $(SITENAME).$(DOMAINNAME)
     USE LOGGING $(SITENAME) $(DOMAINNAME)

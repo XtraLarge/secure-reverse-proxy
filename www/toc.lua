@@ -522,7 +522,7 @@ function parse(line)
 #  1         2            3                  4            5                              6
 # Use VHost_Alias       logoff            example.com  logout.example.com               ''
 # Use VHost_Proxy       myapp             example.com  https://10.0.0.1:8006/           'alice'
-# Use VHost_Proxy_OIDC  app1              example.com  http://10.0.0.2:8080/            'alice|bob'
+# Use VHost_Proxy_OIDC_User  app1              example.com  http://10.0.0.2:8080/            'alice|bob'
 # Use VHost_Proxy_Basic cam               example.com  http://10.0.0.3:10090/           'alice|bob'
 ##
 # Frame end
