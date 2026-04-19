@@ -617,7 +617,10 @@ body{font-family:Arial,sans-serif;background:#0d0d1a;color:#ddd;min-height:100vh
   border:1px solid #2a2a4e;border-radius:3px;padding:3px 10px;
   background:#0a0a22;transition:background .15s}
 .topbar-nav a:hover{background:#0f3460;color:#00d4ff}
-.topbar-user{color:#888;font-size:.8em}
+.topbar-user-block{display:flex;flex-direction:column;align-items:flex-end;gap:.15em;line-height:1.3}
+.topbar-user{color:#aaa;font-size:.85em;font-family:Arial,sans-serif;white-space:nowrap}
+.topbar-logout{color:#666;font-size:.75em;text-decoration:none;white-space:nowrap}
+.topbar-logout:hover{color:#ff9999}
 .main{padding:1em 1.2em}
 h1{color:#00d4ff;font-size:1.15em;margin-bottom:.8em}
 #XLTab{border-collapse:collapse;width:100%;font-size:.85em}
@@ -678,9 +681,11 @@ window.onload = function() {
     "  <div class=\"topbar-right\">\n" ..
     "    <div class=\"topbar-nav\">\n" ..
     ADMINLINK ..
-    "      <a href=\"https://logout." .. (DOMAIN or "") .. "\">&#x2715; Logout</a>\n" ..
     "    </div>\n" ..
-    "    <span class=\"topbar-user\">" .. REMOTE_USER .. "</span>\n" ..
+    "    <div class=\"topbar-user-block\">\n" ..
+    "      <span class=\"topbar-user\">" .. REMOTE_USER .. "</span>\n" ..
+    "      <a class=\"topbar-logout\" href=\"https://logout." .. (DOMAIN or "") .. "\">&#x2715; Logout</a>\n" ..
+    "    </div>\n" ..
     "  </div>\n" ..
     "</div>\n" ..
     "<div class=\"main\">\n" ..
