@@ -509,7 +509,7 @@ local function show_form(r, fname, lineno, pre, errmsg)
     end
   end
 
-  r:puts(page_head(title))
+  r:puts(page_head(title, "/"))
   r:puts('<div class="main"><div class="card">')
   r:puts('<h2>' .. title .. ' — ' .. h(fname) .. '</h2>')
   if errmsg then r:puts(msg_html("ERR: " .. errmsg)) end
@@ -764,7 +764,7 @@ end
 -- pre_override / post_override: when not nil, these override what's read from disk
 -- (used to redisplay attempted content after a failed configtest)
 local function show_addon_form(r, name, domain, errmsg, testout, pre_override, post_override)
-  r:puts(page_head("AddOn: " .. name .. "." .. domain))
+  r:puts(page_head("AddOn: " .. name .. "." .. domain, "/"))
   r:puts('<div class="main"><div class="card">')
   r:puts('<h2>AddOn-Konfiguration — <code>' .. h(name) .. '.' .. h(domain) .. '</code></h2>')
   r:puts('<p style="color:#888;font-size:.85em;margin-bottom:.8em">'
@@ -2143,7 +2143,7 @@ end
 -- ── VHost config view ────────────────────────────────────────────────────────
 local function show_vhost_config_view(r, name, domain, rawline)
   local vhost_fqdn = name .. "." .. domain
-  r:puts(page_head("Config: " .. vhost_fqdn))
+  r:puts(page_head("Config: " .. vhost_fqdn, "/"))
   r:puts('<div class="main"><div class="card">')
   r:puts('<h2>Konfiguration — <code>' .. h(vhost_fqdn) .. '</code></h2>')
 
