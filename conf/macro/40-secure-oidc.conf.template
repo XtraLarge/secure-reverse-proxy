@@ -273,7 +273,7 @@
   </VirtualHost>
 </Macro>
 
-# VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION)
+<Macro VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
   <VirtualHost *:80>
     ServerName $(SITENAME).$(DOMAINNAME)
     USE LOGGING $(SITENAME) $(DOMAINNAME)
