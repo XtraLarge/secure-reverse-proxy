@@ -221,6 +221,10 @@ body{font-family:Arial,sans-serif;background:#0d0d1a;color:#ddd;min-height:100vh
 .topbar{display:flex;align-items:center;justify-content:space-between;
   background:#060614;border-bottom:1px solid #2a2a4e;
   padding:.6em 1.2em;flex-wrap:wrap;gap:.5em}
+.topbar-back{color:#7ecfff;text-decoration:none;font-size:.85em;
+  border:1px solid #2a2a4e;border-radius:3px;padding:3px 10px;
+  background:#0a0a22;margin-right:.3em;transition:background .15s}
+.topbar-back:hover{background:#0f3460;color:#00d4ff}
 .topbar-title{color:#00d4ff;font-size:1.1em;font-weight:bold;text-decoration:none}
 .topbar-nav{display:flex;gap:.5em}
 .topbar-nav a{color:#7ecfff;text-decoration:none;font-size:.85em;
@@ -304,12 +308,11 @@ local function topbar(active)
       .. '</div>')
     or ('<div class="topbar-nav">' .. nav(h(out), "\xC3\x97 Logout", "logout") .. '</div>')
   return '<div class="topbar">'
+    .. '<a class="topbar-back" href="/">\xE2\x86\x90 Zur\xC3\xBC\x63k</a>'
     .. '<a class="topbar-title" href="/admin-kc.lua">\xF0\x9F\x91\xA4 Keycloak Benutzer</a>'
     .. '<div class="topbar-nav">'
     .. nav("/admin-kc.lua",            "\xF0\x9F\x91\xA5 Benutzerliste", "list")
     .. nav("/admin-kc.lua?action=new", "+ Neuer Benutzer",               "new")
-    .. nav("/",                        "\xE2\x9A\x99 VHosts",            "vhosts")
-    .. nav(h(toc),                     "\xE2\x98\xB0 TOC",               "toc")
     .. '</div>'
     .. user_block
     .. '</div>'
