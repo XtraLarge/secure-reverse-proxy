@@ -16,4 +16,3 @@ OIDCCryptoPassphrase ${OIDC_CRYPTO_PASSPHRASE}
 # and embedded devices (e.g. NETIO-230B) crash on oversized requests.
 # Sites that explicitly need header-based claims can override this per-VHost.
 OIDCPassClaimsAs environment
-OIDCPassAccessToken On
