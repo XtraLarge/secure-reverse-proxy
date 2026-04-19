@@ -2075,19 +2075,27 @@ local function htpasswd_list_users()
   return users
 end
 
--- Set or update a user's password via htpasswd (bcrypt, password via stdin).
+-- Set or update a user's password via htpasswd (bcrypt).
+-- Password is passed via a tmpfile redirect so stderr/stdout can be captured.
 -- Returns nil on success, error string on failure.
 local function htpasswd_set(username, password)
   if not validate_htpasswd_user(username) then return "Ungültiger Benutzername" end
   if not password or password == "" then return "Passwort darf nicht leer sein" end
+  local tmp = os.tmpname()
+  local f = io.open(tmp, "w")
+  if not f then return "Temporäre Datei konnte nicht erstellt werden" end
+  f:write(password .. "\n"); f:close()
   local create = fexists(HTPASSWD_FILE) and "" or " -c"
-  local cmd = string.format("htpasswd -B -i%s %s %s 2>&1",
-    create, HTPASSWD_FILE, username)
-  local p = io.popen(cmd, "w")
-  if not p then return "htpasswd konnte nicht ausgeführt werden" end
-  p:write(password .. "\n")
-  local ok, _, code = p:close()
-  if not ok then return "htpasswd fehlgeschlagen (exit " .. tostring(code or "?") .. ")" end
+  local cmd = string.format("htpasswd -B -i%s %s %s < %s 2>&1",
+    create, HTPASSWD_FILE, username, tmp)
+  local p = io.popen(cmd)
+  local out = p and p:read("*a") or ""
+  local ok, _, code = p and p:close()
+  os.remove(tmp)
+  if not ok then
+    local detail = trim(out) ~= "" and (": " .. trim(out)) or ""
+    return "htpasswd fehlgeschlagen (exit " .. tostring(code or "?") .. ")" .. detail
+  end
   return nil
 end
 
@@ -2100,8 +2108,11 @@ local function htpasswd_del(username)
   local p = io.popen(cmd)
   if not p then return "htpasswd konnte nicht ausgeführt werden" end
   local out = p:read("*a")
-  local ok = p:close()
-  if not ok then return trim(out) ~= "" and trim(out) or "Fehler beim Löschen" end
+  local ok, _, code = p:close()
+  if not ok then
+    local detail = trim(out) ~= "" and (": " .. trim(out)) or ""
+    return "htpasswd fehlgeschlagen (exit " .. tostring(code or "?") .. ")" .. detail
+  end
   return nil
 end
 
