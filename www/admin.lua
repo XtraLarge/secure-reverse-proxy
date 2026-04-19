@@ -1051,14 +1051,19 @@ local function show_users(r, msg)
   local users,  uerr = kc_list_users(tok)
   local groups, gerr = kc_list_groups(tok)
 
-  -- 403 = fehlende Keycloak-Rolle → Infokarte; 401 = unerwartetes Auth-Problem → ERR sichtbar lassen
+  -- 403/401 = Infokarte; sonstige Fehler → ERR sichtbar lassen
   local is403 = (uerr and uerr:find("HTTP 403")) or (gerr and gerr:find("HTTP 403"))
-  if is403 then
+  local is401 = (uerr and uerr:find("HTTP 401")) or (gerr and gerr:find("HTTP 401"))
+  if is403 or is401 then
     local logout_link = TOC_DOMAIN ~= "" and ("https://logout." .. TOC_DOMAIN) or "/logout"
+    local msg = is403
+      and '<p style="margin:.5em 0">Das angemeldete Konto hat keine Berechtigung, die Keycloak-Nutzerliste abzurufen.</p>'
+       .. '<p style="margin:.5em 0 1em">Bitte melden Sie sich ab und erneut mit einem Administrator-Konto an, oder wenden Sie sich an den Systemadministrator.</p>'
+      or  '<p style="margin:.5em 0">Kein g\xC3\xBCltiges Token f\xC3\xBCr den Zugriff auf Keycloak vorhanden.</p>'
+       .. '<p style="margin:.5em 0 1em">Bitte ab- und wieder anmelden.</p>'
     r:puts('<div class="card" style="border-color:#3a3a00">'
       .. '<h2 style="color:#ffee66;border-color:#3a3a00">Keycloak-Nutzerverwaltung nicht verf\xC3\xBCgbar</h2>'
-      .. '<p style="margin:.5em 0">Das angemeldete Konto hat keine Berechtigung, die Keycloak-Nutzerliste abzurufen.</p>'
-      .. '<p style="margin:.5em 0 1em">Bitte melden Sie sich ab und erneut mit einem Administrator-Konto an, oder wenden Sie sich an den Systemadministrator.</p>'
+      .. msg
       .. '<a class="btn b-warn" href="' .. h(logout_link) .. '">Abmelden</a>'
       .. '</div>')
   else
