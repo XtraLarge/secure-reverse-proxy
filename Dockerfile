@@ -5,6 +5,7 @@ LABEL org.opencontainers.image.description="Apache reverse proxy with mod_auth_o
 LABEL org.opencontainers.image.source="https://github.com/XtraLarge/apache-oidc-proxy"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    tini \
     apache2 \
     libapache2-mod-auth-openidc \
     libapache2-mod-geoip \
@@ -113,5 +114,5 @@ EXPOSE 80 443
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
     CMD curl -fsS http://localhost/ -o /dev/null || exit 1
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
 CMD ["apache2ctl", "-D", "FOREGROUND"]
