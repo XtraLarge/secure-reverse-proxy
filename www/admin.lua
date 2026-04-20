@@ -298,11 +298,11 @@ function serializeUsers(form) {
     fb  = document.getElementById('fb_basic');
   }
   if (sel) {
-    val = Array.from(sel.selectedOptions).map(function(o){return o.value;}).join('|');
+    var selected = Array.from(sel.selectedOptions).map(function(o){return o.value;}).join('|');
+    if (selected !== '') document.getElementById('users_val').value = selected;
   } else if (fb) {
-    val = fb.value;
+    document.getElementById('users_val').value = fb.value;
   }
-  document.getElementById('users_val').value = val;
   return true;
 }
 function normalizeDest(input) {
@@ -547,7 +547,7 @@ local function show_form(r, fname, lineno, pre, errmsg)
 
   r:puts('<form method="POST" action="/?action=save" onsubmit="return serializeUsers(this)">')
   r:puts('<input type=hidden name=file value="' .. h(fname) .. '">')
-  r:puts('<input type=hidden name=users id=users_val value="">')
+  r:puts('<input type=hidden name=users id=users_val value="' .. h((pre and pre.users) or "") .. '">')
   if lineno then
     r:puts('<input type=hidden name=line value="' .. lineno .. '">')
     r:puts('<input type=hidden name=check value="' .. h(pre and pre.raw or "") .. '">')
