@@ -72,6 +72,14 @@
   Include /etc/apache2/conf-runtime/redis-auth.conf
 
   OIDCProviderBackChannelLogoutSupported On
+
+  # Keep sessions alive while the user is active.
+  # Each request resets the inactivity timer; the access_token is silently
+  # refreshed via the refresh_token before it expires so there is no mid-session
+  # logout. The hard limit (SessionMaxDuration) forces a full re-login after 24h.
+  OIDCSessionInactivityTimeout     28800
+  OIDCSessionMaxDuration           86400
+  OIDCRefreshAccessTokenBeforeExpiry 30
 </Macro>
 
 # CLIENTOIDC_VALIDUSER $(SITENAME) $(DOMAINNAME)
