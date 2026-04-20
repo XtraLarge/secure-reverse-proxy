@@ -528,24 +528,16 @@ end
 
 local function get_known_domains()
   local seen, ordered = {}, {}
-  for _, dir in ipairs({SITES_DIR, "/etc/apache2/sites-enabled/"}) do
-    local p = io.popen("ls " .. dir .. "*.conf 2>/dev/null")
-    if p then
-      for fpath in p:lines() do
-        if not fpath:match("%.bak") then
-          local lines = read_lines(fpath)
-          if lines then
-            for _, line in ipairs(lines) do
-              local v = parse_vhost_line(line)
-              if v and v.domain ~= "" and not seen[v.domain] then
-                seen[v.domain] = true
-                table.insert(ordered, v.domain)
-              end
-            end
-          end
+  for _, fpath in ipairs(list_conf_files()) do
+    local lines = read_lines(fpath)
+    if lines then
+      for _, line in ipairs(lines) do
+        local v = parse_vhost_line(line)
+        if v and v.domain ~= "" and not seen[v.domain] then
+          seen[v.domain] = true
+          table.insert(ordered, v.domain)
         end
       end
-      p:close()
     end
   end
   table.sort(ordered)
@@ -824,9 +816,10 @@ end
 -- ── Apply (POST) ──────────────────────────────────────────────────────────────
 
 local function do_apply(r)
-  -- Write to reload FIFO — root background process (started by entrypoint.sh)
-  -- reads it and sends SIGUSR1 to PID 1. Needed because no-new-privileges
-  -- prevents www-data from signalling root processes directly.
+  local test_ok, test_out = configtest()
+  if not test_ok then
+    return show_list(r, "ERR: Konfigurationstest fehlgeschlagen — Reload abgebrochen.\n" .. (test_out or ""))
+  end
   local ret = os.execute("echo reload > /run/apache-reload.fifo 2>/dev/null")
   if ret == 0 or ret == true then
     clear_pending_reload()
