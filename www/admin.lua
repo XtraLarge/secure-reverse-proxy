@@ -526,6 +526,32 @@ end
 
 -- ── Entry form ────────────────────────────────────────────────────────────────
 
+local function get_known_domains()
+  local seen, ordered = {}, {}
+  for _, dir in ipairs({SITES_DIR, "/etc/apache2/sites-enabled/"}) do
+    local p = io.popen("ls " .. dir .. "*.conf 2>/dev/null")
+    if p then
+      for fpath in p:lines() do
+        if not fpath:match("%.bak") then
+          local lines = read_lines(fpath)
+          if lines then
+            for _, line in ipairs(lines) do
+              local v = parse_vhost_line(line)
+              if v and v.domain ~= "" and not seen[v.domain] then
+                seen[v.domain] = true
+                table.insert(ordered, v.domain)
+              end
+            end
+          end
+        end
+      end
+      p:close()
+    end
+  end
+  table.sort(ordered)
+  return ordered
+end
+
 local function show_form(r, fname, lineno, pre, errmsg)
   local title = lineno and "Eintrag bearbeiten" or "Neuer Eintrag"
 
@@ -567,8 +593,13 @@ local function show_form(r, fname, lineno, pre, errmsg)
     .. '<input name=name value="' .. h((pre and pre.name) or "") .. '" placeholder="myapp" required></div>')
 
   -- Domain
+  local known_domains = get_known_domains()
+  local dl = '<datalist id="domain_list">'
+  for _, d in ipairs(known_domains) do dl = dl .. '<option value="' .. h(d) .. '">' end
+  dl = dl .. '</datalist>'
   r:puts('<div class="form-row"><label>Domain:</label>'
-    .. '<input name=domain value="' .. h((pre and pre.domain) or "") .. '" placeholder="example.com" required></div>')
+    .. '<input name=domain list="domain_list" value="' .. h((pre and pre.domain) or "") .. '" placeholder="example.com" required>'
+    .. dl .. '</div>')
 
   -- Destination
   r:puts('<div class="form-row"><label>Ziel-URL:</label>'
