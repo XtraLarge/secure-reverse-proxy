@@ -448,6 +448,6 @@ mkfifo "$RELOAD_FIFO"
 chmod 666 "$RELOAD_FIFO"
 (while true; do
     read -r _ < "$RELOAD_FIFO" || sleep 1
-    kill -USR1 1 2>/dev/null
+    kill -USR1 $(pgrep -o -x apache2) 2>/dev/null
 done) &
 exec "$@"
