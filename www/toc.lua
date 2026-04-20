@@ -717,19 +717,8 @@ window.onload = function() {
   return PAGE
 end
 
-function handle(r)
-  REMOTE_USER = r.user or REMOTE_USER
-  -- Set MIME type to text/html:
-  r.content_type = "text/html"
-
-  -- Derive domain from request hostname (e.g. "toc.example.com" → "example.com").
-  -- This is more reliable than extracting the domain from the conf filename, which
-  -- breaks when files are named without the TLD (e.g. "derwerres.conf").
-  local req_host = (r.hostname or ""):gsub(":%d+$", "")
-  local req_domain = req_host:match("^[^.]+%.(.+)$") or DOMAIN
-
-  r:puts( output(req_domain, TITLE ))
-end
+local _last_status_check = 0
+local _STATUS_INTERVAL   = 60   -- re-check service status at most once per minute
 
 local i, t, popen = 0, {}, io.popen
 -- Read from both sites-enabled/ (manual configs) and sites-admin/ (admin UI configs)
@@ -741,7 +730,27 @@ for filename in pfile:lines() do
   input(FILE, DOMAIN)
 end
 pfile:close()
-check_all_services()
+
+function handle(r)
+  REMOTE_USER = r.user or REMOTE_USER
+  -- Set MIME type to text/html:
+  r.content_type = "text/html"
+
+  -- Refresh service status at most once per minute (LuaScope server keeps state alive).
+  local now = os.time()
+  if now - _last_status_check >= _STATUS_INTERVAL then
+    check_all_services()
+    _last_status_check = now
+  end
+
+  -- Derive domain from request hostname (e.g. "toc.example.com" → "example.com").
+  -- This is more reliable than extracting the domain from the conf filename, which
+  -- breaks when files are named without the TLD (e.g. "derwerres.conf").
+  local req_host = (r.hostname or ""):gsub(":%d+$", "")
+  local req_domain = req_host:match("^[^.]+%.(.+)$") or DOMAIN
+
+  r:puts( output(req_domain, TITLE ))
+end
 
 
 --  print( output(DOMAIN, TITLE ))
