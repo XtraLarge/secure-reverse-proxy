@@ -728,12 +728,11 @@ local function _scan_conf_dirs()
   local dirs = {'/etc/apache2/sites-enabled', '/etc/apache2/sites-admin'}
   if _lfs then
     for _, dir in ipairs(dirs) do
-      local ok, iter = pcall(_lfs.dir, dir)
-      if ok and iter then
-        for f in iter do
+      pcall(function()
+        for f in _lfs.dir(dir) do
           if f:match('%.conf$') then table.insert(files, dir..'/'..f) end
         end
-      end
+      end)
     end
     table.sort(files)
   else

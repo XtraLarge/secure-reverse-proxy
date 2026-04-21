@@ -18,15 +18,14 @@ local _posix = (function() local ok, m = pcall(require, 'posix'); return ok and 
 local function _list_dir_conf(dir)
   local files = {}
   if _lfs then
-    local ok, iter = pcall(_lfs.dir, dir)
-    if ok and iter then
-      for f in iter do
+    pcall(function()
+      for f in _lfs.dir(dir) do
         if f:match('%.conf$') and not f:match('%.bak') then
           table.insert(files, dir..'/'..f)
         end
       end
-      table.sort(files)
-    end
+    end)
+    table.sort(files)
   else
     local p = io.popen('ls '..dir..'/*.conf 2>/dev/null')
     if p then
@@ -43,12 +42,13 @@ end
 local function _first_conf(dirs)
   if _lfs then
     for _, dir in ipairs(dirs) do
-      local ok, iter = pcall(_lfs.dir, dir)
-      if ok and iter then
-        for f in iter do
-          if f:match('%.conf$') then return dir..'/'..f end
+      local found
+      pcall(function()
+        for f in _lfs.dir(dir) do
+          if f:match('%.conf$') then found = dir..'/'..f; error('stop') end
         end
-      end
+      end)
+      if found then return found end
     end
     return ""
   else

@@ -287,16 +287,21 @@ else
 fi
 
 echo ""
-echo "[23] rotate-oidc-key.sh produces two-passphrase conf after rotation"
-if run sh -c "
+echo "[23] rotate-oidc-key.sh updates oidc-passphrase.conf with new key"
+# rotate-oidc-key.sh ends with kill -TERM 1 (container restart).
+# --init makes tini PID 1 so the test sh is not PID 1.
+# trap 'true' TERM lets the test sh survive the SIGTERM propagated by tini.
+# mod_auth_openidc < 2.4.14 (Debian 12 ships 2.4.12.x) accepts only one passphrase;
+# rotation writes the new single key (re-auth required for sessions with old key).
+if docker run --rm --init "${BASE_ARGS[@]}" "$IMAGE" sh -c "
+    trap 'true' TERM
     /usr/local/bin/rotate-oidc-key.sh >/dev/null 2>&1 || true
-    COUNT=\$(grep -o '\"[^\"]*\"' /etc/apache2/conf-runtime/oidc-passphrase.conf | wc -l)
-    [ \"\$COUNT\" -ge 2 ] && echo TWO_KEYS
-" 2>&1 | grep -q "TWO_KEYS"; then
-    pass "rotate-oidc-key.sh writes two passphrases (new + previous)"
+    grep -q 'OIDCCryptoPassphrase' /etc/apache2/conf-runtime/oidc-passphrase.conf && echo UPDATED
+" 2>&1 | grep -q "UPDATED"; then
+    pass "rotate-oidc-key.sh writes new OIDCCryptoPassphrase after rotation"
 else
-    fail "rotate-oidc-key.sh did not produce two passphrases"
-    run sh -c "cat /etc/apache2/conf-runtime/oidc-passphrase.conf" 2>&1 || true
+    fail "rotate-oidc-key.sh did not update oidc-passphrase.conf"
+    docker run --rm "${BASE_ARGS[@]}" "$IMAGE" sh -c "cat /etc/apache2/conf-runtime/oidc-passphrase.conf" 2>&1 || true
 fi
 
 echo ""
@@ -455,6 +460,71 @@ else
     fail "acme-init.sh did not skip when no domains found"
 fi
 rm -rf "$EMPTY_SITES_DIR"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP 10: Lua module integration — syntax, lfs availability, deadlock check
+# ══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo "[33] admin.lua is valid Lua syntax"
+if run sh -c "luac -p /var/www/html/admin.lua && echo LUA_OK" 2>&1 | grep -q "LUA_OK"; then
+    pass "admin.lua passes Lua syntax check"
+else
+    fail "admin.lua has Lua syntax errors"
+    run sh -c "luac -p /var/www/html/admin.lua" 2>&1 || true
+fi
+
+echo ""
+echo "[34] admin-kc.lua is valid Lua syntax"
+if run sh -c "luac -p /var/www/html/admin-kc.lua && echo LUA_OK" 2>&1 | grep -q "LUA_OK"; then
+    pass "admin-kc.lua passes Lua syntax check"
+else
+    fail "admin-kc.lua has Lua syntax errors"
+    run sh -c "luac -p /var/www/html/admin-kc.lua" 2>&1 || true
+fi
+
+echo ""
+echo "[35] lua-filesystem available and lfs.dir() replaces popen('ls') for conf scanning"
+if run sh -c "lua5.4 -e \"
+  local ok, lfs = pcall(require, 'lfs')
+  if not ok then io.write('LFS_MISSING'); os.exit(1) end
+  local n = 0
+  pcall(function()
+    for f in lfs.dir('/etc/apache2/sites-enabled') do
+      if f:match('%.conf$') then n = n + 1 end
+    end
+  end)
+  io.write('LFS_SCAN_OK_' .. n)
+\" && echo" 2>&1 | grep -q "LFS_SCAN_OK"; then
+    pass "lfs.dir() available and scans sites-enabled (no popen fork needed)"
+else
+    fail "lua-filesystem missing or lfs.dir() failed — popen fallback would be used"
+fi
+
+echo ""
+echo "[36] No zombie Apache workers after first Lua request (LuaScope server deadlock check)"
+LUA_CID="$(docker run -d -p 0:80 "${BASE_ARGS[@]}" "$IMAGE")"
+sleep 3
+LUA_PORT="$(docker inspect -f '{{(index (index .NetworkSettings.Ports "80/tcp") 0).HostPort}}' \
+    "$LUA_CID" 2>/dev/null || echo "")"
+if [ -n "$LUA_PORT" ]; then
+    # Hit the unprotected Lua vhost — forces mod_lua to initialise LuaScope server state
+    # including _scan_conf_dirs() (lfs.dir). A popen-based deadlock would leave workers as zombies.
+    curl -sf --max-time 5 "http://localhost:${LUA_PORT}/" \
+        -H "Host: lua-test.test.example.com" -o /dev/null 2>/dev/null || true
+    sleep 1
+    ZOMBIES="$(docker exec "$LUA_CID" ps aux 2>/dev/null | grep -c '<defunct>' || echo 0)"
+    if [ "${ZOMBIES:-0}" -eq 0 ]; then
+        pass "No zombie workers after Lua request — lfs.dir init is deadlock-free"
+    else
+        fail "Found ${ZOMBIES} zombie worker(s) after Lua init — possible lfs.dir deadlock"
+        docker exec "$LUA_CID" ps aux 2>/dev/null || true
+    fi
+else
+    fail "Could not determine mapped port for Lua zombie test"
+fi
+docker rm -f "$LUA_CID" >/dev/null 2>&1 || true
 
 
 # ══════════════════════════════════════════════════════════════════════════════

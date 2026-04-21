@@ -298,12 +298,11 @@ do
   if _lfs then
     for _, dir in ipairs(dirs) do
       if found == "" then
-        local ok, iter = pcall(_lfs.dir, dir)
-        if ok and iter then
-          for f in iter do
-            if f:match('%.conf$') then found = dir..'/'..f; break end
+        pcall(function()
+          for f in _lfs.dir(dir) do
+            if f:match('%.conf$') then found = dir..'/'..f; error('stop') end
           end
-        end
+        end)
       end
     end
   else
