@@ -20,7 +20,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     lua5.4 \
     lua-socket \
     lua-filesystem \
-    lua-posix \
     openssl \
     perl \
     rsyslog \

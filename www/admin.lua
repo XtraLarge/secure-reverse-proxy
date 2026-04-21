@@ -12,7 +12,7 @@ local ADDON_DIR = "/etc/apache2/AddOn/"
 local OIDC_DIR  = "/etc/apache2/AddOn/.oidc/"
 
 local _lfs   = (function() local ok, m = pcall(require, 'lfs');   return ok and m end)()
-local _posix = (function() local ok, m = pcall(require, 'posix'); return ok and m end)()
+local _posix = (function() local ok, m = pcall(require, 'posix'); return ok and m end)()  -- lua-posix needs Lua 5.4 build; nil on bookworm
 
 -- List *.conf files from a directory; lfs primary, popen fallback
 local function _list_dir_conf(dir)
@@ -60,9 +60,15 @@ local function _first_conf(dirs)
   end
 end
 
--- Recursive mkdir; posix primary, os.execute fallback
+-- Recursive mkdir; lfs primary, posix secondary, os.execute fallback
 local function _mkdir_p(path)
-  if _posix then
+  if _lfs then
+    local cur = path:sub(1,1) == '/' and '' or '.'
+    for part in path:gmatch('[^/]+') do
+      cur = cur..'/'..part
+      _lfs.mkdir(cur)
+    end
+  elseif _posix then
     local cur = path:sub(1,1) == '/' and '' or '.'
     for part in path:gmatch('[^/]+') do
       cur = cur..'/'..part
@@ -73,7 +79,7 @@ local function _mkdir_p(path)
   end
 end
 
--- chmod 600; posix primary, os.execute fallback
+-- chmod 600; posix primary, os.execute fallback (lfs has no chmod)
 local function _chmod600(path)
   if _posix then
     pcall(_posix.chmod, path, tonumber('600', 8))
