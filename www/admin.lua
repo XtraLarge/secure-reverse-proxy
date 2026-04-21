@@ -887,17 +887,30 @@ end
 
 -- ── Apply (POST) ──────────────────────────────────────────────────────────────
 
+local kc_sync_redirects  -- forward declaration; assigned after KC helpers below
+
 local function do_apply(r)
   local test_ok, test_out = configtest()
   if not test_ok then
     return show_list(r, "ERR: Konfigurationstest fehlgeschlagen — Reload abgebrochen.\n" .. (test_out or ""))
   end
-  if _apache_reload() then
-    clear_pending_reload()
-    show_list(r, "OK: Apache graceful reload ausgef\xC3\xBCh\x72t")
-  else
-    show_list(r, "ERR: Graceful reload fehlgeschlagen")
+  if not _apache_reload() then
+    return show_list(r, "ERR: Graceful reload fehlgeschlagen")
   end
+  clear_pending_reload()
+  local msg = "OK: Apache graceful reload ausgef\xC3\xBCh\x72t"
+  if KC_ADMIN_URL ~= "" and kc_sync_redirects then
+    local tok, _ = kc_token(r)
+    if tok and TOC_DOMAIN ~= "" then
+      local ok, kmsg = kc_sync_redirects(TOC_DOMAIN, tok)
+      if ok then
+        msg = msg .. "\nOK: Keycloak redirect URIs aktualisiert (" .. kmsg .. ")"
+      else
+        msg = msg .. "\nWARN: Keycloak sync fehlgeschlagen — " .. kmsg
+      end
+    end
+  end
+  show_list(r, msg)
 end
 
 -- ── AddOn form ────────────────────────────────────────────────────────────────
@@ -1760,6 +1773,48 @@ local function kc_client_exists(domain, token)
     return out:match('"id"%s*:%s*"([^"]+)"')
   end
   return nil
+end
+
+-- Scan all conf files for the given domain and return every OIDC vhost name.
+local function _collect_oidc_names(domain)
+  local oidc_macros = { vhost_proxy_oidc_user=true, vhost_proxy_oidc_any=true, vhost_proxy_oidc_group=true }
+  local seen, names = {}, {}
+  for _, dir in ipairs({ SITES_DIR, "/etc/apache2/sites-enabled/" }) do
+    for _, fpath in ipairs(_list_dir_conf(dir)) do
+      local lines = read_lines(fpath)
+      if lines then
+        for _, line in ipairs(lines) do
+          local v = parse_vhost_line(line)
+          if v and oidc_macros[v.macro:lower()] and v.domain == domain and not seen[v.name] then
+            seen[v.name] = true
+            table.insert(names, v.name)
+          end
+        end
+      end
+    end
+  end
+  return names
+end
+
+-- Build complete redirectUris list and PUT it to Keycloak.
+kc_sync_redirects = function(domain, token)
+  local uuid = kc_client_exists(domain, token)
+  if not uuid then return false, "Client proxy-" .. domain .. " nicht gefunden" end
+
+  local uris = {}
+  for _, n in ipairs({ "toc", "logout", "admin" }) do
+    table.insert(uris, "https://" .. n .. "." .. domain .. "/protected")
+  end
+  for _, name in ipairs(_collect_oidc_names(domain)) do
+    table.insert(uris, "https://" .. name .. "." .. domain .. "/protected")
+  end
+
+  local status, rbody = kc_api_write("PUT", "/clients/" .. uuid,
+    json_enc({ redirectUris = uris }), token)
+  if status == 204 then
+    return true, #uris .. " redirect URIs gesetzt"
+  end
+  return false, "HTTP " .. tostring(status) .. ": " .. (kc_errmsg(rbody) or rbody or "")
 end
 
 -- Fetch a realm role's internal ID by name.
