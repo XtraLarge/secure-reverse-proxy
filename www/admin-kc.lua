@@ -288,15 +288,29 @@ code{background:#060614;color:#aaa;padding:1px 5px;border-radius:2px;font-size:.
 -- Logged-in user (set in handle() from r.user)
 local REMOTE_USER = ""
 
+local _lfs = (function() local ok, m = pcall(require, 'lfs'); return ok and m end)()
+
 -- Detect the domain from config files (for TOC/Logout links in topbar)
 local TOC_DOMAIN = ""
 do
-  local p = io.popen("ls /etc/apache2/sites-admin/*.conf /etc/apache2/sites-enabled/*.conf 2>/dev/null | head -1")
-  if p then
-    local f = p:read("*l") or ""
-    p:close()
-    TOC_DOMAIN = f:match("([^/]+)%.conf$") or ""
+  local dirs = {'/etc/apache2/sites-admin', '/etc/apache2/sites-enabled'}
+  local found = ""
+  if _lfs then
+    for _, dir in ipairs(dirs) do
+      if found == "" then
+        local ok, iter = pcall(_lfs.dir, dir)
+        if ok and iter then
+          for f in iter do
+            if f:match('%.conf$') then found = dir..'/'..f; break end
+          end
+        end
+      end
+    end
+  else
+    local p = io.popen("ls /etc/apache2/sites-admin/*.conf /etc/apache2/sites-enabled/*.conf 2>/dev/null | head -1")
+    if p then found = p:read("*l") or ""; p:close() end
   end
+  TOC_DOMAIN = found:match("([^/]+)%.conf$") or ""
 end
 
 local function topbar(active)

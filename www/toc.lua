@@ -720,16 +720,36 @@ end
 local _last_status_check = 0
 local _STATUS_INTERVAL   = 60   -- re-check service status at most once per minute
 
-local i, t, popen = 0, {}, io.popen
--- Read from both sites-enabled/ (manual configs) and sites-admin/ (admin UI configs)
-local pfile = popen('ls /etc/apache2/sites-enabled/*.conf /etc/apache2/sites-admin/*.conf 2>/dev/null')
-for filename in pfile:lines() do
+local _lfs = (function() local ok, m = pcall(require, 'lfs'); return ok and m end)()
+
+-- List *.conf files from both sites dirs; lfs primary, popen fallback
+local function _scan_conf_dirs()
+  local files = {}
+  local dirs = {'/etc/apache2/sites-enabled', '/etc/apache2/sites-admin'}
+  if _lfs then
+    for _, dir in ipairs(dirs) do
+      local ok, iter = pcall(_lfs.dir, dir)
+      if ok and iter then
+        for f in iter do
+          if f:match('%.conf$') then table.insert(files, dir..'/'..f) end
+        end
+      end
+    end
+    table.sort(files)
+  else
+    local p = io.popen('ls /etc/apache2/sites-enabled/*.conf /etc/apache2/sites-admin/*.conf 2>/dev/null')
+    if p then for f in p:lines() do table.insert(files, f) end; p:close() end
+  end
+  return files
+end
+
+local i, t = 0, {}
+for _, filename in ipairs(_scan_conf_dirs()) do
   i = i + 1
   FILE = filename
   DOMAIN = (shortbetween(filename, "/", ".conf") )
   input(FILE, DOMAIN)
 end
-pfile:close()
 
 function handle(r)
   REMOTE_USER = r.user or REMOTE_USER

@@ -11,6 +11,85 @@ local SITES_DIR = "/etc/apache2/sites-admin/"
 local ADDON_DIR = "/etc/apache2/AddOn/"
 local OIDC_DIR  = "/etc/apache2/AddOn/.oidc/"
 
+local _lfs   = (function() local ok, m = pcall(require, 'lfs');   return ok and m end)()
+local _posix = (function() local ok, m = pcall(require, 'posix'); return ok and m end)()
+
+-- List *.conf files from a directory; lfs primary, popen fallback
+local function _list_dir_conf(dir)
+  local files = {}
+  if _lfs then
+    local ok, iter = pcall(_lfs.dir, dir)
+    if ok and iter then
+      for f in iter do
+        if f:match('%.conf$') and not f:match('%.bak') then
+          table.insert(files, dir..'/'..f)
+        end
+      end
+      table.sort(files)
+    end
+  else
+    local p = io.popen('ls '..dir..'/*.conf 2>/dev/null')
+    if p then
+      for f in p:lines() do
+        if not f:match('%.bak') then table.insert(files, f) end
+      end
+      p:close()
+    end
+  end
+  return files
+end
+
+-- Return the first *.conf file found across dirs; lfs primary, popen fallback
+local function _first_conf(dirs)
+  if _lfs then
+    for _, dir in ipairs(dirs) do
+      local ok, iter = pcall(_lfs.dir, dir)
+      if ok and iter then
+        for f in iter do
+          if f:match('%.conf$') then return dir..'/'..f end
+        end
+      end
+    end
+    return ""
+  else
+    local globs = {}
+    for _, dir in ipairs(dirs) do table.insert(globs, dir..'/*.conf') end
+    local p = io.popen('ls '..table.concat(globs, ' ')..' 2>/dev/null | head -1')
+    if p then local f = p:read('*l') or ''; p:close(); return f end
+    return ""
+  end
+end
+
+-- Recursive mkdir; posix primary, os.execute fallback
+local function _mkdir_p(path)
+  if _posix then
+    local cur = path:sub(1,1) == '/' and '' or '.'
+    for part in path:gmatch('[^/]+') do
+      cur = cur..'/'..part
+      pcall(_posix.mkdir, cur, tonumber('755', 8))
+    end
+  else
+    os.execute('mkdir -p '..path)
+  end
+end
+
+-- chmod 600; posix primary, os.execute fallback
+local function _chmod600(path)
+  if _posix then
+    pcall(_posix.chmod, path, tonumber('600', 8))
+  else
+    os.execute('chmod 600 '..path)
+  end
+end
+
+-- Signal Apache graceful reload via FIFO; io.open primary, os.execute fallback
+local function _apache_reload()
+  local fifo = '/run/apache-reload.fifo'
+  local f = io.open(fifo, 'w')
+  if f then f:write('reload\n'); f:close(); return true end
+  return os.execute('echo reload > '..fifo..' 2>/dev/null') == 0
+end
+
 -- Keycloak Admin API — uses the Proxy client's service account (client_credentials)
 local KC_ADMIN_URL    = os.getenv("KEYCLOAK_ADMIN_URL") or ""
 -- Normalise to the admin API base: if the URL already contains /admin/realms/ leave it,
@@ -148,9 +227,8 @@ local function read_file(fpath)
 end
 
 local function write_file(fpath, content)
-  -- Ensure parent directory exists
   local dir = fpath:match("^(.*)/[^/]+$")
-  if dir then os.execute("mkdir -p " .. dir) end
+  if dir then _mkdir_p(dir) end
   if content == "" then
     os.remove(fpath)
     return true, nil
@@ -172,15 +250,7 @@ local function configtest()
 end
 
 local function list_conf_files()
-  local files = {}
-  local p = io.popen("ls " .. SITES_DIR .. "*.conf 2>/dev/null")
-  for fname in p:lines() do
-    if not fname:match("%.bak") then
-      table.insert(files, fname)
-    end
-  end
-  p:close()
-  return files
+  return _list_dir_conf(SITES_DIR)
 end
 
 local function validate_name(s)
@@ -343,12 +413,8 @@ local ADMIN_REMOTE_USER = ""
 -- Fall back to parsing the first sites-admin conf filename if not set.
 local TOC_DOMAIN = os.getenv("OIDC_COOKIE_DOMAIN") or ""
 if TOC_DOMAIN == "" then
-  local p = io.popen("ls /etc/apache2/sites-admin/*.conf /etc/apache2/sites-enabled/*.conf 2>/dev/null | head -1")
-  if p then
-    local f = p:read("*l") or ""
-    p:close()
-    TOC_DOMAIN = f:match("([^/]+)%.conf$") or ""
-  end
+  local f = _first_conf({'/etc/apache2/sites-admin', '/etc/apache2/sites-enabled'})
+  TOC_DOMAIN = f:match("([^/]+)%.conf$") or ""
 end
 
 local function topbar(title, back_url)
@@ -820,12 +886,11 @@ local function do_apply(r)
   if not test_ok then
     return show_list(r, "ERR: Konfigurationstest fehlgeschlagen — Reload abgebrochen.\n" .. (test_out or ""))
   end
-  local ret = os.execute("echo reload > /run/apache-reload.fifo 2>/dev/null")
-  if ret == 0 or ret == true then
+  if _apache_reload() then
     clear_pending_reload()
     show_list(r, "OK: Apache graceful reload ausgef\xC3\xBCh\x72t")
   else
-    show_list(r, "ERR: Graceful reload fehlgeschlagen (Code: " .. tostring(ret) .. ")")
+    show_list(r, "ERR: Graceful reload fehlgeschlagen")
   end
 end
 
@@ -1886,7 +1951,7 @@ end
 
 -- Write domain OIDC client credentials to AddOn/.oidc/<domain>.conf
 local function write_oidc_client_conf(domain, client_id, secret)
-  os.execute("mkdir -p " .. OIDC_DIR)
+  _mkdir_p(OIDC_DIR)
   local path = OIDC_DIR .. domain .. ".conf"
   local f, err = io.open(path, "w")
   if not f then return false, err end
@@ -1894,7 +1959,7 @@ local function write_oidc_client_conf(domain, client_id, secret)
   f:write("OIDCClientID     " .. client_id .. "\n")
   f:write("OIDCClientSecret " .. secret   .. "\n")
   f:close()
-  os.execute("chmod 600 " .. path)
+  _chmod600(path)
   return true, nil
 end
 
@@ -2005,7 +2070,7 @@ local function do_kc_create(r, domain)
   end
 
   -- Graceful reload so Apache picks up the new IncludeOptional file
-  os.execute("echo reload > /run/apache-reload.fifo 2>/dev/null")
+  _apache_reload()
 
   show_list(r, "OK Keycloak-Client '" .. kc_client_id(domain) .. "' angelegt und aktiviert")
 end
@@ -2044,7 +2109,7 @@ local function do_kc_rotate(r, domain)
   if not ok then
     return show_list(r, "ERR Conf-Datei schreiben: " .. (werr or ""))
   end
-  os.execute("echo reload > /run/apache-reload.fifo 2>/dev/null")
+  _apache_reload()
   show_list(r, "OK Secret f\xC3\xBCr '" .. kc_client_id(domain) .. "' rotiert und aktiviert")
 end
 
