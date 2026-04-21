@@ -505,24 +505,32 @@ fi
 echo ""
 echo "[36] No zombie Apache workers after first Lua request (LuaScope server deadlock check)"
 LUA_CID="$(docker run -d -p 0:80 "${BASE_ARGS[@]}" "$IMAGE")"
-sleep 3
 LUA_PORT="$(docker inspect -f '{{(index (index .NetworkSettings.Ports "80/tcp") 0).HostPort}}' \
     "$LUA_CID" 2>/dev/null || echo "")"
-if [ -n "$LUA_PORT" ]; then
+# Wait for Apache to be up (health check: curl http://localhost/ returns non-5xx)
+_lua_up=0
+for _i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 1
+    if docker exec "$LUA_CID" curl -sf --max-time 1 http://localhost/ -o /dev/null 2>/dev/null; then
+        _lua_up=1; break
+    fi
+done
+if [ -n "$LUA_PORT" ] && [ "$_lua_up" -eq 1 ]; then
     # Hit the unprotected Lua vhost — forces mod_lua to initialise LuaScope server state
     # including _scan_conf_dirs() (lfs.dir). A popen-based deadlock would leave workers as zombies.
     curl -sf --max-time 5 "http://localhost:${LUA_PORT}/" \
         -H "Host: lua-test.test.example.com" -o /dev/null 2>/dev/null || true
     sleep 1
-    ZOMBIES="$(docker exec "$LUA_CID" ps aux 2>/dev/null | grep -c '<defunct>' || echo 0)"
-    if [ "${ZOMBIES:-0}" -eq 0 ]; then
+    ZOMBIES="$(docker exec "$LUA_CID" ps aux 2>/dev/null | { grep -c '<defunct>' || true; })"
+    if [ "$ZOMBIES" -eq 0 ]; then
         pass "No zombie workers after Lua request — lfs.dir init is deadlock-free"
     else
         fail "Found ${ZOMBIES} zombie worker(s) after Lua init — possible lfs.dir deadlock"
         docker exec "$LUA_CID" ps aux 2>/dev/null || true
     fi
 else
-    fail "Could not determine mapped port for Lua zombie test"
+    fail "Container or Apache did not start within 10s for Lua zombie test"
+    docker logs "$LUA_CID" 2>&1 | tail -10 || true
 fi
 docker rm -f "$LUA_CID" >/dev/null 2>&1 || true
 
