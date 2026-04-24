@@ -349,6 +349,12 @@ a.btn,button.btn{padding:4px 11px;border:none;border-radius:3px;cursor:pointer;
 .grp-checks label{display:flex;align-items:center;gap:.35em;cursor:pointer;
   background:#0a0a22;border:1px solid #2a2a4e;border-radius:3px;padding:3px 8px}
 .grp-checks input[type=checkbox]{accent-color:#00d4ff}
+.pre-wrap{position:relative}
+.copy-btn{position:absolute;top:.4em;right:.4em;background:#0d0d20;border:1px solid #2a2a4e;
+  color:#445577;border-radius:4px;cursor:pointer;padding:3px 8px;font-size:.72em;
+  opacity:.55;transition:opacity .15s,background .15s,color .15s,border-color .15s;line-height:1.5}
+.copy-btn:hover{opacity:1;background:#0f3460;color:#7ecfff;border-color:#3a5a8e}
+.copy-btn.copy-ok{background:#003d00;color:#99ff99;border-color:#005500;opacity:1}
 </style>]]
 
 local JS = [[<script>
@@ -392,6 +398,16 @@ function filterSites(q) {
   document.querySelectorAll('table tr').forEach(function(tr) {
     if (!tr.querySelector('td')) return;
     tr.style.display = tr.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+  });
+}
+function copyPre(btn) {
+  var pre = btn.parentElement.querySelector('pre');
+  if (!navigator.clipboard) return;
+  navigator.clipboard.writeText(pre.textContent).then(function() {
+    var prev = btn.innerHTML;
+    btn.innerHTML = '&#10003;&nbsp;Kopiert';
+    btn.classList.add('copy-ok');
+    setTimeout(function(){ btn.innerHTML = prev; btn.classList.remove('copy-ok'); }, 1800);
   });
 }
 </script>]]
@@ -2373,14 +2389,20 @@ end
 -- ── VHost config view ────────────────────────────────────────────────────────
 local function show_vhost_config_view(r, name, domain, rawline)
   local vhost_fqdn = name .. "." .. domain
+  local copy_btn = '<button class="copy-btn" onclick="copyPre(this)" title="In Zwischenablage kopieren">'
+    .. '<svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor" style="vertical-align:middle">'
+    .. '<path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z"/>'
+    .. '<path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z"/>'
+    .. '</svg></button>'
   r:puts(page_head("Config: " .. vhost_fqdn, "/"))
   r:puts('<div class="main"><div class="card">')
   r:puts('<h2>Konfiguration — <code>' .. h(vhost_fqdn) .. '</code></h2>')
 
   -- Show the raw macro call from sites-admin
   r:puts('<p style="color:#aaa;font-size:.85em;margin-bottom:.4em">Macro-Aufruf in sites-admin:</p>')
+  r:puts('<div class="pre-wrap">' .. copy_btn)
   r:puts('<pre style="background:#060614;color:#7ecfff;padding:.7em;border-radius:3px;'
-    .. 'font-size:.85em;margin-bottom:1.2em;overflow-x:auto">' .. h(rawline) .. '</pre>')
+    .. 'font-size:.85em;margin-bottom:1.2em;overflow-x:auto">' .. h(rawline) .. '</pre></div>')
 
   -- Expand the macro call by reading the macro definition files.
   -- This works purely in Lua without requiring DUMP_CONFIG or root access.
@@ -2432,18 +2454,20 @@ local function show_vhost_config_view(r, name, domain, rawline)
     for _, block in ipairs(blocks) do
       local port = block:match("<VirtualHost[^>]*:(%d+)") or "?"
       r:puts('<p style="color:#666;font-size:.78em;margin:.6em 0 .2em">— Port ' .. port .. ' —</p>')
+      r:puts('<div class="pre-wrap">' .. copy_btn)
       r:puts('<pre style="background:#060614;color:#ddd;padding:.7em;border-radius:3px;'
         .. 'font-size:.82em;margin-bottom:1em;overflow-x:auto;white-space:pre-wrap">'
-        .. h(block) .. '</pre>')
+        .. h(block) .. '</pre></div>')
     end
   else
     -- Macro not found or produced no VirtualHost blocks — show raw expansion
     r:puts('<p style="color:#aa6600;font-size:.85em;margin-bottom:.6em">'
       .. 'Kein VirtualHost-Block in der Macro-Expansion gefunden.</p>')
     if expanded ~= "" then
+      r:puts('<div class="pre-wrap">' .. copy_btn)
       r:puts('<pre style="background:#060614;color:#ddd;padding:.7em;border-radius:3px;'
         .. 'font-size:.82em;margin-bottom:1em;overflow-x:auto;white-space:pre-wrap">'
-        .. h(expanded) .. '</pre>')
+        .. h(expanded) .. '</pre></div>')
     end
   end
 
