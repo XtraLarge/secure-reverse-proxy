@@ -79,7 +79,7 @@
   # logout. The hard limit (SessionMaxDuration) forces a full re-login after 24h.
   OIDCSessionInactivityTimeout     28800
   OIDCSessionMaxDuration           86400
-  OIDCRefreshAccessTokenBeforeExpiry 30
+  OIDCRefreshAccessTokenBeforeExpiry 300
 </Macro>
 
 # CLIENTOIDC_VALIDUSER $(SITENAME) $(DOMAINNAME)
