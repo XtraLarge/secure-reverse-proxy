@@ -159,7 +159,7 @@ printf 'OIDCCookie                       %s-IAM-Admin-Session\n'  "${OIDC_COOKIE
 printf 'OIDCStateCookiePrefix            %s-IAM-Admin-State-\n'   "${OIDC_COOKIE_DOMAIN}"
 printf 'OIDCCookieSameSite               On\n'
 printf 'OIDCCookieHTTPOnly               On\n'
-printf 'OIDCSessionCacheFallbackToCookie On\n'
+printf 'OIDCSessionCacheFallbackToCookie Off\n'
 printf 'OIDCCacheType                    redis\n'
 printf 'OIDCRedisCacheServer             %s:%s\n' "${REDIS_HOST}" "${REDIS_PORT}"
 printf 'OIDCRedisCacheDatabase           %s\n'  "${REDIS_DB}"

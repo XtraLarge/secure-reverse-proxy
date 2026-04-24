@@ -64,7 +64,7 @@
 
   # Redis session cache — store sessions server-side to avoid oversized cookies
   OIDCSessionType                 server-cache
-  OIDCSessionCacheFallbackToCookie On
+  OIDCSessionCacheFallbackToCookie Off
   OIDCCacheType                   redis
   OIDCRedisCacheServer            ${REDIS_HOST}:${REDIS_PORT}
   OIDCRedisCacheDatabase          ${REDIS_DB}
