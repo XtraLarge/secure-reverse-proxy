@@ -160,6 +160,10 @@ local function is_disabled_line(line)
   return trim(line):match("^#%s*[Uu]se%s+") ~= nil
 end
 
+local function is_geolock_line(line)
+  return trim(line):lower():match("^use%s+geolock_vhost%s+") ~= nil
+end
+
 local function parse_vhost_line(line)
   local raw = trim(line)
   -- Extract trailing quoted field (users or auth entry)
@@ -325,6 +329,7 @@ tr:hover td{background:#111130}
 .tag-proxy{background:#001a2d;color:#66ccff}
 .tag-oidc{background:#1a002d;color:#cc99ff}
 .tag-claim{background:#2d0028;color:#ff99ee}
+.tag-geo{background:#002d1a;color:#66ffcc}
 a.btn,button.btn{padding:4px 11px;border:none;border-radius:3px;cursor:pointer;
   text-decoration:none;display:inline-block;font-size:.82em;line-height:1.5}
 .b-edit{background:#0f3460;color:#7ecfff}.b-del{background:#5c0000;color:#ff9999}
@@ -485,11 +490,12 @@ end
 local function macro_tag(m)
   local ml = (m or ""):lower()
   local cls = "tag"
-  if ml:find("basic")   then cls = cls .. " tag-basic"
-  elseif ml:find("_any")   then cls = cls .. " tag-oidc"
-  elseif ml:find("oidc")   then cls = cls .. " tag-claim"
-  elseif ml:find("alias")  then cls = cls .. " tag-alias"
-  else                          cls = cls .. " tag-proxy" end
+  if ml:find("geolock")  then cls = cls .. " tag-geo"
+  elseif ml:find("basic")   then cls = cls .. " tag-basic"
+  elseif ml:find("_any")    then cls = cls .. " tag-oidc"
+  elseif ml:find("oidc")    then cls = cls .. " tag-claim"
+  elseif ml:find("alias")   then cls = cls .. " tag-alias"
+  else                           cls = cls .. " tag-proxy" end
   return '<span class="' .. cls .. '">' .. h(m) .. '</span>'
 end
 
@@ -554,6 +560,8 @@ local function show_list(r, msg)
           domains_seen[v.domain] = true
           domains_ordered[#domains_ordered + 1] = v.domain
         end
+      elseif is_geolock_line(l) then
+        entries = entries + 1
       elseif is_disabled_line(l) then
         disabled_count = disabled_count + 1
       end
@@ -621,11 +629,35 @@ local function show_list(r, msg)
             r:puts('<button class="btn b-disable" type=submit>Deaktivieren</button></form>')
             r:puts('</div></td></tr>')
           end
+        elseif is_geolock_line(line) then
+          local parts = {}
+          for w in trim(line):gmatch("%S+") do table.insert(parts, w) end
+          local gl_domain = parts[3] or ""
+          r:puts('<tr>')
+          r:puts('<td>' .. macro_tag("GeoLock_VHost") .. '</td>')
+          r:puts('<td>\xF0\x9F\x8C\x8D GeoLock</td>')
+          r:puts('<td>' .. h(gl_domain) .. '</td>')
+          r:puts('<td colspan=2 style="font-size:.82em;color:#888">PIN-gesch\xC3\xBCtzt</td>')
+          r:puts('<td><div class="actions">')
+          r:puts('<form method="POST" action="/?action=toggle_disable" style="margin:0">')
+          r:puts('<input type=hidden name=file value="' .. h(fname) .. '">')
+          r:puts('<input type=hidden name=line value="' .. lineno .. '">')
+          r:puts('<input type=hidden name=check value="' .. h(trim(line)) .. '">')
+          r:puts('<input type=hidden name=toggle value="disable">')
+          r:puts('<button class="btn b-disable" type=submit>Deaktivieren</button></form>')
+          r:puts('</div></td></tr>')
         elseif is_disabled_line(line) then
           local raw_line = trim(line):gsub("^#%s*", "")
           local vd = parse_vhost_line(raw_line)
           r:puts('<tr class="disabled-row">')
-          if vd then
+          if is_geolock_line(raw_line) then
+            local gparts = {}
+            for w in raw_line:gmatch("%S+") do table.insert(gparts, w) end
+            r:puts('<td>' .. macro_tag("GeoLock_VHost") .. '</td>')
+            r:puts('<td>\xF0\x9F\x8C\x8D GeoLock</td>')
+            r:puts('<td>' .. h(gparts[3] or "") .. '</td>')
+            r:puts('<td colspan=2 style="font-size:.82em;color:#888">PIN-gesch\xC3\xBCtzt</td>')
+          elseif vd then
             r:puts('<td>' .. macro_tag(vd.macro) .. '</td>')
             r:puts('<td>' .. h(vd.name) .. '</td>')
             r:puts('<td>' .. h(vd.domain) .. '</td>')
