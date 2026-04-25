@@ -66,6 +66,7 @@ COPY conf/logrotate/ /etc/logrotate.d/
 COPY www/toc.lua       /var/www/html/toc.lua
 COPY www/admin.lua     /var/www/html/admin.lua
 COPY www/admin-kc.lua  /var/www/html/admin-kc.lua
+COPY www/geolock.lua   /var/www/html/geolock.lua
 COPY www/help/         /var/www/help/
 COPY www/cgi/          /var/www/cgi/
 COPY www/res/          /var/www/res/

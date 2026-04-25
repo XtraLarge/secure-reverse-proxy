@@ -62,6 +62,17 @@ export REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 # Example: DE|AT|CH  →  allows Germany, Austria, Switzerland
 export GEOIP_ALLOW_COUNTRIES="${GEOIP_ALLOW_COUNTRIES:-DE}"
 
+# ── GeoLock PIN hash ──────────────────────────────────────────────────────────
+# GEOLOCK_PIN: plain-text PIN set in proxy.env; stored only as SHA256 hash.
+GEOLOCK_PIN_FILE="/etc/apache2/conf-runtime/geolock-pin.hash"
+if [[ -n "${GEOLOCK_PIN:-}" ]]; then
+    printf '%s' "${GEOLOCK_PIN}" | sha256sum | cut -d' ' -f1 > "${GEOLOCK_PIN_FILE}"
+    log "GeoLock: PIN hash written"
+else
+    rm -f "${GEOLOCK_PIN_FILE}"
+    log "GeoLock: GEOLOCK_PIN not set — geolock.lua will show 'not configured'"
+fi
+
 # ── Keycloak Admin API (optional) ─────────────────────────────────────────────
 # Enables the admin-kc.lua user management interface.
 # The logged-in admin's OIDC access_token is used for all API calls — no

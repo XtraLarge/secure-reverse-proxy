@@ -156,6 +156,10 @@ local function is_no_admin(lines, lineno)
   return prev == "# no-admin"
 end
 
+local function is_disabled_line(line)
+  return trim(line):match("^#%s*[Uu]se%s+") ~= nil
+end
+
 local function parse_vhost_line(line)
   local raw = trim(line)
   -- Extract trailing quoted field (users or auth entry)
@@ -355,6 +359,8 @@ a.btn,button.btn{padding:4px 11px;border:none;border-radius:3px;cursor:pointer;
   opacity:.55;transition:opacity .15s,background .15s,color .15s,border-color .15s;line-height:1.5}
 .copy-btn:hover{opacity:1;background:#0f3460;color:#7ecfff;border-color:#3a5a8e}
 .copy-btn.copy-ok{background:#003d00;color:#99ff99;border-color:#005500;opacity:1}
+tr.disabled-row td{opacity:.38;font-style:italic}
+.b-disable{background:#2a1800;color:#ffaa44}.b-enable{background:#003d00;color:#99ff99}
 </style>]]
 
 local JS = [[<script>
@@ -454,6 +460,7 @@ local function topbar(title, back_url)
     .. '<a class="topbar-back" href="' .. h(back_url or toc_link) .. '">\xE2\x86\x90</a>'
     .. '<a href="/?action=users">\xF0\x9F\x91\xA4 OIDC Auth</a>'
     .. '<a href="/?action=htpasswd">\xF0\x9F\x94\x91 Basic Auth</a>'
+    .. '<a href="/?action=geolock">\xF0\x9F\x8C\x8D GeoLock</a>'
     .. '</div>'
     .. user_block
     .. '</div>'
@@ -536,6 +543,7 @@ local function show_list(r, msg)
 
     -- Count vhost entries and collect unique domains
     local entries = 0
+    local disabled_count = 0
     local domains_seen = {}
     local domains_ordered = {}
     for i, l in ipairs(lines) do
@@ -546,12 +554,17 @@ local function show_list(r, msg)
           domains_seen[v.domain] = true
           domains_ordered[#domains_ordered + 1] = v.domain
         end
+      elseif is_disabled_line(l) then
+        disabled_count = disabled_count + 1
       end
     end
 
     r:puts('<div class="card">')
+    local dim_disabled = disabled_count > 0
+      and (' <span class="dim">' .. disabled_count .. ' deaktiviert</span>') or ""
     r:puts('<h2>' .. h(fname)
-      .. ' <span class="dim">(' .. entries .. ' Einträge)</span>&nbsp;'
+      .. ' <span class="dim">(' .. entries .. ' Eintr\xC3\xA4ge)</span>'
+      .. dim_disabled .. '&nbsp;'
       .. '<a class="btn b-add" href="/?action=new&amp;file=' .. h(fname) .. '">+ Hinzufügen</a>'
       .. '</h2>')
 
@@ -562,8 +575,8 @@ local function show_list(r, msg)
       end
     end
 
-    if entries == 0 then
-      r:puts('<p class="dim">Keine VHost-Einträge in dieser Datei.</p>')
+    if entries == 0 and disabled_count == 0 then
+      r:puts('<p class="dim">Keine VHost-Eintr\xC3\xA4ge in dieser Datei.</p>')
     else
       r:puts('<table><tr><th>Typ</th><th>Name</th><th>Domain</th><th>Ziel</th><th>Benutzer</th><th>Aktionen</th></tr>')
       for lineno, line in ipairs(lines) do
@@ -598,9 +611,37 @@ local function show_list(r, msg)
             r:puts('<input type=hidden name=file value="' .. h(fname) .. '">')
             r:puts('<input type=hidden name=line value="' .. lineno .. '">')
             r:puts('<input type=hidden name=check value="' .. h(trim(line)) .. '">')
-            r:puts('<button class="btn b-del" type=submit>Löschen</button></form>')
+            r:puts('<button class="btn b-del" type=submit>L\xC3\xB6schen</button></form>')
+            -- Disable toggle
+            r:puts('<form method="POST" action="/?action=toggle_disable" style="margin:0">')
+            r:puts('<input type=hidden name=file value="' .. h(fname) .. '">')
+            r:puts('<input type=hidden name=line value="' .. lineno .. '">')
+            r:puts('<input type=hidden name=check value="' .. h(trim(line)) .. '">')
+            r:puts('<input type=hidden name=toggle value="disable">')
+            r:puts('<button class="btn b-disable" type=submit>Deaktivieren</button></form>')
             r:puts('</div></td></tr>')
           end
+        elseif is_disabled_line(line) then
+          local raw_line = trim(line):gsub("^#%s*", "")
+          local vd = parse_vhost_line(raw_line)
+          r:puts('<tr class="disabled-row">')
+          if vd then
+            r:puts('<td>' .. macro_tag(vd.macro) .. '</td>')
+            r:puts('<td>' .. h(vd.name) .. '</td>')
+            r:puts('<td>' .. h(vd.domain) .. '</td>')
+            r:puts('<td style="font-family:monospace;font-size:.82em">' .. h(vd.dest) .. '</td>')
+            r:puts('<td style="font-size:.82em">' .. h(vd.users) .. '</td>')
+          else
+            r:puts('<td colspan=5 style="font-family:monospace;font-size:.82em">' .. h(raw_line) .. '</td>')
+          end
+          r:puts('<td><div class="actions">')
+          r:puts('<form method="POST" action="/?action=toggle_disable" style="margin:0">')
+          r:puts('<input type=hidden name=file value="' .. h(fname) .. '">')
+          r:puts('<input type=hidden name=line value="' .. lineno .. '">')
+          r:puts('<input type=hidden name=check value="' .. h(trim(line)) .. '">')
+          r:puts('<input type=hidden name=toggle value="enable">')
+          r:puts('<button class="btn b-enable" type=submit>Aktivieren</button></form>')
+          r:puts('</div></td></tr>')
         end
       end
       r:puts('</table>')
@@ -754,6 +795,98 @@ local function show_form(r, fname, lineno, pre, errmsg)
   r:puts('<button class="btn b-save" type=submit>&#10003;&nbsp;Speichern</button>&nbsp;')
   r:puts('<a class="btn b-cancel" href="/">Abbrechen</a>')
   r:puts('</div></form></div></div></body></html>')
+end
+
+-- ── Toggle disable (POST) ─────────────────────────────────────────────────────
+
+local function do_toggle_disable(r, p)
+  local fname  = trim(p["file"]   or "")
+  local lineno = tonumber(p["line"])
+  local check  = trim(p["check"]  or "")
+  local toggle = trim(p["toggle"] or "")
+
+  if fname == "" or fname:match("[/\\]") or not lineno then
+    return show_list(r, "ERR: Ung\xC3\xBCltige Parameter")
+  end
+  if toggle ~= "disable" and toggle ~= "enable" then
+    return show_list(r, "ERR: Unbekannte Aktion")
+  end
+
+  local fpath = SITES_DIR .. fname
+  local lines = read_lines(fpath)
+  if not lines then return show_list(r, "ERR: Datei nicht lesbar") end
+
+  if trim(lines[lineno] or "") ~= check then
+    return show_list(r, "ERR: Datei wurde zwischenzeitlich ge\xC3\xA4ndert \xe2\x80\x94 bitte neu laden")
+  end
+
+  if toggle == "disable" then
+    if is_no_admin(lines, lineno) then
+      return show_list(r, "ERR: Dieser Eintrag ist mit # no-admin gesch\xC3\xBCtzt")
+    end
+    lines[lineno] = "# " .. lines[lineno]
+  else
+    lines[lineno] = lines[lineno]:gsub("^%s*#%s*", "")
+  end
+
+  local ftmp = fpath .. ".tmp"
+  local fbak  = fpath .. ".bak"
+  local ok, err = write_lines(ftmp, lines)
+  if not ok then return show_list(r, "ERR: " .. (err or "")) end
+
+  os.rename(fpath, fbak)
+  os.rename(ftmp,  fpath)
+
+  local test_ok, test_out = configtest()
+  if not test_ok then
+    os.remove(fpath)
+    os.rename(fbak, fpath)
+    return show_list(r, "ERR: Konfigurationstest fehlgeschlagen \xe2\x80\x94 " .. (test_out or ""))
+  end
+
+  os.remove(fbak)
+  set_pending_reload()
+  local verb = toggle == "disable" and "Deaktiviert" or "Aktiviert"
+  show_list(r, "OK: " .. verb .. " \xe2\x80\x94 Konfiguration noch anwenden!")
+end
+
+-- ── GeoLock status view ────────────────────────────────────────────────────────
+
+local function show_geolock_view(r, msg)
+  local lock_path = "/etc/apache2/conf-runtime/geolock.lock"
+  local conf_path = "/etc/apache2/AddOn/.extra-countries.conf"
+  local failures  = tonumber(read_file(lock_path) or "") or 0
+  local locked    = failures >= 3
+  local conf      = read_file(conf_path) or ""
+  local codes     = conf:match('"^%(([A-Z|]+)%)%$"')
+
+  r:puts(page_head("GeoLock"))
+  if msg then r:puts(msg_html(msg)) end
+  r:puts('<div class="main"><div class="card">')
+  r:puts('<h2>\xF0\x9F\x8C\x8D GeoLock</h2>')
+  r:puts('<table><tr><th>Status</th><th>Fehlversuche</th><th>Extra-L\xC3\xA4nder</th></tr><tr>')
+  local status_cell = locked
+    and '<span style="color:#ff8888">&#9679; Gesperrt</span>'
+    or  '<span style="color:#88ff88">&#9679; Entsperrt</span>'
+  r:puts('<td>' .. status_cell .. '</td>')
+  r:puts('<td>' .. failures .. '\xC2\xA0/ 3</td>')
+  r:puts('<td>' .. (codes and h(codes:gsub("|", ", ")) or '\xe2\x80\x93') .. '</td>')
+  r:puts('</tr></table>')
+  if failures > 0 then
+    r:puts('<form method="POST" action="/?action=geolock_reset" style="margin-top:1em">')
+    r:puts('<button class="btn b-add" type="submit">&#128275; Z\xC3\xA4hler zur\xC3\xBCcksetzen</button>')
+    r:puts('</form>')
+  end
+  r:puts('<p class="dim" style="margin-top:1em">VHost aktivieren/deaktivieren: '
+    .. '\xC3\xBCber die Hauptliste (Deaktivieren-Button).</p>')
+  r:puts('</div></div></body></html>')
+end
+
+local function do_geolock_reset(r)
+  local lock_path = "/etc/apache2/conf-runtime/geolock.lock"
+  local f = io.open(lock_path, "w")
+  if f then f:write("0\n"); f:close() end
+  show_geolock_view(r, "OK: Z\xC3\xA4hler zur\xC3\xBCckgesetzt")
 end
 
 -- ── Save (POST) ───────────────────────────────────────────────────────────────
@@ -2800,6 +2933,15 @@ function handle(r)
 
   elseif action == "group_delete" and r.method == "POST" then
     do_group_delete(r, post)
+
+  elseif action == "toggle_disable" and r.method == "POST" then
+    do_toggle_disable(r, post)
+
+  elseif action == "geolock" then
+    show_geolock_view(r, nil)
+
+  elseif action == "geolock_reset" and r.method == "POST" then
+    do_geolock_reset(r)
 
   else
     show_list(r)
