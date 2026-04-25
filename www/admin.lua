@@ -1917,7 +1917,7 @@ local function kc_client_exists(domain, token)
     tmp, base, cid)
   local p = io.popen(cmd); local out = p:read("*a"); p:close()
   os.remove(tmp)
-  local esc = cid:gsub("%-","%%%-"):gsub("%.","%%%%.")
+  local esc = cid:gsub("([%-%.])","%%%1")
   if out:find('"clientId"') and out:find('"' .. esc .. '"') then
     return out:match('"id"%s*:%s*"([^"]+)"')
   end
