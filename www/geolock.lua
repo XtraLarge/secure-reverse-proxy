@@ -264,7 +264,7 @@ function handle(r)
   end
 
   -- Render form
-  local cc    = r:subprocess_env("GEOIP_COUNTRY_CODE") or "??"
+  local cc    = r.subprocess_env["GEOIP_COUNTRY_CODE"] or "??"
   local extra = get_extra()
 
   local detected = '<p class="detected">Erkanntes Land: <strong>' .. h(cc) .. '</strong>'
