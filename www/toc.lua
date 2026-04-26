@@ -540,6 +540,28 @@ function parse(line)
     return
   end
 
+  -- GeoLock_VHost entries (structure: Use GeoLock_VHost DOMAIN — no name/dest params)
+  if startswith(string.lower(all_trim(line)), "use geolock_vhost") then
+    local gl_domain = string.lower(word(line, 3))
+    if gl_domain == "" then return end
+    local dedup_key = "geolock." .. gl_domain
+    if A_seen[dedup_key] then return end
+    A_seen[dedup_key] = true
+    local admin_pat = ADMIN_USERS[gl_domain] or ""
+    table.insert(A, {
+      ["NAME"]   = "geolock",
+      ["DOMAIN"] = gl_domain,
+      ["TYP"]    = "GeoLock",
+      ["DEST"]   = "",
+      ["IPROT"]  = "-",
+      ["IIP"]    = "-",
+      ["IPORT"]  = "-",
+      ["SECURE"] = "PIN",
+      ["USERS"]  = admin_pat ~= "" and admin_pat:gsub("|", ", ") or "-",
+    })
+    return
+  end
+
   -- Only process VHost_* macros (skip Domain_*, Admin_VHost, comments, etc.)
   if not startswith(string.lower(all_trim(line)), "use vhost_") then return end
 
