@@ -14,6 +14,7 @@
 <Macro CLIENTBASIC $(AUTHORTYPE) $(AUTHORENTRY)>
   GeoIPEnable On
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
+  IncludeOptional /etc/apache2/AddOn/.extra-countries.conf
 
   <Location />
     AuthType Basic
