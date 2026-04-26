@@ -51,7 +51,9 @@ export OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH="${OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH:-c
 export OIDC_REMOTE_USER_CLAIM="${OIDC_REMOTE_USER_CLAIM:-email}"
 export OIDC_SCOPE="${OIDC_SCOPE:-openid email}"
 export OIDC_REDIRECT_PATH="${OIDC_REDIRECT_PATH:-/protected}"
-export OIDC_DEFAULT_LOGOUT_URL="${OIDC_DEFAULT_LOGOUT_URL:-https://logout.${OIDC_COOKIE_DOMAIN}/help?text=Logout%20successful!}"
+export HTTPS_PORT="${HTTPS_PORT:-443}"
+[[ "${HTTPS_PORT}" == "443" ]] && export HTTPS_PORT_SUFFIX="" || export HTTPS_PORT_SUFFIX=":${HTTPS_PORT}"
+export OIDC_DEFAULT_LOGOUT_URL="${OIDC_DEFAULT_LOGOUT_URL:-https://logout.${OIDC_COOKIE_DOMAIN}${HTTPS_PORT_SUFFIX}/help?text=Logout%20successful!}"
 export APACHE_SERVER_NAME="${APACHE_SERVER_NAME:-localhost}"
 
 export REDIS_HOST="${REDIS_HOST:-redis}"
@@ -133,6 +135,7 @@ _kc_register_redirect_uris() {
 
     _KC_API="${KEYCLOAK_ADMIN_URL}" \
     _KC_REDIRECT_PATH="${OIDC_REDIRECT_PATH}" \
+    _KC_HTTPS_PORT_SUFFIX="${HTTPS_PORT_SUFFIX}" \
     _KC_DEFAULT_CLIENT="${OIDC_CLIENT_ID}" \
     _KC_ADMIN_USER="${KEYCLOAK_ADMIN_USER}" \
     _KC_ADMIN_PASS="${KEYCLOAK_ADMIN_PASS}" \
@@ -140,11 +143,12 @@ _kc_register_redirect_uris() {
 import json, os, re, glob, ssl
 import urllib.request, urllib.parse
 
-kc_raw     = os.environ['_KC_API']
-redir_path = os.environ['_KC_REDIRECT_PATH']
-def_client = os.environ['_KC_DEFAULT_CLIENT']
-adm_user   = os.environ['_KC_ADMIN_USER']
-adm_pass   = os.environ['_KC_ADMIN_PASS']
+kc_raw            = os.environ['_KC_API']
+redir_path        = os.environ['_KC_REDIRECT_PATH']
+https_port_suffix = os.environ.get('_KC_HTTPS_PORT_SUFFIX', '')
+def_client        = os.environ['_KC_DEFAULT_CLIENT']
+adm_user          = os.environ['_KC_ADMIN_USER']
+adm_pass          = os.environ['_KC_ADMIN_PASS']
 
 # ── Derive ServerNames from macro invocations in site configs ─────────────────
 # Site configs use "Use MacroName param1 param2 ..." — not raw ServerName lines.
@@ -250,7 +254,7 @@ for f in (glob.glob("/etc/apache2/AddOn/.oidc/*.conf") +
 # ── Group required redirect URIs by Keycloak client ID ───────────────────────
 client_uris = {}
 for sn in servernames:
-    uri = f"https://{sn}{redir_path}"
+    uri = f"https://{sn}{https_port_suffix}{redir_path}"
     matched = def_client
     for dom, cid in domain_clients.items():
         if sn.lower() == dom or sn.lower().endswith(f".{dom}"):
@@ -342,7 +346,7 @@ printf 'OIDCClientID                     %s\n'  "${OIDC_CLIENT_ID}"
 printf 'OIDCClientSecret                 %s\n'  "${OIDC_CLIENT_SECRET}"
 printf 'OIDCRemoteUserClaim              %s\n'  "${OIDC_REMOTE_USER_CLAIM}"
 printf 'OIDCScope                        "%s"\n' "${OIDC_SCOPE}"
-printf 'OIDCRedirectURI                  https://iam.%s%s\n' "${OIDC_COOKIE_DOMAIN}" "${OIDC_REDIRECT_PATH}"
+printf 'OIDCRedirectURI                  https://iam.%s%s%s\n' "${OIDC_COOKIE_DOMAIN}" "${HTTPS_PORT_SUFFIX}" "${OIDC_REDIRECT_PATH}"
 printf 'Include /etc/apache2/conf-runtime/oidc-passphrase.conf\n'
 printf 'OIDCDefaultLoggedOutURL          %s\n'  "${OIDC_DEFAULT_LOGOUT_URL}"
 printf 'OIDCCookieDomain                 %s\n'  "${OIDC_COOKIE_DOMAIN}"
@@ -358,7 +362,7 @@ printf 'Include /etc/apache2/conf-runtime/redis-auth.conf\n'
 printf 'OIDCProviderBackChannelLogoutSupported On\n'
 } > "$IAM_ADMIN_OIDC_FILE"
 chmod 644 "$IAM_ADMIN_OIDC_FILE"
-log "Generated iam-admin-oidc.conf (redirect URI: https://iam.${OIDC_COOKIE_DOMAIN}${OIDC_REDIRECT_PATH})"
+log "Generated iam-admin-oidc.conf (redirect URI: https://iam.${OIDC_COOKIE_DOMAIN}${HTTPS_PORT_SUFFIX}${OIDC_REDIRECT_PATH})"
 
 # ── Generate per-domain OIDC client credential files ─────────────────────────
 # Allows each domain to use a separate Keycloak client with its own secret.
@@ -447,6 +451,7 @@ SUBST_VARS='${OIDC_PROVIDER_METADATA_URL}'\
 '${OIDC_REMOTE_USER_CLAIM}'\
 '${OIDC_SCOPE}'\
 '${OIDC_REDIRECT_PATH}'\
+'${HTTPS_PORT_SUFFIX}'\
 '${OIDC_DEFAULT_LOGOUT_URL}'\
 '${OIDC_COOKIE_DOMAIN}'\
 '${REDIS_HOST}'\

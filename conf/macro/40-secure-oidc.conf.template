@@ -47,7 +47,7 @@
   OIDCRemoteUserClaim             ${OIDC_REMOTE_USER_CLAIM}
   OIDCScope                       "${OIDC_SCOPE}"
 
-  OIDCRedirectURI                 https://$(SITENAME).$(DOMAINNAME)${OIDC_REDIRECT_PATH}
+  OIDCRedirectURI                 https://$(SITENAME).$(DOMAINNAME)${HTTPS_PORT_SUFFIX}${OIDC_REDIRECT_PATH}
   # Passphrase written at startup + rotated daily — see /etc/apache2/conf-runtime/oidc-passphrase.conf
   Include /etc/apache2/conf-runtime/oidc-passphrase.conf
   OIDCDefaultLoggedOutURL         ${OIDC_DEFAULT_LOGOUT_URL}
