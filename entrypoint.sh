@@ -135,7 +135,7 @@ _kc_register_redirect_uris() {
     local all_servernames
     all_servernames=$(grep -rih '^[[:space:]]*ServerName[[:space:]]' \
         /etc/apache2/sites-admin/ /etc/apache2/sites-enabled/ 2>/dev/null \
-        | awk '{print $NF}' | grep '\.' | sort -u)
+        | awk '{print $NF}' | grep '\.' | sort -u) || true
     [[ -z "$all_servernames" ]] && return 0
 
     _KC_API="${KEYCLOAK_ADMIN_URL}" \
