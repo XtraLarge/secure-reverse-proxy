@@ -124,26 +124,18 @@ else
 fi
 
 # ── Keycloak: auto-register OIDC redirect URIs ───────────────────────────────
-# On every container start, scan all site configs for ServerName directives and
-# ensure their https://<name>${OIDC_REDIRECT_PATH} URIs exist in the Keycloak
-# client.  Idempotent and non-fatal — logs a warning and skips on any error.
-# Requires KEYCLOAK_ADMIN_USER + KEYCLOAK_ADMIN_PASS.
+# On every container start, parse site configs for macro invocations and ensure
+# all https://<vhost>${OIDC_REDIRECT_PATH} URIs are registered in Keycloak.
+# Idempotent and non-fatal.  Requires KEYCLOAK_ADMIN_USER + KEYCLOAK_ADMIN_PASS.
 _kc_register_redirect_uris() {
     [[ -z "${KEYCLOAK_ADMIN_USER:-}" || -z "${KEYCLOAK_ADMIN_PASS:-}" ]] && return 0
     [[ -z "${KEYCLOAK_ADMIN_URL:-}" ]] && return 0
-
-    local all_servernames
-    all_servernames=$(grep -rih '^[[:space:]]*ServerName[[:space:]]' \
-        /etc/apache2/sites-admin/ /etc/apache2/sites-enabled/ 2>/dev/null \
-        | awk '{print $NF}' | grep '\.' | sort -u) || true
-    [[ -z "$all_servernames" ]] && return 0
 
     _KC_API="${KEYCLOAK_ADMIN_URL}" \
     _KC_REDIRECT_PATH="${OIDC_REDIRECT_PATH}" \
     _KC_DEFAULT_CLIENT="${OIDC_CLIENT_ID}" \
     _KC_ADMIN_USER="${KEYCLOAK_ADMIN_USER}" \
     _KC_ADMIN_PASS="${KEYCLOAK_ADMIN_PASS}" \
-    _KC_SERVERNAMES="${all_servernames}" \
     python3 << 'PYEOF'
 import json, os, re, glob, ssl
 import urllib.request, urllib.parse
@@ -153,9 +145,62 @@ redir_path = os.environ['_KC_REDIRECT_PATH']
 def_client = os.environ['_KC_DEFAULT_CLIENT']
 adm_user   = os.environ['_KC_ADMIN_USER']
 adm_pass   = os.environ['_KC_ADMIN_PASS']
-servernames = [s for s in os.environ['_KC_SERVERNAMES'].strip().split('\n') if s.strip()]
 
-# Accept both /realms/REALM and /admin/realms/REALM formats
+# ── Derive ServerNames from macro invocations in site configs ─────────────────
+# Site configs use "Use MacroName param1 param2 ..." — not raw ServerName lines.
+# Mapping: macro_name_lower → function(params) → list of subdomains
+DOMAIN_VALID = re.compile(r'^[A-Za-z0-9]([A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$')
+SITE_VALID   = re.compile(r'^[A-Za-z0-9][A-Za-z0-9\-]*$')
+
+def derive_servernames(macro, params):
+    # params is a list of positional arguments (quotes stripped)
+    m = macro.lower()
+    if re.match(r'vhost_(proxy|proxy_open|proxy_oidc_user|proxy_oidc_any|proxy_oidc_group)', m):
+        # Use MacroName SITENAME DOMAINNAME ...
+        if len(params) >= 2 and SITE_VALID.match(params[0]) and DOMAIN_VALID.match(params[1]):
+            return [f"{params[0]}.{params[1]}"]
+    elif m == 'admin_vhost':
+        # Use Admin_VHost DOMAINNAME ADMINUSER → admin.DOMAINNAME
+        if params and DOMAIN_VALID.match(params[0]):
+            return [f"admin.{params[0]}"]
+    elif m == 'geolock_vhost':
+        # Use GeoLock_VHost DOMAINNAME ADMINUSER → geolock.DOMAINNAME
+        if params and DOMAIN_VALID.match(params[0]):
+            return [f"geolock.{params[0]}"]
+    elif m == 'domain_init':
+        # Use Domain_Init DOMAINNAME STDDOMAIN → toc.DOMAINNAME, logout.DOMAINNAME
+        if params and DOMAIN_VALID.match(params[0]):
+            return [f"toc.{params[0]}", f"logout.{params[0]}"]
+    return []
+
+servernames = set()
+use_re = re.compile(r'^\s*[Uu][Ss][Ee]\s+(\S+)\s+(.*)', re.M)
+
+for conf_dir in ('/etc/apache2/sites-admin/', '/etc/apache2/sites-enabled/'):
+    for fpath in glob.glob(f'{conf_dir}*.conf'):
+        try:
+            content = open(fpath).read()
+        except OSError:
+            continue
+        for hit in use_re.finditer(content):
+            # Skip commented-out lines
+            line_start = content.rfind('\n', 0, hit.start()) + 1
+            prefix = content[line_start:hit.start()]
+            if '#' in prefix:
+                continue
+            macro = hit.group(1)
+            raw_params = hit.group(2)
+            # Split params, strip surrounding quotes
+            params = [p.strip("'\"") for p in re.split(r'\s+', raw_params.strip()) if p]
+            for sn in derive_servernames(macro, params):
+                servernames.add(sn)
+
+if not servernames:
+    print("[entrypoint] Keycloak: no vhosts found in site configs — skipping redirect URI sync",
+          flush=True)
+    raise SystemExit(0)
+
+# ── Keycloak API helpers ──────────────────────────────────────────────────────
 m = re.match(r'(https?://[^/]+)(?:/admin)?(/realms/[^/?#]+)', kc_raw)
 if not m:
     print(f"[entrypoint] Keycloak: cannot parse KEYCLOAK_ADMIN_URL={kc_raw!r}", flush=True)
@@ -169,14 +214,13 @@ ssl_ctx.check_hostname = False
 ssl_ctx.verify_mode = ssl.CERT_NONE
 
 def http(url, data=None, method=None, headers=None):
-    req = urllib.request.Request(url, data=data,
-                                 headers=headers or {}, method=method)
+    req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
     try:
         with urllib.request.urlopen(req, context=ssl_ctx, timeout=10) as r:
             body = r.read()
             return json.loads(body) if body else {}
     except Exception as e:
-        print(f"[entrypoint] Keycloak HTTP error ({url}): {e}", flush=True)
+        print(f"[entrypoint] Keycloak HTTP error: {e}", flush=True)
         return None
 
 tok = http(token_url,
@@ -188,7 +232,7 @@ if not tok or not tok.get('access_token'):
     raise SystemExit(0)
 auth = {'Authorization': f"Bearer {tok['access_token']}", 'Content-Type': 'application/json'}
 
-# Build domain → Keycloak client-ID map from .oidc override files
+# ── Build domain → Keycloak client-ID map ────────────────────────────────────
 domain_clients = {}
 for f in (glob.glob("/etc/apache2/AddOn/.oidc/*.conf") +
           glob.glob("/etc/apache2/conf-runtime/oidc-client-*.conf")):
@@ -196,15 +240,15 @@ for f in (glob.glob("/etc/apache2/AddOn/.oidc/*.conf") +
     domain = (fname[len("oidc-client-"):] if fname.startswith("oidc-client-") else fname)[:-len(".conf")]
     try:
         for line in open(f):
-            hit = re.match(r'\s*OIDCClientID\s+(\S+)', line, re.I)
-            if hit:
-                domain_clients[domain.lower()] = hit.group(1)
+            hit2 = re.match(r'\s*OIDCClientID\s+(\S+)', line, re.I)
+            if hit2:
+                domain_clients[domain.lower()] = hit2.group(1)
                 break
     except OSError:
         pass
 
-# Group required redirect URIs by Keycloak client ID
-client_uris: dict = {}
+# ── Group required redirect URIs by Keycloak client ID ───────────────────────
+client_uris = {}
 for sn in servernames:
     uri = f"https://{sn}{redir_path}"
     matched = def_client
@@ -214,7 +258,7 @@ for sn in servernames:
             break
     client_uris.setdefault(matched, set()).add(uri)
 
-# Update each Keycloak client
+# ── Update each Keycloak client ───────────────────────────────────────────────
 for client_id, needed in client_uris.items():
     clients = http(f"{kc_api}/clients?clientId={urllib.parse.quote(client_id, safe='')}",
                    headers=auth)
