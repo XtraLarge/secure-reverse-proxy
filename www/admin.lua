@@ -454,7 +454,7 @@ end
 
 local function topbar(title, back_url)
   local toc_link  = TOC_DOMAIN ~= "" and ("https://toc."    .. TOC_DOMAIN) or "/"
-  local logout_link = TOC_DOMAIN ~= "" and ("https://logout." .. TOC_DOMAIN) or "/logout"
+  local logout_link = TOC_DOMAIN ~= "" and ("/protected?logout=" .. ue("https://toc." .. TOC_DOMAIN .. "/")) or "/protected?logout=/"
   local user_block = ADMIN_REMOTE_USER ~= ""
     and ('<div class="topbar-user-block">'
       .. '<span class="topbar-user">' .. h(ADMIN_REMOTE_USER) .. '</span>'
