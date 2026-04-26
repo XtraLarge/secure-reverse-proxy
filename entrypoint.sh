@@ -72,6 +72,8 @@ else
     rm -f "${GEOLOCK_PIN_FILE}"
     log "GeoLock: GEOLOCK_PIN not set — geolock.lua will show 'not configured'"
 fi
+# Reset lock counter on every container start so a restart clears the PIN lockout.
+rm -f "/etc/apache2/conf-runtime/geolock.lock"
 
 # ── GeoLock default countries ─────────────────────────────────────────────────
 # GEOLOCK_COUNTRIES: pipe-separated country codes written to extra-countries.conf

@@ -315,3 +315,30 @@
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
   </VirtualHost>
 </Macro>
+
+# VHost_Proxy_Open $(SITENAME) $(DOMAINNAME) $(DESTINATION)
+# Full vhost with reverse proxy — no GeoIP or GeoLock restriction.
+# Accessible from any country. Use only for services that handle their own
+# authentication (e.g. identity provider, ACME challenge handler).
+#
+# Example:
+#   Use VHost_Proxy_Open  idp  example.com  https://10.0.0.5/
+<Macro VHost_Proxy_Open $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
+  <VirtualHost *:80>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE REWRITE2URL "https://$(SITENAME).$(DOMAINNAME)"
+  </VirtualHost>
+
+  <VirtualHost *:443>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE SSL $(DOMAINNAME)
+    USE SECURITY_HEADERS
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    USE PROXY $(DESTINATION)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+  </VirtualHost>
+</Macro>

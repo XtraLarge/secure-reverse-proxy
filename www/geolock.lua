@@ -238,11 +238,9 @@ function handle(r)
       local new_fail = failures + 1
       set_failures(new_fail)
       if new_fail >= MAX_FAIL then
-        self_disable(own_domain)
-        graceful_reload()
         page('<div class="alert alert-lock"><strong>Gesperrt.</strong> '
           .. 'Zu viele fehlerhafte PIN-Eingaben. '
-          .. 'Entsperren \xc3\xbcber die Admin-Oberfl\xc3\xa4che.</div>')
+          .. 'Entsperren \xc3\xbcber die Admin-Oberfl\xc3\xa4che oder Container-Neustart.</div>')
         return apache2.OK
       end
       local left = MAX_FAIL - new_fail

@@ -120,6 +120,7 @@ local KC_LOGOUT_URL = KC_TOKEN_URL:gsub("/token$", "/logout")
 
 local MACRO_TYPES = {
   "VHost_Proxy",
+  "VHost_Proxy_Open",
   "VHost_Proxy_OIDC_User",
   "VHost_Proxy_OIDC_Any",
   "VHost_Proxy_OIDC_Group",
@@ -198,7 +199,7 @@ local function build_line(macro, name, domain, dest, users, authtype)
   users    = trim(users)
   authtype = trim(authtype ~= "" and authtype or "user")
 
-  if m == "vhost_proxy" or m == "vhost_proxy_oidc_any" or m == "vhost_alias" then
+  if m == "vhost_proxy" or m == "vhost_proxy_open" or m == "vhost_proxy_oidc_any" or m == "vhost_alias" then
     return string.format("Use %-28s  %-20s  %-25s  %s", macro, name, domain, dest)
   elseif m == "vhost_proxy_oidc_user" or m == "vhost_proxy_oidc_group" then
     return string.format("Use %-28s  %-20s  %-25s  %-35s  '%s'", macro, name, domain, dest, users)
@@ -330,6 +331,7 @@ tr:hover td{background:#111130}
 .tag-oidc{background:#1a002d;color:#cc99ff}
 .tag-claim{background:#2d0028;color:#ff99ee}
 .tag-geo{background:#002d1a;color:#66ffcc}
+.tag-open{background:#1a1400;color:#ffdd44}
 a.btn,button.btn{padding:4px 11px;border:none;border-radius:3px;cursor:pointer;
   text-decoration:none;display:inline-block;font-size:.82em;line-height:1.5}
 .b-edit{background:#0f3460;color:#7ecfff}.b-del{background:#5c0000;color:#ff9999}
@@ -491,6 +493,7 @@ local function macro_tag(m)
   local ml = (m or ""):lower()
   local cls = "tag"
   if ml:find("geolock")  then cls = cls .. " tag-geo"
+  elseif ml:find("_open")   then cls = cls .. " tag-open"
   elseif ml:find("basic")   then cls = cls .. " tag-basic"
   elseif ml:find("_any")    then cls = cls .. " tag-oidc"
   elseif ml:find("oidc")    then cls = cls .. " tag-claim"
