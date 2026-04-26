@@ -366,13 +366,12 @@ services:
       - KEYCLOAK_ADMIN_PASSWORD=\${KEYCLOAK_ADMIN_PASSWORD}
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
-      - keycloak_data:/opt/keycloak/data/h2
     networks:
       - backend
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/realms/${REALM}/.well-known/openid-configuration > /dev/null || exit 1"]
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && printf 'GET /realms/${REALM}/.well-known/openid-configuration HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && timeout 3 cat <&3 | grep -q realm"]
       interval: 15s
-      timeout: 5s
+      timeout: 10s
       retries: 12
       start_period: 30s
 
@@ -381,9 +380,6 @@ services:
     restart: unless-stopped
     networks:
       - backend
-
-volumes:
-  keycloak_data:
 
 networks:
   frontend:
