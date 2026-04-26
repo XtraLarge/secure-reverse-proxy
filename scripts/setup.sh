@@ -69,10 +69,13 @@ while [[ -z "$DOMAIN" || ! "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*\.)+[A-Za-z]{
   ask DOMAIN "Base domain" ""
 done
 
-ask ADMIN_USER "Admin username" "admin"
-ask HTTP_PORT  "HTTP listen port"  "80"
-ask HTTPS_PORT "HTTPS listen port" "443"
-ask TOC_TITLE  "TOC page title"    "Service Overview"
+ask ADMIN_USER       "Admin username"                                          "admin"
+ask PROXY_HTTP_PORT  "HTTP port on host (container bind)"                        "80"
+ask PROXY_HTTPS_PORT "HTTPS port on host (container bind)"                       "443"
+say "If traffic reaches this server via port-forward/NAT (e.g. router forwards"
+say "external port 9443 → this server port 443), set the external HTTPS port below."
+ask HTTPS_PORT       "External HTTPS port seen by browsers (= bind port if no NAT)" "${PROXY_HTTPS_PORT}"
+ask TOC_TITLE        "TOC page title"                                             "Service Overview"
 
 header "Output Directory"
 ask OUT_DIR "Where to generate files" "${REPO_DIR}/deploy-${DOMAIN}"
@@ -80,7 +83,7 @@ ask OUT_DIR "Where to generate files" "${REPO_DIR}/deploy-${DOMAIN}"
 header "Deploy"
 ask DOCKER_HOST_OPT "Docker host for deploy (empty = local socket)" ""
 
-# ── derived values ────────────────────────────────────────────────────────────
+# ── derived values ────────────────────────────────────────────────���───────────
 [[ "$HTTPS_PORT" == "443" ]] && PORT_SUFFIX="" || PORT_SUFFIX=":${HTTPS_PORT}"
 REALM="proxy"
 CLIENT_ID="Proxy"
@@ -262,9 +265,9 @@ REDIS_PASSWORD=${REDIS_PASSWORD}
 
 # ── GeoIP Access Control ──────────────────────────────────────────────────────
 # Pipe-separated ISO country codes allowed through GeoIP check.
-# Default allows all (pipe at start = empty first alternative matches nothing,
-# but remove the leading pipe to restrict to specific countries).
-GEOIP_ALLOW_COUNTRIES=|DE|AT|CH
+# Leading pipe = empty alternative matches missing/unknown GeoIP (e.g. localhost).
+# Remove leading pipe to enforce country restriction strictly.
+GEOIP_ALLOW_COUNTRIES=DE|AT|CH
 
 # ── Internal Networks ─────────────────────────────────────────────────────────
 INTERNAL_NETWORKS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
@@ -276,8 +279,9 @@ TOC_TITLE=${TOC_TITLE}
 KEYCLOAK_REALM=${REALM}
 KEYCLOAK_ADMIN=admin
 KEYCLOAK_ADMIN_PASSWORD=${KC_ADMIN_PASS}
-PROXY_HTTP_PORT=${HTTP_PORT}
-PROXY_HTTPS_PORT=${HTTPS_PORT}
+# Host port bindings (what the container binds to on the host):
+PROXY_HTTP_PORT=${PROXY_HTTP_PORT}
+PROXY_HTTPS_PORT=${PROXY_HTTPS_PORT}
 ENVEOF
 
 chmod 600 "${OUT_DIR}/.env"
