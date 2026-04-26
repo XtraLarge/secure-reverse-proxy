@@ -73,6 +73,21 @@ else
     log "GeoLock: GEOLOCK_PIN not set — geolock.lua will show 'not configured'"
 fi
 
+# ── GeoLock default countries ─────────────────────────────────────────────────
+# GEOLOCK_COUNTRIES: pipe-separated country codes written to extra-countries.conf
+# on first start only. Subsequent container restarts keep whatever GeoLock set.
+GEOLOCK_EXTRA_CONF="/etc/apache2/AddOn/.extra-countries.conf"
+if [[ -n "${GEOLOCK_COUNTRIES:-}" ]]; then
+    if [[ ! -f "${GEOLOCK_EXTRA_CONF}" ]] || \
+       ! grep -q "SetEnvIf GEOIP_COUNTRY_CODE" "${GEOLOCK_EXTRA_CONF}" 2>/dev/null; then
+        printf 'SetEnvIf GEOIP_COUNTRY_CODE "^(%s)$" AllowCountry\n' "${GEOLOCK_COUNTRIES}" \
+            > "${GEOLOCK_EXTRA_CONF}"
+        log "GeoLock: default countries written (${GEOLOCK_COUNTRIES})"
+    else
+        log "GeoLock: extra-countries.conf exists — keeping current settings"
+    fi
+fi
+
 # ── Keycloak Admin API (optional) ─────────────────────────────────────────────
 # Enables the admin-kc.lua user management interface.
 # The logged-in admin's OIDC access_token is used for all API calls — no

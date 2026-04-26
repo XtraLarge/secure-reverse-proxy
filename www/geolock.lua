@@ -189,6 +189,9 @@ input[type=password]:focus{border-color:#4466aa}
 .hint{font-size:.74rem;color:#555570;margin-top:.22rem}
 .badge{display:inline-block;padding:.1rem .4rem;border-radius:3px;font-size:.72rem}
 .badge-warn{background:#2a1800;color:#ffb060;border:1px solid #5a3a10}
+.base-countries{font-size:.78rem;background:#0d0d22;border:1px solid #2a2a4e;
+  border-radius:4px;padding:.45rem .7rem;color:#6688aa;margin-bottom:.9rem}
+.base-countries strong{color:#7799cc}
 ]]
 
 function handle(r)
@@ -255,9 +258,10 @@ function handle(r)
       end
       save_extra(valid)
       graceful_reload()
+      os.execute("sleep 0.5 2>/dev/null")
       local msg = #valid == 0
-        and 'Keine zus\xc3\xa4tzlichen L\xc3\xa4nder aktiv.'
-        or  'Aktiv: ' .. h(table.concat(valid, ", ")) .. ' \xe2\x80\x94 Reload l\xc3\xa4uft.'
+        and 'Keine zus\xc3\xa4tzlichen L\xc3\xa4nder aktiv \xe2\x80\x94 Konfiguration \xc3\xbcbernommen.'
+        or  'Aktiv: ' .. h(table.concat(valid, ", ")) .. ' \xe2\x80\x94 Konfiguration \xc3\xbcbernommen.'
       alert = '<div class="alert alert-ok">' .. msg .. '</div>'
       failures = 0
     end
@@ -266,6 +270,22 @@ function handle(r)
   -- Render form
   local cc    = r.subprocess_env["GEOIP_COUNTRY_CODE"] or "??"
   local extra = get_extra()
+
+  -- Build base-countries display from GEOIP_ALLOW_COUNTRIES env var
+  local base_env  = os.getenv("GEOIP_ALLOW_COUNTRIES") or ""
+  local base_list = {}
+  for code in base_env:gmatch("[A-Z]+") do
+    -- find country name from COUNTRIES table
+    local name = code
+    for _, c in ipairs(COUNTRIES) do
+      if c[1] == code then name = code .. " \xe2\x80\x94 " .. c[2]; break end
+    end
+    table.insert(base_list, name)
+  end
+  local base_html = #base_list > 0
+    and ('<div class="base-countries"><strong>Basis-L\xc3\xa4nder (immer aktiv):</strong> '
+         .. h(table.concat(base_list, ", ")) .. '</div>')
+    or ""
 
   local detected = '<p class="detected">Erkanntes Land: <strong>' .. h(cc) .. '</strong>'
   if failures > 0 then
@@ -283,9 +303,9 @@ function handle(r)
 
   local form = '<form method="post" autocomplete="off">'
     .. '<input type="hidden" name="action" value="save">'
+    .. base_html
     .. '<div class="field"><label>Zus\xc3\xa4tzliche L\xc3\xa4nder (Strg+Klick = Mehrfachauswahl)</label>'
-    .. '<select name="countries" multiple>' .. table.concat(opts) .. '</select>'
-    .. '<p class="hint">Basis-L\xc3\xa4nder (GEOIP_ALLOW_COUNTRIES) bleiben immer aktiv.</p></div>'
+    .. '<select name="countries" multiple>' .. table.concat(opts) .. '</select></div>'
     .. '<div class="field"><label>PIN</label>'
     .. '<input type="password" name="pin" autofocus placeholder="\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2" maxlength="128"></div>'
     .. '<div class="field"><button type="submit" class="btn-save">Speichern &amp; Aktivieren</button></div>'
