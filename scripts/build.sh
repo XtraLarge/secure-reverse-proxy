@@ -14,7 +14,7 @@ DOCKER_HOST="${DOCKER_HOST:-10.0.0.1}"
 BUILD_CTX="/data/_DockerCreate/apache-oidc-proxy"
 IMAGE="apache-oidc-proxy:test"
 CONTAINER="proxy-proxy"
-VLAN_IP="10.0.0.2"
+VLAN_IP="${VLAN_IP:-10.0.0.2}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 DEPLOY=false
