@@ -35,6 +35,7 @@ _read_secret OIDC_CLIENT_SECRET
 _read_secret REDIS_PASSWORD
 _read_secret OIDC_CRYPTO_PASSPHRASE
 _read_secret ACME_EMAIL
+_read_secret KEYCLOAK_ADMIN_PASS
 
 # ── Required variables ────────────────────────────────────────────────────────
 [[ -n "${OIDC_PROVIDER_METADATA_URL:-}" ]] \
@@ -104,6 +105,8 @@ fi
 #                      Empty (default)   →  shows all realm roles.
 export KEYCLOAK_REALM="${KEYCLOAK_REALM:-master}"
 export KEYCLOAK_ROLE_PREFIX="${KEYCLOAK_ROLE_PREFIX:-}"
+export KEYCLOAK_ADMIN_USER="${KEYCLOAK_ADMIN_USER:-}"
+export KEYCLOAK_ADMIN_PASS="${KEYCLOAK_ADMIN_PASS:-}"
 if [[ -z "${KEYCLOAK_ADMIN_URL:-}" ]]; then
     # Auto-derive from OIDC_PROVIDER_METADATA_URL when it follows the standard
     # Keycloak pattern:  https://host/realms/REALM/.well-known/openid-configuration
@@ -119,6 +122,122 @@ if [[ -z "${KEYCLOAK_ADMIN_URL:-}" ]]; then
 else
     log "Keycloak Admin URL: ${KEYCLOAK_ADMIN_URL}"
 fi
+
+# ── Keycloak: auto-register OIDC redirect URIs ───────────────────────────────
+# On every container start, scan all site configs for ServerName directives and
+# ensure their https://<name>${OIDC_REDIRECT_PATH} URIs exist in the Keycloak
+# client.  Idempotent and non-fatal — logs a warning and skips on any error.
+# Requires KEYCLOAK_ADMIN_USER + KEYCLOAK_ADMIN_PASS.
+_kc_register_redirect_uris() {
+    [[ -z "${KEYCLOAK_ADMIN_USER:-}" || -z "${KEYCLOAK_ADMIN_PASS:-}" ]] && return 0
+    [[ -z "${KEYCLOAK_ADMIN_URL:-}" ]] && return 0
+
+    local all_servernames
+    all_servernames=$(grep -rih '^[[:space:]]*ServerName[[:space:]]' \
+        /etc/apache2/sites-admin/ /etc/apache2/sites-enabled/ 2>/dev/null \
+        | awk '{print $NF}' | grep '\.' | sort -u)
+    [[ -z "$all_servernames" ]] && return 0
+
+    _KC_API="${KEYCLOAK_ADMIN_URL}" \
+    _KC_REDIRECT_PATH="${OIDC_REDIRECT_PATH}" \
+    _KC_DEFAULT_CLIENT="${OIDC_CLIENT_ID}" \
+    _KC_ADMIN_USER="${KEYCLOAK_ADMIN_USER}" \
+    _KC_ADMIN_PASS="${KEYCLOAK_ADMIN_PASS}" \
+    _KC_SERVERNAMES="${all_servernames}" \
+    python3 << 'PYEOF'
+import json, os, re, glob, ssl
+import urllib.request, urllib.parse
+
+kc_raw     = os.environ['_KC_API']
+redir_path = os.environ['_KC_REDIRECT_PATH']
+def_client = os.environ['_KC_DEFAULT_CLIENT']
+adm_user   = os.environ['_KC_ADMIN_USER']
+adm_pass   = os.environ['_KC_ADMIN_PASS']
+servernames = [s for s in os.environ['_KC_SERVERNAMES'].strip().split('\n') if s.strip()]
+
+# Accept both /realms/REALM and /admin/realms/REALM formats
+m = re.match(r'(https?://[^/]+)(?:/admin)?(/realms/[^/?#]+)', kc_raw)
+if not m:
+    print(f"[entrypoint] Keycloak: cannot parse KEYCLOAK_ADMIN_URL={kc_raw!r}", flush=True)
+    raise SystemExit(0)
+host, realm_path = m.group(1), m.group(2)
+kc_api    = f"{host}/admin{realm_path}"
+token_url = f"{host}{realm_path}/protocol/openid-connect/token"
+
+ssl_ctx = ssl.create_default_context()
+ssl_ctx.check_hostname = False
+ssl_ctx.verify_mode = ssl.CERT_NONE
+
+def http(url, data=None, method=None, headers=None):
+    req = urllib.request.Request(url, data=data,
+                                 headers=headers or {}, method=method)
+    try:
+        with urllib.request.urlopen(req, context=ssl_ctx, timeout=10) as r:
+            body = r.read()
+            return json.loads(body) if body else {}
+    except Exception as e:
+        print(f"[entrypoint] Keycloak HTTP error ({url}): {e}", flush=True)
+        return None
+
+tok = http(token_url,
+           data=urllib.parse.urlencode({'grant_type': 'password', 'client_id': 'admin-cli',
+                                        'username': adm_user, 'password': adm_pass}).encode(),
+           headers={'Content-Type': 'application/x-www-form-urlencoded'})
+if not tok or not tok.get('access_token'):
+    print("[entrypoint] Keycloak: admin login failed — skipping redirect URI sync", flush=True)
+    raise SystemExit(0)
+auth = {'Authorization': f"Bearer {tok['access_token']}", 'Content-Type': 'application/json'}
+
+# Build domain → Keycloak client-ID map from .oidc override files
+domain_clients = {}
+for f in (glob.glob("/etc/apache2/AddOn/.oidc/*.conf") +
+          glob.glob("/etc/apache2/conf-runtime/oidc-client-*.conf")):
+    fname = os.path.basename(f)
+    domain = (fname[len("oidc-client-"):] if fname.startswith("oidc-client-") else fname)[:-len(".conf")]
+    try:
+        for line in open(f):
+            hit = re.match(r'\s*OIDCClientID\s+(\S+)', line, re.I)
+            if hit:
+                domain_clients[domain.lower()] = hit.group(1)
+                break
+    except OSError:
+        pass
+
+# Group required redirect URIs by Keycloak client ID
+client_uris: dict = {}
+for sn in servernames:
+    uri = f"https://{sn}{redir_path}"
+    matched = def_client
+    for dom, cid in domain_clients.items():
+        if sn.lower() == dom or sn.lower().endswith(f".{dom}"):
+            matched = cid
+            break
+    client_uris.setdefault(matched, set()).add(uri)
+
+# Update each Keycloak client
+for client_id, needed in client_uris.items():
+    clients = http(f"{kc_api}/clients?clientId={urllib.parse.quote(client_id, safe='')}",
+                   headers=auth)
+    if not clients:
+        print(f"[entrypoint] Keycloak: client '{client_id}' not found", flush=True)
+        continue
+    uuid = clients[0]['id']
+    client_obj = http(f"{kc_api}/clients/{uuid}", headers=auth)
+    if not client_obj:
+        continue
+    current = set(client_obj.get('redirectUris', []))
+    to_add = needed - current
+    if not to_add:
+        print(f"[entrypoint] Keycloak: '{client_id}' redirect URIs up to date", flush=True)
+        continue
+    client_obj['redirectUris'] = sorted(current | needed)
+    if http(f"{kc_api}/clients/{uuid}", data=json.dumps(client_obj).encode(),
+            method='PUT', headers=auth) is not None:
+        print(f"[entrypoint] Keycloak: added {len(to_add)} redirect URI(s) to '{client_id}': "
+              f"{sorted(to_add)}", flush=True)
+PYEOF
+}
+_kc_register_redirect_uris
 
 # ── Generate internal networks include ────────────────────────────────────────
 # INTERNAL_NETWORKS: comma-separated CIDRs that bypass GeoIP and auth entirely.
