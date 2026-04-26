@@ -69,13 +69,21 @@ while [[ -z "$DOMAIN" || ! "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*\.)+[A-Za-z]{
   ask DOMAIN "Base domain" ""
 done
 
-ask ADMIN_USER       "Admin username"                                          "admin"
-ask PROXY_HTTP_PORT  "HTTP port on host (container bind)"                        "80"
-ask PROXY_HTTPS_PORT "HTTPS port on host (container bind)"                       "443"
-say "If traffic reaches this server via port-forward/NAT (e.g. router forwards"
-say "external port 9443 → this server port 443), set the external HTTPS port below."
-ask HTTPS_PORT       "External HTTPS port seen by browsers (= bind port if no NAT)" "${PROXY_HTTPS_PORT}"
-ask TOC_TITLE        "TOC page title"                                             "Service Overview"
+ask ADMIN_USER  "Admin username"      "admin"
+ask TOC_TITLE   "TOC page title"      "Service Overview"
+
+header "Network"
+say "The proxy container gets its own IP on an existing macvlan Docker network."
+say "Example: network name 'VLan10', container IP '10.10.25.50'."
+ask MACVLAN_NET  "Existing macvlan network name"       "VLan10"
+ask PROXY_IP     "Container IP on that network"        ""
+while [[ -z "$PROXY_IP" || ! "$PROXY_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; do
+  warn "Enter a valid IP address"
+  ask PROXY_IP "Container IP" ""
+done
+say "If traffic arrives via port-forward/NAT (e.g. router maps :9443 → :443),"
+say "set the external HTTPS port below (what browsers see in URLs)."
+ask HTTPS_PORT "External HTTPS port seen by browsers" "443"
 
 header "Output Directory"
 ask OUT_DIR "Where to generate files" "${REPO_DIR}/deploy-${DOMAIN}"
@@ -83,15 +91,10 @@ ask OUT_DIR "Where to generate files" "${REPO_DIR}/deploy-${DOMAIN}"
 header "Deploy"
 ask DOCKER_HOST_OPT "Docker host for deploy (empty = local socket)" ""
 
-# ── derived values ────────────────────────────────────────────────���───────────
+# ── derived values ────────────────────────────────────────────────────────────
 [[ "$HTTPS_PORT" == "443" ]] && PORT_SUFFIX="" || PORT_SUFFIX=":${HTTPS_PORT}"
 REALM="proxy"
 CLIENT_ID="Proxy"
-# Static IP for proxy container on the generated frontend network.
-# extra_hosts maps iam.DOMAIN to this IP so mod_auth_openidc token exchange
-# stays inside the container without a hairpin through the host.
-PROXY_IP="172.30.0.2"
-PROXY_SUBNET="172.30.0.0/24"
 KC_HOSTNAME="https://iam.${DOMAIN}${PORT_SUFFIX}"
 
 say "Generating secrets..."
@@ -279,9 +282,6 @@ TOC_TITLE=${TOC_TITLE}
 KEYCLOAK_REALM=${REALM}
 KEYCLOAK_ADMIN=admin
 KEYCLOAK_ADMIN_PASSWORD=${KC_ADMIN_PASS}
-# Host port bindings (what the container binds to on the host):
-PROXY_HTTP_PORT=${PROXY_HTTP_PORT}
-PROXY_HTTPS_PORT=${PROXY_HTTPS_PORT}
 ENVEOF
 
 chmod 600 "${OUT_DIR}/.env"
@@ -302,9 +302,6 @@ services:
     build:
       context: ${REPO_DIR}
     restart: unless-stopped
-    ports:
-      - "\${PROXY_HTTP_PORT:-80}:80"
-      - "\${PROXY_HTTPS_PORT:-443}:443"
     env_file: .env
     environment:
       - APACHE_SERVER_NAME=localhost
@@ -313,9 +310,8 @@ services:
       - ./sites-enabled:/etc/apache2/sites-enabled:ro
       - ./AddOn:/etc/apache2/AddOn:ro
     extra_hosts:
-      # iam.DOMAIN resolves to the proxy's own static IP on the frontend network.
-      # This lets mod_auth_openidc complete the token exchange internally
-      # (Keycloak → proxy → keycloak:8080) without routing through the host.
+      # iam.DOMAIN resolves to the proxy's own macvlan IP.
+      # mod_auth_openidc token exchange stays internal: proxy → keycloak:8080.
       - "iam.${DOMAIN}:${PROXY_IP}"
     depends_on:
       redis:
@@ -386,11 +382,11 @@ services:
       - backend
 
 networks:
+  # The proxy container gets its own IP on the existing macvlan network.
+  # No port-mapping needed — all traffic to PROXY_IP goes directly to Apache.
   frontend:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: ${PROXY_SUBNET}
+    external: true
+    name: ${MACVLAN_NET}
 
   backend:
     driver: bridge
@@ -448,10 +444,13 @@ ok "credentials.txt (chmod 600)"
 # ── summary ───────────────────────────────────────────────────────────────────
 header "Summary"
 printf "Files generated in: ${BOLD}%s${RESET}\n\n" "$OUT_DIR"
-say "Required DNS records (point to your server's IP):"
+say "DNS records — point these subdomains to ${PROXY_IP}:"
 for sub in toc iam admin logout demo; do
-  printf "  ${sub}.%s\n" "$DOMAIN"
+  printf "  ${sub}.%s → %s\n" "$DOMAIN" "$PROXY_IP"
 done
+echo
+say "The proxy container will have IP ${PROXY_IP} on '${MACVLAN_NET}'."
+say "All traffic to that IP (port 80/443) goes directly to Apache — no port mapping."
 echo
 say "The TLS cert is self-signed — browsers will warn."
 say "Replace ${BOLD}ssl/${DOMAIN}/${RESET} with a real cert before production use."
