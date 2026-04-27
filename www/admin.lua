@@ -943,7 +943,7 @@ local function show_apache_config(r)
   end
 
   r:puts('<h2>Vollst\xC3\xA4ndige Config (mod_info)</h2>')
-  local p = io.popen("curl -s --max-time 3 'http://127.0.0.1:81/?config' 2>&1")
+  local p = io.popen("curl -s --max-time 15 'http://127.0.0.1:81/server-info?config' 2>&1")
   local info_html = p:read("*a")
   p:close()
   local body = info_html:match('<body[^>]*>(.*)</body>') or ('<pre>' .. h(info_html) .. '</pre>')
