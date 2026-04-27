@@ -942,6 +942,7 @@ local function show_apache_config(r)
       .. h(out) .. '</pre>')
   end
 
+  run_section("Vollst\xC3\xA4ndige Config (apache2ctl -D DUMP_CONFIG)", "/usr/sbin/apache2ctl -D DUMP_CONFIG")
   run_section("VirtualHost-\xC3\xBCbersicht (apache2ctl -S)", "/usr/sbin/apache2ctl -S")
   run_section("Geladene Module (apache2ctl -M)", "/usr/sbin/apache2ctl -M")
   r:puts('</body></html>')
