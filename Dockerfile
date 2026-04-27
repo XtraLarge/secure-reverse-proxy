@@ -44,6 +44,7 @@ RUN a2enmod \
     remoteip \
     socache_shmcb \
     substitute \
+    info \
     && a2dissite 000-default default-ssl 2>/dev/null || true
 
 # Macro definitions — static base macros (LOGGING, SSL, PROXY, etc.)
@@ -57,7 +58,7 @@ COPY conf/sites-available/ /etc/apache2/sites-available/
 
 COPY conf/ports.conf /etc/apache2/ports.conf
 
-RUN a2enconf server-security macro cgid-runtime evasive sites-admin acme-webroot logging
+RUN a2enconf server-security macro cgid-runtime evasive sites-admin acme-webroot logging apacheinfo-internal
 
 COPY conf/rsyslog/  /etc/rsyslog.d/
 COPY conf/logrotate/ /etc/logrotate.d/

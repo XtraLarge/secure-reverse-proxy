@@ -942,8 +942,13 @@ local function show_apache_config(r)
       .. h(out) .. '</pre>')
   end
 
-  run_section("Config-Dateien (macro / conf-runtime / sites-enabled / sites-admin / AddOn)",
-    "find /etc/apache2/macro /etc/apache2/conf-runtime /etc/apache2/sites-enabled /etc/apache2/sites-admin /etc/apache2/AddOn -name '*.conf' 2>/dev/null | sort | while read f; do printf '\\n### %s ###\\n' \"$f\"; cat \"$f\"; done")
+  r:puts('<h2>Vollst\xC3\xA4ndige Config (mod_info)</h2>')
+  local p = io.popen("curl -s --max-time 3 'http://127.0.0.1:81/?config' 2>&1")
+  local info_html = p:read("*a")
+  p:close()
+  local body = info_html:match('<body[^>]*>(.*)</body>') or ('<pre>' .. h(info_html) .. '</pre>')
+  r:puts('<div style="background:#fff;color:#000;padding:1em;border-radius:4px;overflow:auto;font-size:.82em">'
+    .. body .. '</div>')
   run_section("VirtualHost-\xC3\xBCbersicht (apache2ctl -S)", "/usr/sbin/apache2ctl -S")
   run_section("Geladene Module (apache2ctl -M)", "/usr/sbin/apache2ctl -M")
   r:puts('</body></html>')
