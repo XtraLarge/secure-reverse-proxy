@@ -264,6 +264,28 @@ local function configtest()
   return (ok == true or ok == 0), out
 end
 
+local function show_apache_config(r)
+  r:puts(page_head("\xF0\x9F\x93\x84 Apache Config", "/"))
+  r:puts('<h2>Config-Test</h2>')
+  local ok, test_out = configtest()
+  local cls = ok and 'color:#4caf50' or 'color:#f44336'
+  r:puts('<pre style="' .. cls .. ';background:#1a1a2e;padding:1em;border-radius:4px;overflow:auto">'
+    .. h(test_out) .. '</pre>')
+
+  local function run_section(title, cmd)
+    r:puts('<h2>' .. h(title) .. ' <button class="btn b-cfg" onclick="copyPre(this)" style="font-size:.8em">Copy</button></h2>')
+    local p = io.popen(cmd .. " 2>&1")
+    local out = p:read("*a")
+    p:close()
+    r:puts('<pre style="background:#1a1a2e;padding:1em;border-radius:4px;overflow:auto;font-size:.82em">'
+      .. h(out) .. '</pre>')
+  end
+
+  run_section("VirtualHost-Übersicht (apache2ctl -S)", "/usr/sbin/apache2ctl -S")
+  run_section("Geladene Module (apache2ctl -M)", "/usr/sbin/apache2ctl -M")
+  r:puts('</body></html>')
+end
+
 local function list_conf_files()
   return _list_dir_conf(SITES_DIR)
 end
@@ -468,6 +490,7 @@ local function topbar(title, back_url)
     .. '<a href="/?action=users">\xF0\x9F\x91\xA4 OIDC Auth</a>'
     .. '<a href="/?action=htpasswd">\xF0\x9F\x94\x91 Basic Auth</a>'
     .. '<a href="/?action=geolock">\xF0\x9F\x8C\x8D GeoLock</a>'
+    .. '<a href="/?action=apache_config">\xF0\x9F\x93\x84 Apache Config</a>'
     .. '</div>'
     .. user_block
     .. '</div>'
@@ -2977,6 +3000,9 @@ function handle(r)
 
   elseif action == "geolock_reset" and r.method == "POST" then
     do_geolock_reset(r)
+
+  elseif action == "apache_config" then
+    show_apache_config(r)
 
   else
     show_list(r)
