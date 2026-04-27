@@ -942,8 +942,13 @@ local function show_apache_config(r)
       .. h(out) .. '</pre>')
   end
 
-  r:puts('<h2>Vollst\xC3\xA4ndige Config (mod_info)</h2>')
-  local p = io.popen("curl -s --max-time 15 'http://127.0.0.1:81/server-info?config' 2>&1")
+  local apacheinfo_url = 'https://apacheinfo.' .. TOC_DOMAIN .. '/server-info'
+  r:puts('<h2>Server-Info (mod_info)</h2>')
+  r:puts('<p style="margin:.5em 0 1em">'
+    .. '<a href="' .. h(apacheinfo_url) .. '?config" target="_blank" class="btn" style="margin-right:.5em">Config \xF0\x9F\x94\x97</a>'
+    .. '<a href="' .. h(apacheinfo_url) .. '" target="_blank" class="btn">Alle Infos \xF0\x9F\x94\x97</a>'
+    .. '</p>')
+  local p = io.popen("curl -s --max-time 15 'http://127.0.0.1:81/server-info?server' 2>&1")
   local info_html = p:read("*a")
   p:close()
   local body = info_html:match('<body[^>]*>(.*)</body>') or ('<pre>' .. h(info_html) .. '</pre>')
