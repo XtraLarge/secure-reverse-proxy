@@ -12,7 +12,6 @@
 # $(AUTHORTYPE)  : Apache Require directive type, e.g. "user" or "group"
 # $(AUTHORENTRY) : Allowed user(s)/group(s), e.g. 'alice bob'
 <Macro CLIENTBASIC $(AUTHORTYPE) $(AUTHORENTRY)>
-  GeoIPEnable On
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
   IncludeOptional /etc/apache2/AddOn/.extra-countries.conf
 
