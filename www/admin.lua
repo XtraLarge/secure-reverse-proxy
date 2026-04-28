@@ -414,8 +414,9 @@ function filterSites(q) {
   });
 }
 function copyPre(btn) {
-  var pre = btn.parentElement.querySelector('pre');
-  if (!navigator.clipboard) return;
+  var el = btn.parentElement;
+  var pre = el.querySelector('pre') || (el.parentElement && el.parentElement.querySelector('pre'));
+  if (!navigator.clipboard || !pre) return;
   navigator.clipboard.writeText(pre.textContent).then(function() {
     var prev = btn.innerHTML;
     btn.innerHTML = '&#10003;&nbsp;Kopiert';
@@ -927,13 +928,17 @@ end
 
 local function show_apache_config(r)
   r:puts(page_head("\xF0\x9F\x93\x84 Apache Config", "/"))
+  r:puts('<div class="main">')
+
+  r:puts('<div class="card">')
   r:puts('<h2>Config-Test</h2>')
   local ok, test_out = configtest()
   local cls = ok and 'color:#4caf50' or 'color:#f44336'
   r:puts('<pre style="' .. cls .. ';background:#1a1a2e;padding:1em;border-radius:4px;overflow:auto">'
     .. h(test_out) .. '</pre>')
+  r:puts('</div>')
 
-  r:puts('<h2>Effektive Konfiguration</h2>')
+  r:puts('<div class="card">')
   local p = io.popen("curl -s --max-time 30 'http://127.0.0.1:81/server-info?config' 2>&1")
   local raw = p:read("*a")
   p:close()
@@ -960,11 +965,13 @@ local function show_apache_config(r)
     end
   end
   local clean = table.concat(lines, '\n')
-  r:puts('<div style="position:relative">')
-  r:puts('<button class="btn b-cfg" onclick="copyPre(this)"'
-    .. ' style="position:absolute;top:.5em;right:.5em;font-size:.8em;z-index:1">Copy</button>')
+  r:puts('<div>')
+  r:puts('<h2>Effektive Konfiguration <button class="btn b-cfg" onclick="copyPre(this)" style="font-size:.8em">Copy</button></h2>')
   r:puts('<pre style="background:#1a1a2e;padding:1em;border-radius:4px;overflow:auto;font-size:.82em;max-height:70vh">'
     .. h(clean) .. '</pre>')
+  r:puts('</div>')
+  r:puts('</div>')
+
   r:puts('</div>')
   r:puts('</body></html>')
 end
