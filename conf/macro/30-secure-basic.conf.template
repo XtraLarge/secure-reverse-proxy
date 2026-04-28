@@ -58,3 +58,29 @@
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
   </VirtualHost>
 </Macro>
+
+# VHost_Proxy_WS_Basic $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(AUTHORTYPE) $(AUTHORENTRY)
+# Full vhost with Basic auth + WebSocket-capable reverse proxy (upgrade=ANY).
+# Use instead of VHost_Proxy_Basic when the backend uses WebSockets (e.g. live streams).
+#
+# Example:
+#   Use VHost_Proxy_WS_Basic camera example.com http://10.0.0.9:5000/ user 'alice bob'
+<Macro VHost_Proxy_WS_Basic $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(AUTHORTYPE) $(AUTHORENTRY)>
+  <VirtualHost *:80>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE REWRITE2URL "https://$(SITENAME).$(DOMAINNAME)"
+  </VirtualHost>
+
+  <VirtualHost *:443>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE SSL $(DOMAINNAME)
+    USE CLIENTBASIC $(AUTHORTYPE) '$(AUTHORENTRY)'
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    USE PROXY_WS $(DESTINATION)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+  </VirtualHost>
+</Macro>
