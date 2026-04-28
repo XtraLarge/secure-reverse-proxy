@@ -937,10 +937,10 @@ local function show_apache_config(r)
   local p = io.popen("curl -s --max-time 30 'http://127.0.0.1:81/server-info?config' 2>&1")
   local raw = p:read("*a")
   p:close()
-  -- Insert newline at block boundaries BEFORE stripping tags so "In file:" lands on its own line
-  local txt = raw:gsub('</pre>', '\n')
-                 :gsub('<br[^>]*>', '\n')
+  -- Each directive is in a <dd>; insert newline at </dd> so every line is separate
+  local txt = raw:gsub('</dd>', '\n')
                  :gsub('</dt>', '\n')
+                 :gsub('<br[^>]*>', '\n')
   -- Strip remaining HTML tags
   txt = txt:gsub('<[^>]+>', '')
   -- Decode HTML entities (&amp; last to avoid double-decoding)
@@ -950,21 +950,19 @@ local function show_apache_config(r)
            :gsub('&lt;',    '<')
            :gsub('&gt;',    '>')
            :gsub('&amp;',   '&')
-  -- Remove "In file: ..." lines; strip leading line-number prefix ("  87: " or "   : ")
+  -- Keep only lines with a line-number prefix ("  87: " or "    : "); all other lines
+  -- are mod_info metadata headers (In file:, Configuration:, etc.)
   local lines = {}
   for line in txt:gmatch('[^\n]*') do
-    if not line:match('^%s*In file:') then
-      local directive = line:match('^%s*%d*:%s?(.*)$')
-      lines[#lines+1] = directive or line
+    local directive = line:match('^%s*%d*:%s?(.*)$')
+    if directive then
+      lines[#lines+1] = directive
     end
   end
   local clean = table.concat(lines, '\n')
-  r:puts('<div class="pre-wrap">')
-  r:puts('<button class="copy-btn" onclick="copyPre(this)" title="In Zwischenablage kopieren">'
-    .. '<svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor" style="vertical-align:middle">'
-    .. '<path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z"/>'
-    .. '<path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z"/>'
-    .. '</svg></button>')
+  r:puts('<div style="position:relative">')
+  r:puts('<button class="btn b-cfg" onclick="copyPre(this)"'
+    .. ' style="position:absolute;top:.5em;right:.5em;font-size:.8em;z-index:1">Copy</button>')
   r:puts('<pre style="background:#1a1a2e;padding:1em;border-radius:4px;overflow:auto;font-size:.82em;max-height:70vh">'
     .. h(clean) .. '</pre>')
   r:puts('</div>')
