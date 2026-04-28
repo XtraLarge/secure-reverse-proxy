@@ -108,7 +108,8 @@ local function save_extra(codes)
 end
 
 local function graceful_reload()
-  os.execute("kill -USR1 $(pgrep -o -x apache2 2>/dev/null) 2>/dev/null &")
+  local f = io.open("/run/apache-reload.fifo", "w")
+  if f then f:write("reload\n"); f:close() end
 end
 
 local function self_disable(domain)
