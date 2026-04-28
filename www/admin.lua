@@ -933,29 +933,26 @@ local function show_apache_config(r)
   r:puts('<pre style="' .. cls .. ';background:#1a1a2e;padding:1em;border-radius:4px;overflow:auto">'
     .. h(test_out) .. '</pre>')
 
-  local function run_section(title, cmd)
-    r:puts('<h2>' .. h(title) .. ' <button class="btn b-cfg" onclick="copyPre(this)" style="font-size:.8em">Copy</button></h2>')
-    local p = io.popen(cmd .. " 2>&1")
-    local out = p:read("*a")
-    p:close()
-    r:puts('<pre style="background:#1a1a2e;padding:1em;border-radius:4px;overflow:auto;font-size:.82em">'
-      .. h(out) .. '</pre>')
-  end
-
-  local apacheinfo_url = 'https://apacheinfo.' .. TOC_DOMAIN .. '/server-info'
-  r:puts('<h2>Server-Info (mod_info)</h2>')
-  r:puts('<p style="margin:.5em 0 1em">'
-    .. '<a href="' .. h(apacheinfo_url) .. '?config" target="_blank" class="btn" style="margin-right:.5em">Config \xF0\x9F\x94\x97</a>'
-    .. '<a href="' .. h(apacheinfo_url) .. '" target="_blank" class="btn">Alle Infos \xF0\x9F\x94\x97</a>'
-    .. '</p>')
-  local p = io.popen("curl -s --max-time 15 'http://127.0.0.1:81/server-info?server' 2>&1")
-  local info_html = p:read("*a")
+  r:puts('<h2>Effektive Konfiguration <button class="btn b-cfg" onclick="copyPre(this)" style="font-size:.8em">Copy</button></h2>')
+  local p = io.popen("curl -s --max-time 30 'http://127.0.0.1:81/server-info?config' 2>&1")
+  local raw = p:read("*a")
   p:close()
-  local body = info_html:match('<body[^>]*>(.*)</body>') or ('<pre>' .. h(info_html) .. '</pre>')
-  r:puts('<div style="background:#fff;color:#000;padding:1em;border-radius:4px;overflow:auto;font-size:.82em">'
-    .. body .. '</div>')
-  run_section("VirtualHost-\xC3\xBCbersicht (apache2ctl -S)", "/usr/sbin/apache2ctl -S")
-  run_section("Geladene Module (apache2ctl -M)", "/usr/sbin/apache2ctl -M")
+  -- Strip all HTML tags, decode &lt; &gt; &amp;
+  local txt = raw:gsub('<[^>]+>', '')
+  txt = txt:gsub('&lt;',  '<')
+           :gsub('&gt;',  '>')
+           :gsub('&amp;', '&')
+  -- Remove "In file: ..." lines; strip leading line-number prefix ("   87: ")
+  local lines = {}
+  for line in txt:gmatch('[^\n]*') do
+    if not line:match('^%s*In file:') then
+      local directive = line:match('^%s*%d+:%s?(.*)$')
+      lines[#lines+1] = directive or line
+    end
+  end
+  local clean = table.concat(lines, '\n')
+  r:puts('<pre style="background:#1a1a2e;padding:1em;border-radius:4px;overflow:auto;font-size:.82em;max-height:70vh">'
+    .. h(clean) .. '</pre>')
   r:puts('</body></html>')
 end
 
