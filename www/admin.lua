@@ -1545,10 +1545,10 @@ local function show_kc_login(r, errmsg)
   if errmsg and errmsg ~= "needs_login" then
     r:puts(msg_html("ERR: " .. errmsg))
   end
-  r:puts('<p>Der aktuell angemeldete Account hat keine ausreichenden Rechte '
-    .. 'zur Nutzerverwaltung in Keycloak.</p>')
-  r:puts('<p>Bitte abmelden und mit einem Account mit <code>manage-users</code>-Rolle '
-    .. 'neu anmelden.</p>')
+  r:puts('<p>Keycloak-Admin-Zugriff nicht möglich. Bitte prüfen:</p>')
+  r:puts('<ul><li><code>KEYCLOAK_ADMIN_URL</code> gesetzt?</li>'
+    .. '<li><code>KEYCLOAK_ADMIN_USER</code> / <code>KEYCLOAK_ADMIN_PASS</code> gesetzt?</li>'
+    .. '<li>Nutzer hat <code>manage-users</code>-Rolle im Realm?</li></ul>')
   r:puts('<div class="applybar">')
   local _redir = TOC_DOMAIN ~= "" and ("https://admin." .. TOC_DOMAIN .. "/?action=users") or "/?action=users"
   local _lo = TOC_DOMAIN ~= "" and ("https://admin." .. TOC_DOMAIN .. "/protected?logout=" .. ue(_redir)) or _redir
@@ -1953,17 +1953,37 @@ end
 -- Get a Keycloak admin token from the current OIDC session.
 -- The logged-in user must have manage-users / view-users roles on master-realm.
 -- Returns: token_string, nil  OR  nil, error_message
--- Special error "needs_login" means: no valid token → show re-login prompt.
+-- Fetches a fresh Keycloak admin token using KEYCLOAK_ADMIN_USER / _PASSWORD env vars.
 kc_token = function(r)
   if KC_ADMIN_URL == "" then
     return nil, "KEYCLOAK_ADMIN_URL nicht gesetzt"
   end
 
-  local tok = r and r.subprocess_env and r.subprocess_env["OIDC_access_token"]
-  if not tok or tok == "" then
-    return nil, "needs_login"
+  local user = os.getenv("KEYCLOAK_ADMIN_USER")    or ""
+  local pass = os.getenv("KEYCLOAK_ADMIN_PASS") or ""
+  if user == "" or pass == "" then
+    return nil, "KEYCLOAK_ADMIN_USER / KEYCLOAK_ADMIN_PASS nicht gesetzt"
   end
 
+  local token_url = KC_ADMIN_URL .. "/protocol/openid-connect/token"
+  local body = "client_id=admin-cli&grant_type=password"
+    .. "&username=" .. ue(user) .. "&password=" .. ue(pass)
+  local tmp = os.tmpname()
+  io.open(tmp, "w"):write(body):close()
+  local cmd = string.format(
+    'curl -s -k -X POST --data @%s "%s" 2>/dev/null', tmp, token_url)
+  local p = io.popen(cmd)
+  local out = p:read("*a")
+  p:close()
+  os.remove(tmp)
+
+  local tok = out:match('"access_token"%s*:%s*"([^"]+)"')
+  if not tok or tok == "" then
+    local err = out:match('"error_description"%s*:%s*"([^"]+)"')
+      or out:match('"error"%s*:%s*"([^"]+)"')
+      or out:sub(1, 80)
+    return nil, "Keycloak-Token-Fehler: " .. (err or "keine Antwort")
+  end
   return tok, nil
 end
 
