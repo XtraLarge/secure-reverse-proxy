@@ -26,7 +26,7 @@
 
       # External: must be from an allowed country AND match the auth entry
       <RequireAll>
-        Require env AllowCountry
+        Require expr "reqenv('AllowCountry') != ''"
         Require $(AUTHORTYPE) $(AUTHORENTRY)
       </RequireAll>
     </RequireAny>
