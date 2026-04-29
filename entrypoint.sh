@@ -238,7 +238,7 @@ auth = {'Authorization': f"Bearer {tok['access_token']}", 'Content-Type': 'appli
 
 # ── Build domain → Keycloak client-ID map ────────────────────────────────────
 domain_clients = {}
-for f in (glob.glob("/etc/apache2/AddOn/.oidc/*.conf") +
+for f in (glob.glob("/etc/apache2/oidc-clients/*.conf") +
           glob.glob("/etc/apache2/conf-runtime/oidc-client-*.conf")):
     fname = os.path.basename(f)
     domain = (fname[len("oidc-client-"):] if fname.startswith("oidc-client-") else fname)[:-len(".conf")]
@@ -618,10 +618,13 @@ _fix_owner  "/etc/apache2/basic.htpasswd" "basic.htpasswd"
 _fix_owner  "/etc/apache2/AddOn"          "AddOn/"
 # sites-admin/ — admin.lua reads and writes VHost conf files
 _fix_owner  "/etc/apache2/sites-admin"    "sites-admin/"
+# oidc-clients/ — admin.lua writes per-domain Keycloak client credentials
+_fix_owner  "/etc/apache2/oidc-clients"   "oidc-clients/"
 # Verify after fix
 _check_writable "/etc/apache2/basic.htpasswd" "basic.htpasswd"
 _check_writable "/etc/apache2/AddOn"          "AddOn/"
 _check_writable "/etc/apache2/sites-admin"    "sites-admin/"
+_check_writable "/etc/apache2/oidc-clients"   "oidc-clients/"
 
 # ── Validate Apache config ────────────────────────────────────────────────────
 log "Testing Apache configuration..."

@@ -22,6 +22,10 @@ services:
       # Optional per-vhost Apache include snippets, e.g.:
       #   AddOn/example.com/mysite.pre.conf
       - ./AddOn:/etc/apache2/AddOn:ro
+
+      # Per-domain Keycloak client credentials — written by the admin UI.
+      # Must be :rw so admin.lua can create/update <domain>.conf files.
+      - ./oidc-clients:/etc/apache2/oidc-clients:rw
     networks:
       - frontend
       - backend

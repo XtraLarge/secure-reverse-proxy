@@ -9,7 +9,7 @@
 
 local SITES_DIR = "/etc/apache2/sites-admin/"
 local ADDON_DIR = "/etc/apache2/AddOn/"
-local OIDC_DIR  = "/etc/apache2/AddOn/.oidc/"
+local OIDC_DIR  = "/etc/apache2/oidc-clients/"
 
 local _lfs   = (function() local ok, m = pcall(require, 'lfs');   return ok and m end)()
 local _posix = (function() local ok, m = pcall(require, 'posix'); return ok and m end)()  -- lua-posix needs Lua 5.4 build; nil on bookworm
@@ -2266,7 +2266,7 @@ local function kc_create_client(domain, token)
   return secret, nil
 end
 
--- Write domain OIDC client credentials to AddOn/.oidc/<domain>.conf
+-- Write domain OIDC client credentials to oidc-clients/<domain>.conf
 local function write_oidc_client_conf(domain, client_id, secret)
   _mkdir_p(OIDC_DIR)
   local path = OIDC_DIR .. domain .. ".conf"
@@ -2280,7 +2280,7 @@ local function write_oidc_client_conf(domain, client_id, secret)
   return true, nil
 end
 
--- Read existing OIDC client credentials from AddOn/.oidc/<domain>.conf
+-- Read existing OIDC client credentials from oidc-clients/<domain>.conf
 local function read_oidc_client_conf(domain)
   local path = OIDC_DIR .. domain .. ".conf"
   local f = io.open(path, "r")
