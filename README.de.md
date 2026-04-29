@@ -86,9 +86,9 @@ cp /pfad/zu/fullchain.pem ssl/example.com/fullchain.pem
 ### 3. Site-Konfiguration erstellen
 
 ```bash
-mkdir -p sites-enabled
-cp conf/sites-available/example.conf sites-enabled/example.com.conf
-# sites-enabled/example.com.conf bearbeiten — example.com durch eigene Domain ersetzen
+mkdir -p sites
+cp conf/sites-available/example.conf sites/example.com.conf
+# sites/example.com.conf bearbeiten — example.com durch eigene Domain ersetzen
 ```
 
 ### 4. Starten
@@ -119,7 +119,7 @@ secure-reverse-proxy/
 │       ├── cert.pem
 │       ├── key.pem
 │       └── fullchain.pem
-├── sites-enabled/              ← Eigene VHost-Konfigurationen (gitignored)
+├── sites/                      ← Eigene VHost-Konfigurationen (gitignored)
 │   └── <domain>.conf
 └── AddOn/                      ← Optionale Apache-Snippets pro VHost (gitignored)
     ├── <domain>/
@@ -129,7 +129,7 @@ secure-reverse-proxy/
         └── <domain>.conf       ← OIDCClientID / OIDCClientSecret-Überschreibungen
 ```
 
-`ssl/`, `sites-enabled/` und `AddOn/` werden als Bind-Mounts in den Container
+`ssl/`, `sites/`, `AddOn/` und `config/` werden als Bind-Mounts in den Container
 eingehängt und nie ins Git eingecheckt.
 
 ---
@@ -223,7 +223,7 @@ Port 80 muss erreichbar sein, damit certbot die HTTP-01-Challenge abschließen k
 
 ## Site-Konfiguration
 
-Pro Domain eine `.conf`-Datei in `sites-enabled/` erstellen. Als Vorlage dient
+Pro Domain eine `.conf`-Datei in `sites/` erstellen. Als Vorlage dient
 [`conf/sites-available/example.conf`](conf/sites-available/example.conf).
 
 ### Domain-Rahmen
@@ -360,17 +360,10 @@ Die Admin-Oberfläche ermöglicht:
 - **Neu laden** der Apache-Konfiguration ohne Container-Neustart
 - **Keycloak-Clients anlegen und rotieren** — der `proxy-<domain>`-Client,
   `admin`/`user`-Rollen und `<domain>-admins`/`<domain>-users`-Gruppen werden
-  automatisch erstellt; die Credentials werden in `AddOn/.oidc/<domain>.conf` gespeichert
+  automatisch erstellt; die Credentials werden in `config/oidc-clients/<domain>.conf` gespeichert
 
 ![Admin-Oberfläche](docs/screenshots/admin.png)
 <!-- TODO: Screenshot -->
-
-> Das `sites-enabled`-Volume muss **read-write** eingehängt sein, damit die
-> Admin-Oberfläche Änderungen speichern kann:
-> ```yaml
-> volumes:
->   - ./sites-enabled:/etc/apache2/sites-enabled:rw
-> ```
 
 ### Keycloak-Benutzerverwaltung (`admin.<domain>/admin-kc.lua`)
 
@@ -440,8 +433,8 @@ docker compose logs -f proxy
 # Apache-Konfiguration testen ohne Neustart
 docker compose exec proxy apache2ctl configtest
 
-# Apache nach Änderungen an sites-enabled/ oder AddOn/ neu laden
-docker compose exec proxy apache2ctl graceful
+# Apache nach Änderungen an sites/ oder AddOn/ neu laden (Container-Neustart)
+docker compose exec proxy kill -TERM 1
 
 # Stoppen
 docker compose down

@@ -78,17 +78,17 @@ OIDC_COOKIE_DOMAIN=example.com
 
 ```bash
 mkdir -p ssl/example.com
-cp /path/to/cert.pem     ssl/example.com/cert.pem
-cp /path/to/key.pem      ssl/example.com/key.pem
+cp /path/to/cert.pem      ssl/example.com/cert.pem
+cp /path/to/key.pem       ssl/example.com/key.pem
 cp /path/to/fullchain.pem ssl/example.com/fullchain.pem
 ```
 
 ### 3. Create a site configuration
 
 ```bash
-mkdir -p sites-enabled
-cp conf/sites-available/example.conf sites-enabled/example.com.conf
-# edit sites-enabled/example.com.conf — replace example.com with your domain
+mkdir -p sites
+cp conf/sites-available/example.conf sites/example.com.conf
+# edit sites/example.com.conf — replace example.com with your domain
 ```
 
 ### 4. Start
@@ -119,17 +119,20 @@ secure-reverse-proxy/
 │       ├── cert.pem
 │       ├── key.pem
 │       └── fullchain.pem
-├── sites-enabled/              ← your vhost configs (gitignored)
+├── sites/                      ← your vhost configs (gitignored)
 │   └── <domain>.conf
-└── AddOn/                      ← optional per-vhost Apache snippets (gitignored)
-    ├── <domain>/
-    │   ├── <site>.preconfig    ← included before ProxyPass
-    │   └── <site>.postconfig   ← included after ProxyPass
-    └── .oidc/                  ← per-domain OIDC credentials (written by admin UI)
+├── AddOn/                      ← optional per-vhost Apache snippets (gitignored)
+│   └── <domain>/
+│       ├── <site>.preconfig    ← included before ProxyPass
+│       └── <site>.postconfig   ← included after ProxyPass
+└── config/                     ← runtime config (gitignored)
+    ├── basic.htpasswd          ← Basic Auth user database
+    ├── extra-countries.conf    ← GeoIP country allow-list (written by geolock UI)
+    └── oidc-clients/           ← per-domain OIDC credentials (written by admin UI)
         └── <domain>.conf       ← OIDCClientID / OIDCClientSecret overrides
 ```
 
-`ssl/`, `sites-enabled/` and `AddOn/` are bind-mounted into the container and
+`ssl/`, `sites/`, `AddOn/` and `config/` are bind-mounted into the container and
 are never committed to git.
 
 ---
@@ -222,7 +225,7 @@ Expose port 80 so certbot can complete the HTTP-01 challenge.
 
 ## Site configuration
 
-Create one `.conf` file per domain in `sites-enabled/`. Use the macros provided —
+Create one `.conf` file per domain in `sites/`. Use the macros provided —
 see [`conf/sites-available/example.conf`](conf/sites-available/example.conf) for
 a full annotated reference.
 
@@ -360,17 +363,10 @@ The admin UI lets you:
 - **Reload** the Apache configuration without restarting the container
 - **Create and rotate Keycloak clients** per domain — the proxy-`<domain>` client,
   `admin`/`user` roles, and `<domain>-admins`/`<domain>-users` groups are set up
-  automatically; the per-domain credentials are stored in `AddOn/.oidc/<domain>.conf`
+  automatically; the per-domain credentials are stored in `config/oidc-clients/<domain>.conf`
 
 ![Admin UI](docs/screenshots/admin.png)
 <!-- TODO: screenshot -->
-
-> The `sites-enabled` volume must be mounted **read-write** for the admin UI to
-> save changes:
-> ```yaml
-> volumes:
->   - ./sites-enabled:/etc/apache2/sites-enabled:rw
-> ```
 
 ### Keycloak user management (`admin.<domain>/admin-kc.lua`)
 
@@ -440,8 +436,8 @@ docker compose logs -f proxy
 # Test Apache config without restarting
 docker compose exec proxy apache2ctl configtest
 
-# Reload Apache after editing sites-enabled/ or AddOn/
-docker compose exec proxy apache2ctl graceful
+# Reload Apache (full restart via tini — graceful reload not reliable in Docker)
+docker compose exec proxy kill -TERM 1
 
 # Stop
 docker compose down
