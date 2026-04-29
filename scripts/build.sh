@@ -1,10 +1,11 @@
 #!/bin/bash
-# build.sh — Sync repo to docker-sys build context, build image, optionally deploy
+# build.sh — Build and deploy secure-reverse-proxy
 #
 # Usage (from repo root or scripts/):
-#   ./scripts/build.sh              # sync + build only
-#   ./scripts/build.sh --deploy     # sync + build + deploy + smoke test
-#   ./scripts/build.sh --deploy --skip-git-check   # deploy without clean-git requirement
+#   ./scripts/build.sh              # sync + build only (local test image)
+#   ./scripts/build.sh --test       # sync + build + deploy to test (10.10.25.50)
+#   ./scripts/build.sh --prod       # docker pull from DockerHub + deploy to prod
+#   ./scripts/build.sh --test --skip-git-check
 #
 # Requires SSH access to DOCKER_HOST (default: 10.0.0.1).
 
@@ -12,98 +13,119 @@ set -euo pipefail
 
 DOCKER_HOST="${DOCKER_HOST:-10.0.0.1}"
 BUILD_CTX="/data/_DockerBuild/secure-reverse-proxy"
-IMAGE="secure-reverse-proxy:test"
-CONTAINER="proxy-proxy"
-VLAN_IP="${VLAN_IP:-10.0.0.2}"
+IMAGE_LOCAL="secure-reverse-proxy:test"
+IMAGE_PROD="xtralarge71/secure-reverse-proxy:latest"
+CONTAINER_PROD="proxy-proxy"
+CONTAINER_TEST="proxy-test-proxy"
+VLAN_IP_PROD="${VLAN_IP:-10.0.0.2}"
+VLAN_IP_TEST="${VLAN_IP_TEST:-10.10.25.50}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-DEPLOY=false
+MODE=""
 SKIP_GIT=false
 for arg in "$@"; do
   case "$arg" in
-    --deploy)          DEPLOY=true ;;
+    --test)            MODE="test" ;;
+    --prod)            MODE="prod" ;;
     --skip-git-check)  SKIP_GIT=true ;;
   esac
 done
 
+# ── Smoke test ────────────────────────────────────────────────────────────────
+_smoke_test() {
+  local container="$1"
+  local vlan_ip="$2"
+  echo "==> Smoke test..."
+
+  ACTUAL_NAME=$(ssh "root@${DOCKER_HOST}" \
+    "docker ps --filter name=^${container}$ --format '{{.Names}}'" 2>/dev/null || true)
+  if [[ "$ACTUAL_NAME" != "$container" ]]; then
+    echo "ERR: Container-Name falsch! Gefunden: '${ACTUAL_NAME}', erwartet: '${container}'"
+    exit 1
+  fi
+  echo "    Container-Name: OK (${container})"
+
+  local HEALTH=""
+  for i in $(seq 1 12); do
+    HEALTH=$(ssh "root@${DOCKER_HOST}" \
+      "docker inspect --format='{{.State.Health.Status}}' ${container} 2>/dev/null" || true)
+    [[ "$HEALTH" == "healthy" ]] && break
+    echo "    Warte auf healthy... ($i/12, aktuell: ${HEALTH:-unbekannt})"
+    sleep 5
+  done
+
+  if [[ "$HEALTH" != "healthy" ]]; then
+    echo "ERR: Container nicht healthy nach 60 s (Status: ${HEALTH})"
+    ssh "root@${DOCKER_HOST}" "docker logs ${container} --tail 20" || true
+    exit 1
+  fi
+  echo "    Health: OK"
+
+  local HTTP_CODE
+  HTTP_CODE=$(ssh "root@${DOCKER_HOST}" \
+    "curl -s -o /dev/null -w '%{http_code}' --max-time 10 -k https://${vlan_ip}/" 2>/dev/null || echo "000")
+  if [[ "$HTTP_CODE" =~ ^(200|301|302|303|307|308|401|403)$ ]]; then
+    echo "    HTTPS:  OK (HTTP ${HTTP_CODE})"
+  else
+    echo "ERR: HTTPS Smoke-Test fehlgeschlagen — HTTP ${HTTP_CODE} von ${vlan_ip}"
+    exit 1
+  fi
+  echo "==> Done."
+}
+
 # ── Git check ─────────────────────────────────────────────────────────────────
-# Every deployment must start from a committed state so that deployed code is
-# always traceable via git log. Use --skip-git-check only for quick iteration.
-if $DEPLOY && ! $SKIP_GIT; then
+if [[ -n "$MODE" ]] && ! $SKIP_GIT; then
   if ! git -C "$REPO_DIR" diff --quiet HEAD 2>/dev/null; then
     echo "ERR: Uncommitted changes — bitte erst committen:"
     git -C "$REPO_DIR" status --short
     echo ""
-    echo "  Hint: git add -p && git commit -m '...' && ./scripts/build.sh --deploy"
-    echo "  Oder: ./scripts/build.sh --deploy --skip-git-check  (nur für Quick-Iteration)"
+    echo "  Hint: git add -p && git commit -m '...' && ./scripts/build.sh --${MODE:-test}"
+    echo "  Oder: ./scripts/build.sh --${MODE:-test} --skip-git-check  (nur für Quick-Iteration)"
     exit 1
   fi
 fi
 
-# ── Sync + build ──────────────────────────────────────────────────────────────
+# ── Prod: pull from DockerHub + deploy ────────────────────────────────────────
+if [[ "$MODE" == "prod" ]]; then
+  echo "==> Pulling ${IMAGE_PROD} on ${DOCKER_HOST}"
+  ssh "root@${DOCKER_HOST}" "docker pull ${IMAGE_PROD}"
+
+  echo "==> Deploying ${CONTAINER_PROD} (prod)"
+  ssh "root@${DOCKER_HOST}" \
+      "docker compose \
+          -f /data/_DockerCreate/compose/proxy.yaml \
+          --env-file /data/_DockerCreate/compose/.env \
+          --env-file /data/_DockerCreate/compose/proxy.env \
+          -p proxy \
+          up -d --force-recreate proxy"
+
+  _smoke_test "$CONTAINER_PROD" "$VLAN_IP_PROD"
+  exit 0
+fi
+
+# ── Sync + build (local test image) ───────────────────────────────────────────
 echo "==> Syncing ${REPO_DIR}/ → ${DOCKER_HOST}:${BUILD_CTX}/"
 rsync -av --delete \
     --exclude='.git' \
     "${REPO_DIR}/" \
     "root@${DOCKER_HOST}:${BUILD_CTX}/"
 
-echo "==> Building ${IMAGE} on ${DOCKER_HOST}"
-ssh "root@${DOCKER_HOST}" "docker build -t ${IMAGE} ${BUILD_CTX}"
+echo "==> Building ${IMAGE_LOCAL} on ${DOCKER_HOST}"
+ssh "root@${DOCKER_HOST}" "docker build -t ${IMAGE_LOCAL} ${BUILD_CTX}"
 
-# ── Deploy ────────────────────────────────────────────────────────────────────
-if ! $DEPLOY; then
+if [[ "$MODE" != "test" ]]; then
   echo "==> Done (build only — kein Deploy)."
   exit 0
 fi
 
-echo "==> Deploying ${CONTAINER}"
+# ── Test: deploy to test environment ──────────────────────────────────────────
+echo "==> Deploying ${CONTAINER_TEST} (test)"
 ssh "root@${DOCKER_HOST}" \
     "docker compose \
-        -f /data/_DockerCreate/compose/proxy.yaml \
+        -f /data/_DockerCreate/compose/proxy-test.yaml \
         --env-file /data/_DockerCreate/compose/.env \
-        --env-file /data/_DockerCreate/compose/proxy.env \
-        -p proxy \
+        --env-file /data/_DockerCreate/compose/proxy-test.env \
+        -p proxy-test \
         up -d --force-recreate proxy"
 
-# ── Smoke test ────────────────────────────────────────────────────────────────
-echo "==> Smoke test..."
-
-# 1) Richtiger Container-Name?
-ACTUAL_NAME=$(ssh "root@${DOCKER_HOST}" \
-  "docker ps --filter name=^${CONTAINER}$ --format '{{.Names}}'" 2>/dev/null || true)
-if [[ "$ACTUAL_NAME" != "$CONTAINER" ]]; then
-  echo "ERR: Container-Name falsch! Gefunden: '${ACTUAL_NAME}', erwartet: '${CONTAINER}'"
-  echo "     Bitte prüfen ob COMPOSE_PROJECT_NAME und NAME in proxy.env korrekt sind."
-  exit 1
-fi
-echo "    Container-Name: OK (${CONTAINER})"
-
-# 2) Warten bis healthy (max. 60 s)
-HEALTH=""
-for i in $(seq 1 12); do
-  HEALTH=$(ssh "root@${DOCKER_HOST}" \
-    "docker inspect --format='{{.State.Health.Status}}' ${CONTAINER} 2>/dev/null" || true)
-  [[ "$HEALTH" == "healthy" ]] && break
-  echo "    Warte auf healthy... ($i/12, aktuell: ${HEALTH:-unbekannt})"
-  sleep 5
-done
-
-if [[ "$HEALTH" != "healthy" ]]; then
-  echo "ERR: Container nicht healthy nach 60 s (Status: ${HEALTH})"
-  echo "     docker logs ${CONTAINER} | tail -20:"
-  ssh "root@${DOCKER_HOST}" "docker logs ${CONTAINER} --tail 20" || true
-  exit 1
-fi
-echo "    Health: OK"
-
-# 3) HTTPS antwortet?
-HTTP_CODE=$(ssh "root@${DOCKER_HOST}" \
-  "curl -s -o /dev/null -w '%{http_code}' --max-time 10 -k https://${VLAN_IP}/" 2>/dev/null || echo "000")
-if [[ "$HTTP_CODE" =~ ^(200|301|302|303|307|308|401|403)$ ]]; then
-  echo "    HTTPS:  OK (HTTP ${HTTP_CODE})"
-else
-  echo "ERR: HTTPS Smoke-Test fehlgeschlagen — HTTP ${HTTP_CODE} von ${VLAN_IP}"
-  exit 1
-fi
-
-echo "==> Done."
+_smoke_test "$CONTAINER_TEST" "$VLAN_IP_TEST"
