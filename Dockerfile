@@ -89,7 +89,7 @@ RUN chmod 0644 /etc/cron.d/rotate-oidc-key /etc/cron.d/geoip-update /etc/cron.d/
 
 # Runtime directory for generated configs; sites-admin/ for admin-managed domain configs
 # acme-webroot/ serves ACME HTTP-01 challenge tokens (certbot --webroot -w /var/www/acme-webroot)
-RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites-admin /etc/apache2/oidc-clients /var/www/acme-webroot
+RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites-admin /etc/apache2/oidc-clients /etc/apache2/geolock /var/www/acme-webroot
 
 # ── Volumes ──────────────────────────────────────────────────────────────────
 # ssl/              Manual TLS certificates, one subdir per domain:
@@ -110,10 +110,13 @@ RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites-admin /etc/apache2/oid
 # oidc-clients/     Per-domain Keycloak client credentials (OIDCClientID/Secret).
 #                   Written by the admin UI after creating a new Keycloak client.
 #
+# geolock/          GeoIP country allow-list (extra-countries.conf).
+#                   Written by geolock.lua and the admin UI.
+#
 # acme-webroot/     ACME challenge token directory — must be writable by the
 #                   container.  certbot writes tokens here; Apache serves them
 #                   at /.well-known/acme-challenge/ on port 80.
-VOLUME ["/etc/apache2/ssl", "/etc/letsencrypt", "/etc/apache2/sites-enabled", "/etc/apache2/sites-admin", "/etc/apache2/AddOn", "/etc/apache2/oidc-clients", "/var/www/acme-webroot"]
+VOLUME ["/etc/apache2/ssl", "/etc/letsencrypt", "/etc/apache2/sites-enabled", "/etc/apache2/sites-admin", "/etc/apache2/AddOn", "/etc/apache2/oidc-clients", "/etc/apache2/geolock", "/var/www/acme-webroot"]
 
 EXPOSE 80 443
 

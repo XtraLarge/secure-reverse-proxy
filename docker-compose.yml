@@ -26,6 +26,9 @@ services:
       # Per-domain Keycloak client credentials — written by the admin UI.
       # Must be :rw so admin.lua can create/update <domain>.conf files.
       - ./oidc-clients:/etc/apache2/oidc-clients:rw
+
+      # GeoIP country allow-list — written by geolock.lua and admin UI.
+      - ./geolock:/etc/apache2/geolock:rw
     networks:
       - frontend
       - backend

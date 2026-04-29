@@ -891,7 +891,7 @@ end
 
 local function show_geolock_view(r, msg)
   local lock_path = "/etc/apache2/conf-runtime/geolock.lock"
-  local conf_path = "/etc/apache2/AddOn/.extra-countries.conf"
+  local conf_path = "/etc/apache2/geolock/extra-countries.conf"
   local failures  = tonumber(read_file(lock_path) or "") or 0
   local locked    = failures >= 3
   local conf      = read_file(conf_path) or ""

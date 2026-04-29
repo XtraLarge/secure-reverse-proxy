@@ -13,7 +13,7 @@
 # $(AUTHORENTRY) : Allowed user(s)/group(s), e.g. 'alice bob'
 <Macro CLIENTBASIC $(AUTHORTYPE) $(AUTHORENTRY)>
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-  IncludeOptional /etc/apache2/AddOn/.extra-countries.conf
+  IncludeOptional /etc/apache2/geolock/extra-countries.conf
 
   <Location />
     AuthType Basic

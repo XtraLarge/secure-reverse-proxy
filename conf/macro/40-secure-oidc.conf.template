@@ -89,7 +89,7 @@
   USE OIDCBASE $(SITENAME) $(DOMAINNAME)
 
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-  IncludeOptional /etc/apache2/AddOn/.extra-countries.conf
+  IncludeOptional /etc/apache2/geolock/extra-countries.conf
 
   <Location />
     AuthType openid-connect
@@ -126,7 +126,7 @@
   USE OIDCBASE $(SITENAME) $(DOMAINNAME)
 
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-  IncludeOptional /etc/apache2/AddOn/.extra-countries.conf
+  IncludeOptional /etc/apache2/geolock/extra-countries.conf
 
   <Location />
     AuthType openid-connect
@@ -225,7 +225,7 @@
   USE OIDCBASE $(SITENAME) $(DOMAINNAME)
 
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-  IncludeOptional /etc/apache2/AddOn/.extra-countries.conf
+  IncludeOptional /etc/apache2/geolock/extra-countries.conf
 
   <Location />
     AuthType openid-connect
@@ -297,7 +297,7 @@
     USE SECURITY_HEADERS
 
     SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-    IncludeOptional /etc/apache2/AddOn/.extra-countries.conf
+    IncludeOptional /etc/apache2/geolock/extra-countries.conf
 
     <Location />
       <RequireAny>
