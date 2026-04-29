@@ -1,7 +1,7 @@
 #!/bin/bash
-# Integration test runner for apache-oidc-proxy
+# Integration test runner for secure-reverse-proxy
 # Usage: ./tests/run-tests.sh [image-name]
-# Default image: apache-oidc-proxy:test
+# Default image: secure-reverse-proxy:test
 
 set -eu
 # Note: pipefail is intentionally NOT set here.
@@ -10,7 +10,7 @@ set -eu
 # With pipefail the pipeline exit would be 141 even though grep found the pattern.
 # Without pipefail the exit status is grep's exit code (0=found, 1=not found).
 
-IMAGE="${1:-apache-oidc-proxy:test}"
+IMAGE="${1:-secure-reverse-proxy:test}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PASS=0
@@ -37,7 +37,7 @@ BASE_ARGS=(
 run() { docker run --rm "${BASE_ARGS[@]}" "$IMAGE" "$@"; }
 
 echo "============================================"
-echo "apache-oidc-proxy integration tests"
+echo "secure-reverse-proxy integration tests"
 echo "Image: $IMAGE"
 echo "============================================"
 

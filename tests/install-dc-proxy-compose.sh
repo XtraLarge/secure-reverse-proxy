@@ -15,7 +15,7 @@ services:
         container_name: \${COMPOSE_PROJECT_NAME}
         hostname: \${NAME}
         restart: unless-stopped
-        image: apache-oidc-proxy:test
+        image: secure-reverse-proxy:test
         depends_on:
             redis:
                 condition: service_healthy

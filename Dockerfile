@@ -1,8 +1,8 @@
 FROM debian:bookworm-slim
 
-LABEL org.opencontainers.image.title="apache-oidc-proxy"
+LABEL org.opencontainers.image.title="secure-reverse-proxy"
 LABEL org.opencontainers.image.description="Apache reverse proxy with mod_auth_openidc, mod_macro, GeoIP and Redis session cache"
-LABEL org.opencontainers.image.source="https://github.com/XtraLarge/apache-oidc-proxy"
+LABEL org.opencontainers.image.source="https://github.com/XtraLarge/secure-reverse-proxy"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \

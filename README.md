@@ -1,10 +1,10 @@
-# apache-oidc-proxy
+# secure-reverse-proxy
 
 [🇩🇪 Deutsche Version](README.de.md)
 
 > Apache reverse proxy with built-in OIDC single sign-on, a web-based admin UI, and a live table-of-contents page for all your services.
 
-[![Docker Image](https://img.shields.io/badge/Docker-xtralarge71%2Fapache--oidc--proxy-blue?logo=docker)](https://hub.docker.com/r/xtralarge71/apache-oidc-proxy)
+[![Docker Image](https://img.shields.io/badge/Docker-xtralarge71%2Fsecure--reverse--proxy-blue?logo=docker)](https://hub.docker.com/r/xtralarge71/secure-reverse-proxy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
@@ -47,8 +47,8 @@ with per-row reachability status and a search filter.
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/XtraLarge/apache-oidc-proxy.git
-cd apache-oidc-proxy
+git clone https://github.com/XtraLarge/secure-reverse-proxy.git
+cd secure-reverse-proxy
 ```
 
 **Option A — interactive setup (recommended):**
@@ -111,7 +111,7 @@ and land on the table of contents after login.
 ## Directory layout
 
 ```
-apache-oidc-proxy/
+secure-reverse-proxy/
 ├── docker-compose.yml
 ├── .env                        ← secrets (gitignored)
 ├── ssl/                        ← TLS certificates (gitignored)
@@ -452,7 +452,7 @@ docker compose down
 ## Docker Hub
 
 ```bash
-docker pull xtralarge71/apache-oidc-proxy:latest
+docker pull xtralarge71/secure-reverse-proxy:latest
 ```
 
 To use the pre-built image instead of building locally, set `image:` in
@@ -461,7 +461,7 @@ To use the pre-built image instead of building locally, set `image:` in
 ```yaml
 services:
   proxy:
-    image: xtralarge71/apache-oidc-proxy:latest
+    image: xtralarge71/secure-reverse-proxy:latest
     cap_add:
       - CHOWN
       - NET_BIND_SERVICE
@@ -478,6 +478,6 @@ services:
 ## Development / local build
 
 ```bash
-docker build -t apache-oidc-proxy:local .
-tests/run-tests.sh apache-oidc-proxy:local
+docker build -t secure-reverse-proxy:local .
+tests/run-tests.sh secure-reverse-proxy:local
 ```

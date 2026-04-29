@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-#  apache-oidc-proxy — full stack setup
+#  secure-reverse-proxy — full stack setup
 #
 #  Generates a complete, self-contained docker-compose deployment with:
 #    - Apache OIDC reverse proxy (built from this repo)
@@ -57,7 +57,7 @@ command -v python3 >/dev/null || die "python3 not found — required for realm J
 
 # ── banner ────────────────────────────────────────────────────────────────────
 echo
-printf "${BOLD}apache-oidc-proxy — setup${RESET}\n"
+printf "${BOLD}secure-reverse-proxy — setup${RESET}\n"
 printf "${DIM}Repo: %s${RESET}\n" "$REPO_DIR"
 echo
 
@@ -185,7 +185,7 @@ realm = {
   "clients": [
     {
       "clientId": "${CLIENT_ID}",
-      "name": "apache-oidc-proxy",
+      "name": "secure-reverse-proxy",
       "enabled": True,
       "protocol": "openid-connect",
       "publicClient": False,
@@ -397,7 +397,7 @@ ok "docker-compose.yml"
 header "Credentials"
 
 cat > "${OUT_DIR}/credentials.txt" <<CREDEOF
-# apache-oidc-proxy — generated credentials
+# secure-reverse-proxy — generated credentials
 # Domain:    ${DOMAIN}
 # Generated: $(date -u '+%Y-%m-%d %H:%M UTC')
 #

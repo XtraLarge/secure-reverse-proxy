@@ -11,8 +11,8 @@
 set -euo pipefail
 
 DOCKER_HOST="${DOCKER_HOST:-10.0.0.1}"
-BUILD_CTX="/data/_DockerBuild/apache-oidc-proxy"
-IMAGE="apache-oidc-proxy:test"
+BUILD_CTX="/data/_DockerBuild/secure-reverse-proxy"
+IMAGE="secure-reverse-proxy:test"
 CONTAINER="proxy-proxy"
 VLAN_IP="${VLAN_IP:-10.0.0.2}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
