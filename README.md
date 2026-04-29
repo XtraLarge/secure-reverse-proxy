@@ -261,6 +261,9 @@ Use VHost_Proxy_OIDC_Any  <site>  <domain>  <backend-url>/
 # Reverse proxy — HTTP Basic auth
 Use VHost_Proxy_Basic  <site>  <domain>  <backend-url>/  user  'username'
 
+# Reverse proxy — HTTP Basic auth + WebSocket (e.g. Frigate, Home Assistant)
+Use VHost_Proxy_WS_Basic  <site>  <domain>  <backend-url>/  user  'username'
+
 # Reverse proxy — no auth (backend handles its own auth)
 Use VHost_Proxy  <site>  <domain>  <backend-url>/
 
@@ -319,13 +322,16 @@ SSLProxyCheckPeerExpire off
 
 **WebSocket backend:**
 
+Use `VHost_Proxy_WS_Basic` (or `VHost_Proxy_OIDC_*` with a `.preconfig` snippet) —
+`upgrade=ANY` is already set in the macro, no extra RewriteRule needed:
+
 ```apache
-# AddOn/example.com/iot.preconfig
-RewriteEngine on
-RewriteCond %{HTTP:Upgrade} =websocket [NC]
-RewriteRule /(.*)  ws://10.0.0.7:8123/$1 [P,L]
-RewriteCond %{HTTP:Upgrade} !=websocket [NC]
-RewriteRule /(.*)  http://10.0.0.7:8123/$1 [P,L]
+# Basic auth + WebSocket (Frigate, Node-RED, …)
+Use VHost_Proxy_WS_Basic  camera  example.com  http://10.0.0.9:5000/  user  'alice'
+
+# OIDC + WebSocket (Home Assistant, …)
+# Add to AddOn/example.com/ha.preconfig:
+#   ProxyPassMatch ^/api/websocket ws://10.0.0.7:8123/api/websocket
 ```
 
 More examples: [`examples/addons/`](examples/addons/README.md)
