@@ -111,10 +111,7 @@ RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites /etc/apache2/oidc-clie
 # geolock/          GeoIP country allow-list (extra-countries.conf).
 #                   Written by geolock.lua and the admin UI.
 #
-# acme-webroot/     ACME challenge token directory — must be writable by the
-#                   container.  certbot writes tokens here; Apache serves them
-#                   at /.well-known/acme-challenge/ on port 80.
-VOLUME ["/etc/apache2/ssl", "/etc/letsencrypt", "/etc/apache2/sites", "/etc/apache2/AddOn", "/etc/apache2/oidc-clients", "/etc/apache2/geolock", "/var/www/acme-webroot"]
+VOLUME ["/etc/apache2/ssl", "/etc/letsencrypt", "/etc/apache2/sites", "/etc/apache2/AddOn", "/etc/apache2/oidc-clients", "/etc/apache2/geolock"]
 
 EXPOSE 80 443
 
