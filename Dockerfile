@@ -58,7 +58,7 @@ COPY conf/sites-available/ /etc/apache2/sites-available/
 
 COPY conf/ports.conf /etc/apache2/ports.conf
 
-RUN a2enconf server-security macro cgid-runtime evasive sites-admin acme-webroot logging apacheinfo-internal tuning geoip
+RUN a2enconf server-security macro cgid-runtime evasive sites acme-webroot logging apacheinfo-internal tuning geoip
 
 COPY conf/rsyslog/  /etc/rsyslog.d/
 COPY conf/logrotate/ /etc/logrotate.d/
@@ -87,9 +87,9 @@ COPY cron.d/acme-renew            /etc/cron.d/acme-renew
 COPY cron.d/logrotate             /etc/cron.d/logrotate-apache
 RUN chmod 0644 /etc/cron.d/rotate-oidc-key /etc/cron.d/geoip-update /etc/cron.d/acme-renew /etc/cron.d/logrotate-apache
 
-# Runtime directory for generated configs; sites-admin/ for admin-managed domain configs
+# Runtime directory for generated configs; sites/ for user-managed domain configs
 # acme-webroot/ serves ACME HTTP-01 challenge tokens (certbot --webroot -w /var/www/acme-webroot)
-RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites-admin /etc/apache2/oidc-clients /etc/apache2/geolock /var/www/acme-webroot
+RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites /etc/apache2/oidc-clients /etc/apache2/geolock /var/www/acme-webroot
 
 # ── Volumes ──────────────────────────────────────────────────────────────────
 # ssl/              Manual TLS certificates, one subdir per domain:
@@ -100,10 +100,8 @@ RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites-admin /etc/apache2/oid
 #                   Populated automatically when ACME_EMAIL is set.
 #                   Maps to /etc/letsencrypt inside the container.
 #
-# sites-enabled/    Apache vhost configs using the provided macros.
+# sites/            User-Site configs — domain vhost definitions.
 #                   Mount your own — see conf/sites-available/example.conf
-#
-# sites-admin/      Domain configs managed via the admin web UI.
 #
 # AddOn/            Optional per-vhost include snippets.
 #
@@ -116,7 +114,7 @@ RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites-admin /etc/apache2/oid
 # acme-webroot/     ACME challenge token directory — must be writable by the
 #                   container.  certbot writes tokens here; Apache serves them
 #                   at /.well-known/acme-challenge/ on port 80.
-VOLUME ["/etc/apache2/ssl", "/etc/letsencrypt", "/etc/apache2/sites-enabled", "/etc/apache2/sites-admin", "/etc/apache2/AddOn", "/etc/apache2/oidc-clients", "/etc/apache2/geolock", "/var/www/acme-webroot"]
+VOLUME ["/etc/apache2/ssl", "/etc/letsencrypt", "/etc/apache2/sites", "/etc/apache2/AddOn", "/etc/apache2/oidc-clients", "/etc/apache2/geolock", "/var/www/acme-webroot"]
 
 EXPOSE 80 443
 

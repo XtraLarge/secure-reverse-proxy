@@ -293,7 +293,7 @@ local _lfs = (function() local ok, m = pcall(require, 'lfs'); return ok and m en
 -- Detect the domain from config files (for TOC/Logout links in topbar)
 local TOC_DOMAIN = ""
 do
-  local dirs = {'/etc/apache2/sites-admin', '/etc/apache2/sites-enabled'}
+  local dirs = {'/etc/apache2/sites'}
   local found = ""
   if _lfs then
     for _, dir in ipairs(dirs) do
@@ -306,7 +306,7 @@ do
       end
     end
   else
-    local p = io.popen("ls /etc/apache2/sites-admin/*.conf /etc/apache2/sites-enabled/*.conf 2>/dev/null | head -1")
+    local p = io.popen("ls /etc/apache2/sites/*.conf 2>/dev/null | head -1")
     if p then found = p:read("*l") or ""; p:close() end
   end
   TOC_DOMAIN = found:match("([^/]+)%.conf$") or ""

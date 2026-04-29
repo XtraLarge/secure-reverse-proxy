@@ -15,9 +15,9 @@ services:
       #   ssl/<domain>/fullchain.pem
       - ./ssl:/etc/apache2/ssl:ro
 
-      # Your vhost definitions — copy from conf/sites-available/example.conf
+      # User-Site configs — copy from conf/sites-available/example.conf
       # and adapt. See .env for available environment variables.
-      - ./sites-enabled:/etc/apache2/sites-enabled:ro
+      - ./sites:/etc/apache2/sites:rw
 
       # Optional per-vhost Apache include snippets, e.g.:
       #   AddOn/example.com/mysite.pre.conf

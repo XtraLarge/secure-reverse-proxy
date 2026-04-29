@@ -8,13 +8,13 @@
 --   /etc/apache2/conf-runtime/geolock-pin.hash   SHA256 des PIN (entrypoint.sh)
 --   /etc/apache2/conf-runtime/geolock.lock        Fehlversuche (0..n)
 --   /etc/apache2/geolock/extra-countries.conf      SetEnvIf-Direktive (persistent)
---   /etc/apache2/sites-admin/*.conf               VHost-Konfiguration (Self-Disable)
+--   /etc/apache2/sites/*.conf                     VHost-Konfiguration (Self-Disable)
 
 local RUNTIME   = "/etc/apache2/conf-runtime/"
 local PIN_FILE  = RUNTIME .. "geolock-pin.hash"
 local LOCK_FILE = RUNTIME .. "geolock.lock"
 local CONF_FILE = "/etc/apache2/geolock/extra-countries.conf"
-local SITES_DIR = "/etc/apache2/sites-admin/"
+local SITES_DIR = "/etc/apache2/sites/"
 local MAX_FAIL  = 3
 
 local COUNTRIES = {

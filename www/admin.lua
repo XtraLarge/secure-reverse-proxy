@@ -2,12 +2,12 @@
 -- admin.lua — Proxy VHost Admin Interface
 --
 -- Served on admin.DOMAIN — OIDC-protected via CLIENTOIDC_CLAIM.
--- Reads/writes /etc/apache2/sites-admin/*.conf (domain configs) and
+-- Reads/writes /etc/apache2/sites/*.conf (User-Site domain configs) and
 -- /etc/apache2/AddOn/<domain>/<site>.preconfig|postconfig (AddOn snippets).
 -- Both volumes must be mounted read-write.
 --
 
-local SITES_DIR = "/etc/apache2/sites-admin/"
+local SITES_DIR = "/etc/apache2/sites/"
 local ADDON_DIR = "/etc/apache2/AddOn/"
 local OIDC_DIR  = "/etc/apache2/oidc-clients/"
 
@@ -446,10 +446,10 @@ end
 local ADMIN_REMOTE_USER = ""
 
 -- Use OIDC_COOKIE_DOMAIN (e.g. "example.com") as the authoritative domain.
--- Fall back to parsing the first sites-admin conf filename if not set.
+-- Fall back to parsing the first sites/ conf filename if not set.
 local TOC_DOMAIN = os.getenv("OIDC_COOKIE_DOMAIN") or ""
 if TOC_DOMAIN == "" then
-  local f = _first_conf({'/etc/apache2/sites-admin', '/etc/apache2/sites-enabled'})
+  local f = _first_conf({'/etc/apache2/sites'})
   TOC_DOMAIN = f:match("([^/]+)%.conf$") or ""
 end
 
@@ -2035,7 +2035,7 @@ end
 local function _collect_oidc_names(domain)
   local oidc_macros = { vhost_proxy_oidc_user=true, vhost_proxy_oidc_any=true, vhost_proxy_oidc_group=true }
   local seen, names = {}, {}
-  for _, dir in ipairs({ SITES_DIR, "/etc/apache2/sites-enabled/" }) do
+  for _, dir in ipairs({ SITES_DIR }) do
     for _, fpath in ipairs(_list_dir_conf(dir)) do
       local lines = read_lines(fpath)
       if lines then
@@ -2435,7 +2435,7 @@ local function show_domain_form(r, pre, errmsg)
   r:puts('<div class="main"><div class="card">')
   r:puts('<h2>Neue Domain anlegen</h2>')
   r:puts('<p style="color:#888;font-size:.85em;margin-bottom:.8em">'
-    .. 'Legt eine neue <code>.conf</code>-Datei in <code>sites-admin/</code> an.<br>'
+    .. 'Legt eine neue <code>.conf</code>-Datei in <code>sites/</code> an.<br>'
     .. 'Eine Admin-VHost-Zeile (admin.DOMAIN) wird automatisch eingefügt.<br>'
     .. 'Konfiguration wird vor dem Speichern automatisch getestet.'
     .. '</p>')
@@ -2638,8 +2638,8 @@ local function show_vhost_config_view(r, name, domain, rawline)
   r:puts('<div class="main"><div class="card">')
   r:puts('<h2>Konfiguration — <code>' .. h(vhost_fqdn) .. '</code></h2>')
 
-  -- Show the raw macro call from sites-admin
-  r:puts('<p style="color:#aaa;font-size:.85em;margin-bottom:.4em">Macro-Aufruf in sites-admin:</p>')
+  -- Show the raw macro call from sites/
+  r:puts('<p style="color:#aaa;font-size:.85em;margin-bottom:.4em">Macro-Aufruf in sites/:</p>')
   r:puts('<div class="pre-wrap">' .. copy_btn)
   r:puts('<pre style="background:#060614;color:#7ecfff;padding:.7em;border-radius:3px;'
     .. 'font-size:.85em;margin-bottom:1.2em;overflow-x:auto">' .. h(rawline) .. '</pre></div>')

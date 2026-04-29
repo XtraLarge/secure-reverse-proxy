@@ -180,7 +180,7 @@ def derive_servernames(macro, params):
 servernames = set()
 use_re = re.compile(r'^\s*[Uu][Ss][Ee]\s+(\S+)\s+(.*)', re.M)
 
-for conf_dir in ('/etc/apache2/sites-admin/', '/etc/apache2/sites-enabled/'):
+for conf_dir in ('/etc/apache2/sites/',):
     for fpath in glob.glob(f'{conf_dir}*.conf'):
         try:
             content = open(fpath).read()
@@ -398,11 +398,11 @@ _gen_oidc_client_conf() {
     fi
 }
 
-# Scan sites-enabled and sites-admin for domain names and generate conf files
+# Scan sites/ for domain names and generate conf files
 while IFS= read -r conf_file; do
     domain=$(basename "$conf_file" .conf)
     _gen_oidc_client_conf "$domain"
-done < <(find /etc/apache2/sites-enabled /etc/apache2/sites-admin \
+done < <(find /etc/apache2/sites \
     -maxdepth 1 -name '*.conf' 2>/dev/null)
 
 # ── GeoIP2 database update ───────────────────────────────────────────────────
@@ -495,7 +495,7 @@ ACTIVE_SSL_DIR="/run/apache2/active-ssl"
 mkdir -p "$ACTIVE_SSL_DIR"
 
 mapfile -t _ALL_DOMAINS < <(
-    grep -rih '^[[:space:]]*use[[:space:]]' /etc/apache2/sites-enabled/ /etc/apache2/sites-admin/ 2>/dev/null \
+    grep -rih '^[[:space:]]*use[[:space:]]' /etc/apache2/sites/ 2>/dev/null \
     | awk '{print $3; print $4}' \
     | grep -E '^[A-Za-z0-9]([A-Za-z0-9-]*\.)+[A-Za-z]{2,}$' \
     | sort -u
@@ -616,8 +616,8 @@ _check_writable() {
 _fix_owner  "/etc/apache2/basic.htpasswd" "basic.htpasswd"
 # AddOn/ — admin.lua creates/updates preconfig|postconfig snippets
 _fix_owner  "/etc/apache2/AddOn"          "AddOn/"
-# sites-admin/ — admin.lua reads and writes VHost conf files
-_fix_owner  "/etc/apache2/sites-admin"    "sites-admin/"
+# sites/ — admin.lua reads and writes User-Site conf files
+_fix_owner  "/etc/apache2/sites"          "sites/"
 # oidc-clients/ — admin.lua writes per-domain Keycloak client credentials
 _fix_owner  "/etc/apache2/oidc-clients"   "oidc-clients/"
 # geolock/ — geolock.lua writes extra-countries.conf
@@ -625,7 +625,7 @@ _fix_owner  "/etc/apache2/geolock"        "geolock/"
 # Verify after fix
 _check_writable "/etc/apache2/basic.htpasswd" "basic.htpasswd"
 _check_writable "/etc/apache2/AddOn"          "AddOn/"
-_check_writable "/etc/apache2/sites-admin"    "sites-admin/"
+_check_writable "/etc/apache2/sites"          "sites/"
 _check_writable "/etc/apache2/oidc-clients"   "oidc-clients/"
 _check_writable "/etc/apache2/geolock"        "geolock/"
 

@@ -565,7 +565,7 @@ function parse(line)
   -- Only process VHost_* macros (skip Domain_*, Admin_VHost, comments, etc.)
   if not startswith(string.lower(all_trim(line)), "use vhost_") then return end
 
-  -- insert element (skip duplicates that appear in both sites-enabled and sites-admin)
+  -- insert element (skip duplicates)
   local dedup_key = string.lower(word(line,3)) .. "." .. string.lower(word(line,4))
   if A_seen[dedup_key] then return end
   A_seen[dedup_key] = true
@@ -744,21 +744,19 @@ local _STATUS_INTERVAL   = 60   -- re-check service status at most once per minu
 
 local _lfs = (function() local ok, m = pcall(require, 'lfs'); return ok and m end)()
 
--- List *.conf files from both sites dirs; lfs primary, popen fallback
+-- List *.conf files from sites/; lfs primary, popen fallback
 local function _scan_conf_dirs()
   local files = {}
-  local dirs = {'/etc/apache2/sites-enabled', '/etc/apache2/sites-admin'}
+  local dir = '/etc/apache2/sites'
   if _lfs then
-    for _, dir in ipairs(dirs) do
-      pcall(function()
-        for f in _lfs.dir(dir) do
-          if f:match('%.conf$') then table.insert(files, dir..'/'..f) end
-        end
-      end)
-    end
+    pcall(function()
+      for f in _lfs.dir(dir) do
+        if f:match('%.conf$') then table.insert(files, dir..'/'..f) end
+      end
+    end)
     table.sort(files)
   else
-    local p = io.popen('ls /etc/apache2/sites-enabled/*.conf /etc/apache2/sites-admin/*.conf 2>/dev/null')
+    local p = io.popen('ls /etc/apache2/sites/*.conf 2>/dev/null')
     if p then for f in p:lines() do table.insert(files, f) end; p:close() end
   end
   return files
