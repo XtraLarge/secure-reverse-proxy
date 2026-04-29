@@ -13,12 +13,12 @@
 # $(AUTHORENTRY) : Allowed user(s)/group(s), e.g. 'alice bob'
 <Macro CLIENTBASIC $(AUTHORTYPE) $(AUTHORENTRY)>
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-  IncludeOptional /etc/apache2/geolock/extra-countries.conf
+  IncludeOptional /etc/apache2/config/extra-countries.conf
 
   <Location />
     AuthType Basic
     AuthName "Protected Area"
-    AuthUserFile /etc/apache2/basic.htpasswd
+    AuthUserFile /etc/apache2/config/basic.htpasswd
 
     <RequireAny>
       # Internal networks always pass through (generated from INTERNAL_NETWORKS env var)

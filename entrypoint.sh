@@ -81,7 +81,7 @@ rm -f "/etc/apache2/conf-runtime/geolock.lock"
 # ── GeoLock default countries ─────────────────────────────────────────────────
 # GEOLOCK_COUNTRIES: pipe-separated country codes written to extra-countries.conf
 # on first start only. Subsequent container restarts keep whatever GeoLock set.
-GEOLOCK_EXTRA_CONF="/etc/apache2/geolock/extra-countries.conf"
+GEOLOCK_EXTRA_CONF="/etc/apache2/config/extra-countries.conf"
 if [[ -n "${GEOLOCK_COUNTRIES:-}" ]]; then
     if [[ ! -f "${GEOLOCK_EXTRA_CONF}" ]] || \
        ! grep -q "SetEnvIf GEOIP_COUNTRY_CODE" "${GEOLOCK_EXTRA_CONF}" 2>/dev/null; then
@@ -238,7 +238,7 @@ auth = {'Authorization': f"Bearer {tok['access_token']}", 'Content-Type': 'appli
 
 # ── Build domain → Keycloak client-ID map ────────────────────────────────────
 domain_clients = {}
-for f in (glob.glob("/etc/apache2/oidc-clients/*.conf") +
+for f in (glob.glob("/etc/apache2/config/oidc-clients/*.conf") +
           glob.glob("/etc/apache2/conf-runtime/oidc-client-*.conf")):
     fname = os.path.basename(f)
     domain = (fname[len("oidc-client-"):] if fname.startswith("oidc-client-") else fname)[:-len(".conf")]
@@ -612,22 +612,16 @@ _check_writable() {
     fi
 }
 
-# basic.htpasswd — htpasswd command runs as www-data, needs write access
-_fix_owner  "/etc/apache2/basic.htpasswd" "basic.htpasswd"
+# config/ — writable runtime config: htpasswd, oidc-clients/, extra-countries.conf
+_fix_owner  "/etc/apache2/config"         "config/"
 # AddOn/ — admin.lua creates/updates preconfig|postconfig snippets
 _fix_owner  "/etc/apache2/AddOn"          "AddOn/"
 # sites/ — admin.lua reads and writes User-Site conf files
 _fix_owner  "/etc/apache2/sites"          "sites/"
-# oidc-clients/ — admin.lua writes per-domain Keycloak client credentials
-_fix_owner  "/etc/apache2/oidc-clients"   "oidc-clients/"
-# geolock/ — geolock.lua writes extra-countries.conf
-_fix_owner  "/etc/apache2/geolock"        "geolock/"
 # Verify after fix
-_check_writable "/etc/apache2/basic.htpasswd" "basic.htpasswd"
+_check_writable "/etc/apache2/config"         "config/"
 _check_writable "/etc/apache2/AddOn"          "AddOn/"
 _check_writable "/etc/apache2/sites"          "sites/"
-_check_writable "/etc/apache2/oidc-clients"   "oidc-clients/"
-_check_writable "/etc/apache2/geolock"        "geolock/"
 
 # ── Validate Apache config ────────────────────────────────────────────────────
 log "Testing Apache configuration..."

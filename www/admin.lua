@@ -9,7 +9,7 @@
 
 local SITES_DIR = "/etc/apache2/sites/"
 local ADDON_DIR = "/etc/apache2/AddOn/"
-local OIDC_DIR  = "/etc/apache2/oidc-clients/"
+local OIDC_DIR  = "/etc/apache2/config/oidc-clients/"
 
 local _lfs   = (function() local ok, m = pcall(require, 'lfs');   return ok and m end)()
 local _posix = (function() local ok, m = pcall(require, 'posix'); return ok and m end)()  -- lua-posix needs Lua 5.4 build; nil on bookworm
@@ -891,7 +891,7 @@ end
 
 local function show_geolock_view(r, msg)
   local lock_path = "/etc/apache2/conf-runtime/geolock.lock"
-  local conf_path = "/etc/apache2/geolock/extra-countries.conf"
+  local conf_path = "/etc/apache2/config/extra-countries.conf"
   local failures  = tonumber(read_file(lock_path) or "") or 0
   local locked    = failures >= 3
   local conf      = read_file(conf_path) or ""
@@ -2717,7 +2717,7 @@ end
 
 -- ── BasicAuth / htpasswd management ──────────────────────────────────────────
 
-local HTPASSWD_FILE = "/etc/apache2/basic.htpasswd"
+local HTPASSWD_FILE = "/etc/apache2/config/basic.htpasswd"
 
 local function validate_htpasswd_user(s)
   -- Only safe characters — no shell metacharacters
