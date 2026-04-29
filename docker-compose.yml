@@ -21,7 +21,7 @@ services:
 
       # Optional per-vhost Apache include snippets, e.g.:
       #   AddOn/example.com/mysite.pre.conf
-      - ./AddOn:/etc/apache2/AddOn:ro
+      - ./AddOn:/etc/apache2/AddOn:rw
 
       # Runtime config — basic.htpasswd, extra-countries.conf, oidc-clients/
       - ./config:/etc/apache2/config:rw
