@@ -30,7 +30,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN a2enmod \
     macro \
     auth_openidc \
-    evasive \
     geoip \
     http2 \
     lua \
@@ -58,7 +57,7 @@ COPY conf/sites-available/ /etc/apache2/sites-available/
 
 COPY conf/ports.conf /etc/apache2/ports.conf
 
-RUN a2enconf server-security macro cgid-runtime evasive sites acme-webroot logging apacheinfo-internal tuning geoip
+RUN a2enconf server-security macro cgid-runtime sites acme-webroot logging apacheinfo-internal tuning geoip
 
 COPY conf/rsyslog/  /etc/rsyslog.d/
 COPY conf/logrotate/ /etc/logrotate.d/
