@@ -702,13 +702,7 @@ window.onload = function() {
   if DOMAIN and DOMAIN ~= "" then
     local admins = ADMIN_USERS[string.lower(DOMAIN)]
     if admins then
-      local u = string.lower(REMOTE_USER)
-      for a in (admins:lower() .. "|"):gmatch("([^|]+)|") do
-        if all_trim(a) == u then
-          ADMINLINK = "  <a href=\"https://admin." .. DOMAIN .. "\">&#9881; Admin</a>\n"
-          break
-        end
-      end
+      ADMINLINK = "  <a href=\"https://admin." .. DOMAIN .. "\">&#9881; Admin</a>\n"
     end
   end
 
