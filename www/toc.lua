@@ -6,8 +6,8 @@
 
 TITLE       = os.getenv("TOC_TITLE") or "Inhaltsverzeichnis der Server"
 REMOTE_USER = os.getenv("TOC_REMOTE_USER_DEFAULT") or ""
-T           = {"STATUS", "NAME", "DOMAIN", "TYP",  "DEST",        "IPROT",       "IIP",     "IPORT",     "SECURE",  "USERS"} 
-TT          = {"Status", "Name", "Domain", "Type", "Destination", "Int. Proto.", "Int. IP", "Int. Port", "Secured", "Users"}
+T           = {"STATUS", "EXTST", "NAME", "DOMAIN", "TYP",  "DEST",        "IPROT",       "IIP",     "IPORT",     "SECURE",  "USERS"}
+TT          = {"Status", "Ext",   "Name", "Domain", "Type", "Destination", "Int. Proto.", "Int. IP", "Int. Port", "Secured", "Users"}
 A           = {};
 A_seen      = {};   -- dedup set: "name.domain" keys already inserted into A
 ADMIN_USERS = {};   -- domain → pipe-separated admin user pattern (from Admin_VHost lines)
@@ -452,7 +452,7 @@ function otable()
   -- head
   O = O .. "<thead align=\"center\"><tr>\n"
   for E = 1, #TT do
-    if ((TT[E] == "Secured") or (TT[E] == "Status") or (TT[E] == "Type") or (TT[E] == "Int. Proto.") or (TT[E] == "Int. IP") or (TT[E] == "Int. Port")) then
+    if ((TT[E] == "Secured") or (TT[E] == "Status") or (TT[E] == "Ext") or (TT[E] == "Type") or (TT[E] == "Int. Proto.") or (TT[E] == "Int. IP") or (TT[E] == "Int. Port")) then
       O = O .. "<th align=\"center\">" .. T[E] .. "</th> "
     else
       O = O .. "<th align=\"left\">" .. T[E] .. "</th> "
@@ -475,7 +475,13 @@ function otable()
       if E == "NAME" then
         O = O ..  "  <td><a href=\"" .. "https://" .. S .. "." .. A[CO]["DOMAIN"] .. "\">" .. S .. "</a>"
       elseif E == "STATUS" then
-        O = O ..  "  <td align=\"center\">" .. S 
+        O = O ..  "  <td align=\"center\">" .. S
+      elseif E == "EXTST" then
+        if A[CO]["STATUS"] == "&#128308;" then
+          O = O ..  "  <td align=\"center\">-"
+        else
+          O = O ..  "  <td align=\"center\"><span class=\"extst\" data-host=\"" .. A[CO]["NAME"] .. "." .. A[CO]["DOMAIN"] .. "\">&#9203;</span>"
+        end
       elseif E == "SECURE" then
         O = O ..  "  <td align=\"center\">" .. S 
       elseif E == "DEST" then
@@ -675,22 +681,33 @@ h1{color:#00d4ff;font-size:1.15em;margin-bottom:.8em}
 var tf = new TableFilter('XLTab', {
   base_path: '/tablefilter/',
   col_0: 'select',
-  col_2: 'select',
   col_3: 'select',
-  col_5: 'select',
-  col_8: 'select',
+  col_4: 'select',
+  col_6: 'select',
+  col_9: 'select',
   auto_filter: { delay: 300 },
   extensions: [{ name: 'sort' }],
   case_sensitive: false,
   col_types: [
     'string','string','string','string','string',
-    'string','ipaddress','Number','string','string'
+    'string','string','ipaddress','Number','string','string'
   ]
 });
 tf.init();
 window.onload = function() {
   var f = document.getElementById('flt1_XLTab');
   if (f) f.focus();
+  document.querySelectorAll('span.extst').forEach(function(span) {
+    var host = span.getAttribute('data-host');
+    if (!host) return;
+    fetch('/extcheck?host=' + encodeURIComponent(host))
+      .then(function(r){ return r.text(); })
+      .then(function(code){
+        var c = parseInt(code.trim(), 10);
+        span.innerHTML = (c >= 200 && c < 500) ? '&#128994;' : '&#128308;';
+      })
+      .catch(function(){ span.innerHTML = '&#128308;'; });
+  });
 };
 </script>]]
 
@@ -766,6 +783,20 @@ end
 
 function handle(r)
   REMOTE_USER = r.user or REMOTE_USER
+
+  if r.uri == "/extcheck" then
+    r.content_type = "text/plain"
+    local host = (r.args or ""):match("host=([^&]+)")
+    if host and host:match("^[%w%.%-]+$") then
+      local p = io.popen("curl -sk --resolve " .. host .. ":443:127.0.0.1 -o /dev/null -w '%{http_code}' --max-time 3 https://" .. host .. "/ 2>/dev/null")
+      if p then r:puts(p:read("*a") or "000"); p:close()
+      else r:puts("000") end
+    else
+      r:puts("000")
+    end
+    return apache2.OK
+  end
+
   -- Set MIME type to text/html:
   r.content_type = "text/html"
 
