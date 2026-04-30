@@ -7,8 +7,7 @@
 #   ACME_EMAIL    (required)  Contact e-mail for Let's Encrypt registration.
 #   ACME_DOMAINS  (optional)  Comma-separated root domains to obtain certs for.
 #                             If unset, root domains are auto-detected from
-#                             "Use Domain_Init*" lines in sites-admin/ and
-#                             sites-enabled/.
+#                             "Use Domain_Init*" lines in sites/.
 #   ACME_SERVER   (optional)  ACME directory URL.  Default: Let's Encrypt
 #                             production.  Set to https://pebble:14000/dir
 #                             (or similar) for local testing with Pebble.
@@ -57,7 +56,7 @@ if [[ -n "${ACME_DOMAINS:-}" ]]; then
 else
     mapfile -t ROOT_DOMAINS < <(
         grep -rih "^[[:space:]]*use[[:space:]]\+domain_init" \
-            /etc/apache2/sites-admin/ /etc/apache2/sites-enabled/ 2>/dev/null \
+            /etc/apache2/sites/ 2>/dev/null \
         | awk '{print $3}' | tr -d "'" | sort -u
     )
 fi
@@ -76,7 +75,7 @@ get_san_list() {
         [[ -n "$name" ]] && subs+=("${name}.${root}")
     done < <(
         grep -rih "^[[:space:]]*use[[:space:]]\+vhost_" \
-            /etc/apache2/sites-admin/ /etc/apache2/sites-enabled/ 2>/dev/null \
+            /etc/apache2/sites/ 2>/dev/null \
         | awk -v dom="${root}" 'tolower($4) == tolower(dom) {print $3}' \
         | sort -u
     )
