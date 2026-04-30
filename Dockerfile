@@ -10,7 +10,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libapache2-mod-auth-openidc \
     libapache2-mod-geoip \
     geoip-database \
-    libapache2-mod-evasive \
     certbot \
     gettext-base \
     ca-certificates \
