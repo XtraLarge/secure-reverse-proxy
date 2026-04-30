@@ -6,6 +6,7 @@
 
 TITLE       = os.getenv("TOC_TITLE") or "Inhaltsverzeichnis der Server"
 REMOTE_USER = os.getenv("TOC_REMOTE_USER_DEFAULT") or ""
+PORT_SUFFIX = os.getenv("HTTPS_PORT_SUFFIX") or ""
 T           = {"STATUS", "EXTST", "NAME", "DOMAIN", "TYP",  "DEST",        "IPROT",       "IIP",     "IPORT",     "SECURE",  "USERS"}
 TT          = {"Status", "Ext",   "Name", "Domain", "Type", "Destination", "Int. Proto.", "Int. IP", "Int. Port", "Secured", "Users"}
 A           = {};
@@ -473,7 +474,7 @@ function otable()
 
       if S == "" then S = "-" end
       if E == "NAME" then
-        O = O ..  "  <td><a href=\"" .. "https://" .. S .. "." .. A[CO]["DOMAIN"] .. "\">" .. S .. "</a>"
+        O = O ..  "  <td><a href=\"" .. "https://" .. S .. "." .. A[CO]["DOMAIN"] .. PORT_SUFFIX .. "\">" .. S .. "</a>"
       elseif E == "STATUS" then
         O = O ..  "  <td align=\"center\">" .. S
       elseif E == "EXTST" then
@@ -616,7 +617,7 @@ function input (FILE, DOMAIN)
          ["NAME"]    = "TOC",
          ["DOMAIN"]  = D,
          ["TYP"]     = "WebHost",
-         ["DEST"]    = "https://toc." .. D,
+         ["DEST"]    = "https://toc." .. D .. PORT_SUFFIX,
          ["IPROT"]   = "https",
          ["IIP"]     = siip("https://toc." .. D),
          ["IPORT"]   = "443",
@@ -628,7 +629,7 @@ function input (FILE, DOMAIN)
          ["NAME"]    = "LOGOUT",
          ["DOMAIN"]  = D,
          ["TYP"]     = "Redirect",
-         ["DEST"]    = "https://logout." .. D,
+         ["DEST"]    = "https://logout." .. D .. PORT_SUFFIX,
          ["IPROT"]   = "https",
          ["IIP"]     = siip("https://logout." .. D),
          ["IPORT"]   = "443",
@@ -719,7 +720,7 @@ window.onload = function() {
   if DOMAIN and DOMAIN ~= "" then
     local admins = ADMIN_USERS[string.lower(DOMAIN)]
     if admins then
-      ADMINLINK = "  <a href=\"https://admin." .. DOMAIN .. "\">&#9881; Admin</a>\n"
+      ADMINLINK = "  <a href=\"https://admin." .. DOMAIN .. PORT_SUFFIX .. "\">&#9881; Admin</a>\n"
     end
   end
 
@@ -737,7 +738,7 @@ window.onload = function() {
     "    </div>\n" ..
     "    <div class=\"topbar-user-block\">\n" ..
     "      <span class=\"topbar-user\">" .. REMOTE_USER .. "</span>\n" ..
-    "      <a class=\"topbar-logout\" href=\"https://logout." .. (DOMAIN or "") .. "\">&#x2715; Logout</a>\n" ..
+    "      <a class=\"topbar-logout\" href=\"https://logout." .. (DOMAIN or "") .. PORT_SUFFIX .. "\">&#x2715; Logout</a>\n" ..
     "    </div>\n" ..
     "  </div>\n" ..
     "</div>\n" ..

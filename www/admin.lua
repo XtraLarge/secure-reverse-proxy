@@ -10,6 +10,7 @@
 local SITES_DIR = "/etc/apache2/sites/"
 local ADDON_DIR = "/etc/apache2/AddOn/"
 local OIDC_DIR  = "/etc/apache2/config/oidc-clients/"
+local HTTPS_PORT_SUFFIX = os.getenv("HTTPS_PORT_SUFFIX") or ""
 
 local _lfs   = (function() local ok, m = pcall(require, 'lfs');   return ok and m end)()
 local _posix = (function() local ok, m = pcall(require, 'posix'); return ok and m end)()  -- lua-posix needs Lua 5.4 build; nil on bookworm
@@ -454,8 +455,8 @@ if TOC_DOMAIN == "" then
 end
 
 local function topbar(title, back_url)
-  local toc_link  = TOC_DOMAIN ~= "" and ("https://toc."    .. TOC_DOMAIN) or "/"
-  local logout_link = TOC_DOMAIN ~= "" and ("/protected?logout=" .. ue("https://toc." .. TOC_DOMAIN .. "/")) or "/protected?logout=/"
+  local toc_link  = TOC_DOMAIN ~= "" and ("https://toc." .. TOC_DOMAIN .. HTTPS_PORT_SUFFIX) or "/"
+  local logout_link = TOC_DOMAIN ~= "" and ("/protected?logout=" .. ue("https://toc." .. TOC_DOMAIN .. HTTPS_PORT_SUFFIX .. "/")) or "/protected?logout=/"
   local user_block = ADMIN_REMOTE_USER ~= ""
     and ('<div class="topbar-user-block">'
       .. '<span class="topbar-user">' .. h(ADMIN_REMOTE_USER) .. '</span>'
@@ -1550,8 +1551,8 @@ local function show_kc_login(r, errmsg)
     .. '<li><code>KEYCLOAK_ADMIN_USER</code> / <code>KEYCLOAK_ADMIN_PASS</code> gesetzt?</li>'
     .. '<li>Nutzer hat <code>manage-users</code>-Rolle im Realm?</li></ul>')
   r:puts('<div class="applybar">')
-  local _redir = TOC_DOMAIN ~= "" and ("https://admin." .. TOC_DOMAIN .. "/?action=users") or "/?action=users"
-  local _lo = TOC_DOMAIN ~= "" and ("https://admin." .. TOC_DOMAIN .. "/protected?logout=" .. ue(_redir)) or _redir
+  local _redir = TOC_DOMAIN ~= "" and ("https://admin." .. TOC_DOMAIN .. HTTPS_PORT_SUFFIX .. "/?action=users") or "/?action=users"
+  local _lo = TOC_DOMAIN ~= "" and ("https://admin." .. TOC_DOMAIN .. HTTPS_PORT_SUFFIX .. "/protected?logout=" .. ue(_redir)) or _redir
   r:puts('<a class="btn b-del" href="' .. h(_lo) .. '">Abmelden &amp; neu einloggen</a>')
   r:puts('</div></div></div></body></html>')
 end
@@ -1588,8 +1589,8 @@ local function show_users(r, msg)
   local is403 = (uerr and uerr:find("HTTP 403")) or (gerr and gerr:find("HTTP 403"))
   local is401 = (uerr and uerr:find("HTTP 401")) or (gerr and gerr:find("HTTP 401"))
   if is403 or is401 then
-    local _redir2 = TOC_DOMAIN ~= "" and ("https://admin." .. TOC_DOMAIN .. "/?action=users") or "/?action=users"
-    local logout_link = TOC_DOMAIN ~= "" and ("https://admin." .. TOC_DOMAIN .. "/protected?logout=" .. ue(_redir2)) or _redir2
+    local _redir2 = TOC_DOMAIN ~= "" and ("https://admin." .. TOC_DOMAIN .. HTTPS_PORT_SUFFIX .. "/?action=users") or "/?action=users"
+    local logout_link = TOC_DOMAIN ~= "" and ("https://admin." .. TOC_DOMAIN .. HTTPS_PORT_SUFFIX .. "/protected?logout=" .. ue(_redir2)) or _redir2
     local msg = is403
       and '<p style="margin:.5em 0">Das angemeldete Konto hat keine Berechtigung, die Keycloak-Nutzerliste abzurufen.</p>'
        .. '<p style="margin:.5em 0 1em">Bitte melden Sie sich ab und erneut mit einem Administrator-Konto an, oder wenden Sie sich an den Systemadministrator.</p>'
@@ -2059,10 +2060,10 @@ kc_sync_redirects = function(domain, token)
 
   local uris = {}
   for _, n in ipairs({ "toc", "logout", "admin" }) do
-    table.insert(uris, "https://" .. n .. "." .. domain .. "/protected")
+    table.insert(uris, "https://" .. n .. "." .. domain .. HTTPS_PORT_SUFFIX .. "/protected")
   end
   for _, name in ipairs(_collect_oidc_names(domain)) do
-    table.insert(uris, "https://" .. name .. "." .. domain .. "/protected")
+    table.insert(uris, "https://" .. name .. "." .. domain .. HTTPS_PORT_SUFFIX .. "/protected")
   end
 
   local status, rbody = kc_api_write("PUT", "/clients/" .. uuid,
@@ -2189,10 +2190,10 @@ local function kc_create_client(domain, token)
     standardFlowEnabled    = true,
     directAccessGrantsEnabled = false,
     serviceAccountsEnabled = false,
-    redirectUris           = { "https://*." .. domain .. "/protected" },
-    webOrigins             = { "https://*." .. domain },
-    attributes             = { ["post.logout.redirect.uris"] = "https://logout." .. domain .. "/*"
-                               .. (TOC_DOMAIN ~= "" and ("##https://admin." .. TOC_DOMAIN .. "/*") or "") },
+    redirectUris           = { "https://*." .. domain .. HTTPS_PORT_SUFFIX .. "/protected" },
+    webOrigins             = { "https://*." .. domain .. HTTPS_PORT_SUFFIX },
+    attributes             = { ["post.logout.redirect.uris"] = "https://logout." .. domain .. HTTPS_PORT_SUFFIX .. "/*"
+                               .. (TOC_DOMAIN ~= "" and ("##https://admin." .. TOC_DOMAIN .. HTTPS_PORT_SUFFIX .. "/*") or "") },
   })
   io.open(tmp_b,"w"):write(body):close()
 
