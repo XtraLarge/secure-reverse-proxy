@@ -300,7 +300,7 @@ for net in "${NETS[@]}"; do
     net="$(echo "$net" | tr -d ' ')"
     [[ "$net" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/([0-9]|[1-2][0-9]|3[0-2]))?$ ]] \
         || die "Invalid CIDR in INTERNAL_NETWORKS: '${net}'"
-    echo "      Require ip ${net}" >> "$NETWORKS_FILE"
+    echo "      Require expr \"%{REMOTE_ADDR} -ipmatch '${net}'\"" >> "$NETWORKS_FILE"
 done
 
 # ── Generate OIDC crypto passphrase include ───────────────────────────────────
