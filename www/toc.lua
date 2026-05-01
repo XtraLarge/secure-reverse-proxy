@@ -7,6 +7,7 @@
 TITLE       = os.getenv("TOC_TITLE") or "Inhaltsverzeichnis der Server"
 REMOTE_USER = os.getenv("TOC_REMOTE_USER_DEFAULT") or ""
 PORT_SUFFIX = os.getenv("HTTPS_PORT_SUFFIX") or ""
+PROBE_USER  = os.getenv("TOC_PROBE_USER") or ""
 T           = {"STATUS", "EXTST", "NAME", "DOMAIN", "TYP",  "DEST",        "IPROT",       "IIP",     "IPORT",     "SECURE",  "USERS"}
 TT          = {"Status", "Ext",   "Name", "Domain", "Type", "Destination", "Int. Proto.", "Int. IP", "Int. Port", "Secured", "Users"}
 A           = {};
@@ -299,6 +300,50 @@ end
 
 local socket = require("socket")
 
+-- Probe-Token-Cache (per Worker, LuaScope server)
+local _probe_token         = nil
+local _probe_token_expires = 0
+
+local function get_probe_token()
+  local now = os.time()
+  if _probe_token and now < _probe_token_expires then return _probe_token end
+
+  local user    = PROBE_USER
+  local pass    = os.getenv("TOC_PROBE_PASS")         or ""
+  local turl    = os.getenv("TOC_PROBE_TOKEN_URL")    or ""
+  local cid     = os.getenv("TOC_PROBE_CLIENT_ID")    or ""
+  local csecret = os.getenv("TOC_PROBE_CLIENT_SECRET") or ""
+
+  if user == "" or pass == "" or turl == "" or cid == "" then return nil end
+
+  local tmpf = "/tmp/.toc_probe_req"
+  local f = io.open(tmpf, "w")
+  if not f then return nil end
+  f:write('url = "' .. turl .. '"\n')
+  f:write('insecure\n')
+  f:write('data-urlencode = "grant_type=password"\n')
+  f:write('data-urlencode = "client_id=' .. cid .. '"\n')
+  if csecret ~= "" then f:write('data-urlencode = "client_secret=' .. csecret .. '"\n') end
+  f:write('data-urlencode = "username=' .. user .. '"\n')
+  f:write('data-urlencode = "password=' .. pass .. '"\n')
+  f:close()
+
+  local p = io.popen("curl -s --config " .. tmpf .. " 2>/dev/null")
+  if not p then os.remove(tmpf); return nil end
+  local resp = p:read("*a"); p:close()
+  os.remove(tmpf)
+
+  local token   = resp:match('"access_token"%s*:%s*"([^"]+)"')
+  local expires = tonumber(resp:match('"expires_in"%s*:%s*(%d+)')) or 60
+
+  if token then
+    _probe_token         = token
+    _probe_token_expires = now + expires - 10
+    return token
+  end
+  return nil
+end
+
 -- Ports, die wir als "Host lebt wahrscheinlich" akzeptieren
 local HOST_PROBE_PORTS = {80, 443, 22}
 
@@ -478,7 +523,7 @@ function otable()
       elseif E == "STATUS" then
         O = O ..  "  <td align=\"center\">" .. S
       elseif E == "EXTST" then
-        if A[CO]["STATUS"] == "&#128308;" then
+        if A[CO]["STATUS"] == "&#128308;" or A[CO]["SECURE"] ~= "OpenID Connect" then
           O = O ..  "  <td align=\"center\">-"
         else
           O = O ..  "  <td align=\"center\"><span class=\"extst\" data-host=\"" .. A[CO]["NAME"] .. "." .. A[CO]["DOMAIN"] .. "\">&#9203;</span>"
@@ -587,6 +632,10 @@ function parse(line)
     ["SECURE"] = ssec(word(line,2));
     ["USERS"]  = (function()
                    local u = finalword(line,7):gsub("'",""):gsub("|",", ")
+                   if PROBE_USER ~= "" then
+                     local p = PROBE_USER:lower():gsub("([%.%-%+%?%(%)%[%]%^%$%%])", "%%%1")
+                     u = u:gsub(", "..p, ""):gsub(p..", ", ""):gsub("^"..p.."$", "-")
+                   end
                    return u:match("^https?://") and "-" or u
                  end)();
   });
@@ -705,7 +754,7 @@ window.onload = function() {
       .then(function(r){ return r.text(); })
       .then(function(code){
         var c = parseInt(code.trim(), 10);
-        span.innerHTML = (c >= 200 && c < 500) ? '&#128994;' : '&#128308;';
+        span.innerHTML = (c >= 200 && c < 400) ? '&#128994;' : '&#128308;';
       })
       .catch(function(){ span.innerHTML = '&#128308;'; });
   });
@@ -789,7 +838,9 @@ function handle(r)
     r.content_type = "text/plain"
     local host = (r.args or ""):match("host=([^&]+)")
     if host and host:match("^[%w%.%-]+$") then
-      local p = io.popen("curl -sk --resolve " .. host .. ":443:127.0.0.1 -o /dev/null -w '%{http_code}' --max-time 3 https://" .. host .. "/ 2>/dev/null")
+      local token = get_probe_token()
+      local auth  = token and (' -H "Authorization: Bearer ' .. token .. '"') or ""
+      local p = io.popen("curl -sk" .. auth .. " --resolve " .. host .. ":443:127.0.0.1 -o /dev/null -w '%{http_code}' --max-time 3 https://" .. host .. "/ 2>/dev/null")
       if p then r:puts(p:read("*a") or "000"); p:close()
       else r:puts("000") end
     else
