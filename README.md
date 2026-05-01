@@ -439,7 +439,7 @@ docker compose down
 ## Container Registry
 
 ```bash
-docker pull ghcr.io/xtralarge71/secure-reverse-proxy:latest
+docker pull ghcr.io/xtralarge/secure-reverse-proxy:latest
 ```
 
 To use the pre-built image instead of building locally, set `image:` in
@@ -448,7 +448,7 @@ To use the pre-built image instead of building locally, set `image:` in
 ```yaml
 services:
   proxy:
-    image: ghcr.io/xtralarge71/secure-reverse-proxy:latest
+    image: ghcr.io/xtralarge/secure-reverse-proxy:latest
     cap_add:
       - CHOWN
       - NET_BIND_SERVICE

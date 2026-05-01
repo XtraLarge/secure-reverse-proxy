@@ -14,7 +14,7 @@ set -euo pipefail
 DOCKER_HOST="${DOCKER_HOST:-10.0.0.1}"
 BUILD_CTX="/data/_DockerBuild/secure-reverse-proxy"
 IMAGE_LOCAL="secure-reverse-proxy:test"
-IMAGE_PROD="ghcr.io/xtralarge71/secure-reverse-proxy:latest"
+IMAGE_PROD="ghcr.io/xtralarge/secure-reverse-proxy:latest"
 CONTAINER_PROD="proxy-proxy"
 CONTAINER_TEST="proxy-test-proxy"
 VLAN_IP_PROD="${VLAN_IP:-10.0.0.2}"
