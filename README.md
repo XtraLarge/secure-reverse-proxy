@@ -18,9 +18,6 @@ then access each proxied service without logging in again.
 After login they land on the **Table of Contents** — a live overview of every service,
 with per-row reachability status and a search filter.
 
-![TOC page](docs/screenshots/toc.png)
-<!-- TODO: screenshot of toc.<domain> after OIDC login -->
-
 ---
 
 ## Features
@@ -348,8 +345,6 @@ More examples: [`examples/addons/`](examples/addons/README.md)
 After login, users land here. All vhosts configured for the domain are listed
 with their current reachability status (green/red dot). The list is filterable.
 
-![TOC page](docs/screenshots/toc.png)
-<!-- TODO: screenshot -->
 
 ### Admin UI (`admin.<domain>`)
 
@@ -365,8 +360,6 @@ The admin UI lets you:
   `admin`/`user` roles, and `<domain>-admins`/`<domain>-users` groups are set up
   automatically; the per-domain credentials are stored in `config/oidc-clients/<domain>.conf`
 
-![Admin UI](docs/screenshots/admin.png)
-<!-- TODO: screenshot -->
 
 ### Keycloak user management (`admin.<domain>/admin-kc.lua`)
 
@@ -383,8 +376,6 @@ Lets you:
 - **Enable / disable** or **delete** users
 - **Manage groups** — create and delete `<domain>-admins` / `<domain>-users` groups
 
-![Keycloak user management](docs/screenshots/admin-kc.png)
-<!-- TODO: screenshot -->
 
 **Required Keycloak roles** for the admin user (Client Roles → `realm-management`):
 
