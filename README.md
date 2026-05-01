@@ -4,7 +4,7 @@
 
 > Apache reverse proxy with built-in OIDC single sign-on, a web-based admin UI, and a live table-of-contents page for all your services.
 
-[![Docker Image](https://img.shields.io/badge/Docker-xtralarge71%2Fsecure--reverse--proxy-blue?logo=docker)](https://hub.docker.com/r/xtralarge71/secure-reverse-proxy)
+[![Container Image](https://img.shields.io/badge/ghcr.io-xtralarge71%2Fsecure--reverse--proxy-blue?logo=github)](https://github.com/XtraLarge/secure-reverse-proxy/pkgs/container/secure-reverse-proxy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
@@ -436,10 +436,10 @@ docker compose down
 
 ---
 
-## Docker Hub
+## Container Registry
 
 ```bash
-docker pull xtralarge71/secure-reverse-proxy:latest
+docker pull ghcr.io/xtralarge71/secure-reverse-proxy:latest
 ```
 
 To use the pre-built image instead of building locally, set `image:` in
@@ -448,7 +448,7 @@ To use the pre-built image instead of building locally, set `image:` in
 ```yaml
 services:
   proxy:
-    image: xtralarge71/secure-reverse-proxy:latest
+    image: ghcr.io/xtralarge71/secure-reverse-proxy:latest
     cap_add:
       - CHOWN
       - NET_BIND_SERVICE
