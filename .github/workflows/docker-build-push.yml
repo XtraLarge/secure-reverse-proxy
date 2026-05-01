@@ -72,8 +72,8 @@ jobs:
           DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
           DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          # DockerHub Hub-API accepts PAT via Basic auth as "PAT:<token>"
-          AUTH=$(printf 'PAT:%s' "${DH_TOKEN}" | base64 -w0)
+          # DockerHub Hub-API: Basic auth with username:token
+          AUTH=$(printf '%s:%s' "${DH_USER}" "${DH_TOKEN}" | base64 -w0)
 
           PAYLOAD=$(python3 -c "
           import json
