@@ -72,8 +72,11 @@ jobs:
           DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
           DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          # DockerHub Hub-API: Basic auth with username:token
-          AUTH=$(printf '%s:%s' "${DH_USER}" "${DH_TOKEN}" | base64 -w0)
+          # DockerHub Hub-API: login → JWT, then use "Authorization: JWT <token>"
+          JWT=$(curl -s -X POST https://hub.docker.com/v2/users/login \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${DH_USER}\",\"password\":\"${DH_TOKEN}\"}" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 
           PAYLOAD=$(python3 -c "
           import json
@@ -91,7 +94,7 @@ jobs:
 
           HTTP=$(curl -s -o /tmp/dh_resp.json -w "%{http_code}" \
             -X PATCH "https://hub.docker.com/v2/repositories/${DH_USER}/secure-reverse-proxy/" \
-            -H "Authorization: Basic ${AUTH}" \
+            -H "Authorization: JWT ${JWT}" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD")
           echo "DockerHub PATCH: HTTP ${HTTP}"
