@@ -3,7 +3,7 @@
 #
 # Usage (from repo root or scripts/):
 #   ./scripts/build.sh              # sync + build only (local test image)
-#   ./scripts/build.sh --test       # sync + build + deploy to test (10.10.25.50)
+#   ./scripts/build.sh --test       # sync + build + deploy to test (10.10.25.101)
 #   ./scripts/build.sh --prod       # docker pull from DockerHub + deploy to prod
 #   ./scripts/build.sh --test --skip-git-check
 #
@@ -18,7 +18,7 @@ IMAGE_PROD="ghcr.io/xtralarge/secure-reverse-proxy:latest"
 CONTAINER_PROD="proxy-proxy"
 CONTAINER_TEST="proxy-test-proxy"
 VLAN_IP_PROD="${VLAN_IP:-10.0.0.2}"
-VLAN_IP_TEST="${VLAN_IP_TEST:-10.10.25.50}"
+VLAN_IP_TEST="${VLAN_IP_TEST:-10.10.25.101}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 MODE=""
