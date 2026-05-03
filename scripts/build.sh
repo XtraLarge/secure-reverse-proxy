@@ -87,6 +87,10 @@ fi
 
 # ── Prod: pull from DockerHub + deploy ────────────────────────────────────────
 if [[ "$MODE" == "prod" ]]; then
+  echo "==> Config-Check (prod)"
+  ssh "root@${DOCKER_HOST}" "bash -s" < "${REPO_DIR}/scripts/check-env.sh" \
+      -- /data/_DockerCreate/compose/proxy.env || exit 1
+
   echo "==> Pulling ${IMAGE_PROD} on ${DOCKER_HOST}"
   ssh "root@${DOCKER_HOST}" "docker pull ${IMAGE_PROD}"
 
@@ -119,6 +123,10 @@ if [[ "$MODE" != "test" ]]; then
 fi
 
 # ── Test: deploy to test environment ──────────────────────────────────────────
+echo "==> Config-Check (test)"
+ssh "root@${DOCKER_HOST}" "bash -s" < "${REPO_DIR}/scripts/check-env.sh" \
+    -- /data/_DockerCreate/compose/proxy-test.env || exit 1
+
 echo "==> Deploying ${CONTAINER_TEST} (test)"
 ssh "root@${DOCKER_HOST}" \
     "docker compose \

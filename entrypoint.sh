@@ -64,6 +64,8 @@ export REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 # Pipe-separated ISO country codes for GeoIP allow-list (used as regex alternation)
 # Example: DE|AT|CH  →  allows Germany, Austria, Switzerland
 export GEOIP_ALLOW_COUNTRIES="${GEOIP_ALLOW_COUNTRIES:-DE}"
+[[ "${GEOIP_ALLOW_COUNTRIES}" != *","* ]] \
+    || die "GEOIP_ALLOW_COUNTRIES='${GEOIP_ALLOW_COUNTRIES}' — Komma statt Pipe als Trennzeichen. Korrektur: ${GEOIP_ALLOW_COUNTRIES//,/|}"
 
 # ── GeoLock PIN hash ──────────────────────────────────────────────────────────
 # GEOLOCK_PIN: plain-text PIN set in proxy.env; stored only as SHA256 hash.
