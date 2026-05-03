@@ -1,0 +1,5 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Apache health watchdog — detects stuck-after-reload state and force-restarts
+*/2 * * * * root /usr/local/bin/apache-watchdog.sh >> /proc/1/fd/1 2>&1

@@ -83,7 +83,11 @@ COPY cron.d/rotate-oidc-key       /etc/cron.d/rotate-oidc-key
 COPY cron.d/geoip-update          /etc/cron.d/geoip-update
 COPY cron.d/acme-renew            /etc/cron.d/acme-renew
 COPY cron.d/logrotate             /etc/cron.d/logrotate-apache
-RUN chmod 0644 /etc/cron.d/rotate-oidc-key /etc/cron.d/geoip-update /etc/cron.d/acme-renew /etc/cron.d/logrotate-apache
+COPY cron.d/apache-watchdog       /etc/cron.d/apache-watchdog
+RUN chmod 0644 /etc/cron.d/rotate-oidc-key /etc/cron.d/geoip-update /etc/cron.d/acme-renew /etc/cron.d/logrotate-apache /etc/cron.d/apache-watchdog
+
+COPY apache-watchdog.sh /usr/local/bin/apache-watchdog.sh
+RUN chmod +x /usr/local/bin/apache-watchdog.sh
 
 # Runtime directory for generated configs; sites/ for user-managed domain configs
 # acme-webroot/ serves ACME HTTP-01 challenge tokens (certbot --webroot -w /var/www/acme-webroot)
