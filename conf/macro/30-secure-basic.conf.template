@@ -79,7 +79,7 @@
     USE SSL $(DOMAINNAME)
     USE CLIENTBASIC $(AUTHORTYPE) '$(AUTHORENTRY)'
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
-    USE PROXY_WS $(DESTINATION)
+    USE PROXY $(DESTINATION)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
   </VirtualHost>
 </Macro>
