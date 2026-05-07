@@ -1465,7 +1465,7 @@ kc_list_users = function(token)
   local out = {}
   for _, u in ipairs(all) do
     if not (u.username or ""):match("^service%-account%-") and
-       not (u.username or ""):match("^ProxySys%-") then
+       not (u.username or ""):lower():match("^proxysys%-") then
       out[#out+1] = u
     end
   end
