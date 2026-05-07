@@ -281,6 +281,77 @@
   </VirtualHost>
 </Macro>
 
+# CLIENTOIDC_CLAIM_OR_GROUP $(SITENAME) $(DOMAINNAME) $(USERS) $(GROUPS)
+# Protects a vhost with OIDC — users matching $(USERS) OR members of group $(GROUPS) are allowed.
+# $(USERS) is a pipe-separated list of usernames (empty = no user-based check).
+# $(GROUPS) is a pipe-separated list of group names (empty = no group-based check).
+# GeoIP country check applies; internal networks bypass both checks.
+<Macro CLIENTOIDC_CLAIM_OR_GROUP $(SITENAME) $(DOMAINNAME) $(USERS) $(GROUPS)>
+  USE OIDCBASE $(SITENAME) $(DOMAINNAME)
+
+  SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
+  IncludeOptional /etc/apache2/config/extra-countries.conf
+
+  <Location />
+    AuthType openid-connect
+    OIDCUnAutzAction 403
+
+    <RequireAny>
+      # Internal networks always pass through
+      Include /etc/apache2/conf-runtime/internal-networks.conf
+
+      # External: must be from an allowed country AND match user or group
+      # Empty USERS/GROUPS yields regex ^()$ which never matches a real claim value
+      <RequireAll>
+        Require expr "reqenv('AllowCountry') != ''"
+        <RequireAny>
+          Require claim "preferred_username~(?i)^($(USERS))$"
+          Require claim "groups~(?i)^($(GROUPS))$"
+        </RequireAny>
+      </RequireAll>
+    </RequireAny>
+  </Location>
+
+  # OIDC redirect URI — must be accessible but serves no real content
+  <Location ${OIDC_REDIRECT_PATH}>
+    AuthType openid-connect
+    <RequireAny>
+      Require valid-user
+      Include /etc/apache2/conf-runtime/internal-networks.conf
+    </RequireAny>
+  </Location>
+</Macro>
+
+# VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS) $(GROUPS)
+# Full vhost with OIDC auth + reverse proxy.
+# Either users matching $(USERS) OR members of group $(GROUPS) are allowed.
+# Both can be set simultaneously (access granted if either matches).
+#
+# Examples:
+#   Use VHost_Proxy_OIDC  wiki   example.com  http://10.0.0.8:3000/  'alice|bob'  ''
+#   Use VHost_Proxy_OIDC  admin  example.com  http://10.0.0.9:8080/  ''           'admins'
+#   Use VHost_Proxy_OIDC  app    example.com  http://10.0.0.7:8000/  'alice'      'editors'
+<Macro VHost_Proxy_OIDC $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS) $(GROUPS)>
+  <VirtualHost *:80>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE REWRITE2URL "https://$(SITENAME).$(DOMAINNAME)${HTTPS_PORT_SUFFIX}"
+  </VirtualHost>
+
+  <VirtualHost *:443>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE SSL $(DOMAINNAME)
+    USE SECURITY_HEADERS
+    USE CLIENTOIDC_CLAIM_OR_GROUP $(SITENAME) $(DOMAINNAME) '$(USERS)' '$(GROUPS)'
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    USE PROXY $(DESTINATION)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+  </VirtualHost>
+</Macro>
+
 <Macro VHost_Proxy $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
   <VirtualHost *:80>
     ServerName $(SITENAME).$(DOMAINNAME)

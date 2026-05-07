@@ -122,9 +122,8 @@ local KC_LOGOUT_URL = KC_TOKEN_URL:gsub("/token$", "/logout")
 local MACRO_TYPES = {
   "VHost_Proxy",
   "VHost_Proxy_Open",
-  "VHost_Proxy_OIDC_User",
+  "VHost_Proxy_OIDC",
   "VHost_Proxy_OIDC_Any",
-  "VHost_Proxy_OIDC_Group",
   "VHost_Proxy_Basic",
   "VHost_Alias",
 }
@@ -168,28 +167,57 @@ end
 
 local function parse_vhost_line(line)
   local raw = trim(line)
-  -- Extract trailing quoted field (users or auth entry)
-  local users = raw:match("'([^']*)'%s*$") or ""
-  local base  = raw:gsub("%s*'[^']*'%s*$", "")
 
+  -- Extract all quoted fields in order
+  local quoted = {}
+  for q in raw:gmatch("'([^']*)'") do table.insert(quoted, q) end
+
+  -- Remove quoted fields to parse unquoted parts
+  local base = raw:gsub("%s*'[^']*'", "")
   local parts = {}
   for w in base:gmatch("%S+") do table.insert(parts, w) end
-  -- parts: [1]=Use [2]=Macro [3]=name [4]=domain [5]=dest [6]=authtype(Basic)
 
   if #parts < 4 then return nil end
 
   local macro = parts[2]
   local m     = macro:lower()
-  local result = {
+  local users, groups, authtype = "", "", ""
+
+  if m == "vhost_proxy_oidc" then
+    users  = quoted[1] or ""
+    groups = quoted[2] or ""
+  elseif m == "vhost_proxy_oidc_user" then
+    users = quoted[1] or ""
+    macro = "VHost_Proxy_OIDC"
+  elseif m == "vhost_proxy_oidc_group" then
+    groups = quoted[1] or ""
+    macro = "VHost_Proxy_OIDC"
+  elseif m == "vhost_proxy_basic" then
+    authtype = parts[6] or "user"
+    users = quoted[1] or ""
+  else
+    users = quoted[1] or ""
+  end
+
+  -- Combine into single field: plain users + @-prefixed groups
+  local combined = users
+  for g in groups:gmatch("[^|]+") do
+    g = trim(g)
+    if g ~= "" then
+      if combined ~= "" then combined = combined .. "|" end
+      combined = combined .. "@" .. g
+    end
+  end
+
+  return {
     macro    = macro,
     name     = parts[3] or "",
     domain   = parts[4] or "",
     dest     = parts[5] or "",
-    users    = users,
-    authtype = (m == "vhost_proxy_basic") and (parts[6] or "user") or "",
+    users    = combined,
+    authtype = authtype,
     raw      = raw,
   }
-  return result
 end
 
 local function build_line(macro, name, domain, dest, users, authtype)
@@ -202,6 +230,20 @@ local function build_line(macro, name, domain, dest, users, authtype)
 
   if m == "vhost_proxy" or m == "vhost_proxy_open" or m == "vhost_proxy_oidc_any" or m == "vhost_alias" then
     return string.format("Use %-28s  %-20s  %-25s  %s", macro, name, domain, dest)
+  elseif m == "vhost_proxy_oidc" then
+    -- Split combined users/@groups field into separate user and group lists
+    local user_list, group_list = {}, {}
+    for entry in users:gmatch("[^|]+") do
+      entry = trim(entry)
+      if entry:sub(1,1) == "@" then
+        table.insert(group_list, entry:sub(2))
+      elseif entry ~= "" then
+        table.insert(user_list, entry)
+      end
+    end
+    local u = table.concat(user_list,  "|")
+    local g = table.concat(group_list, "|")
+    return string.format("Use %-28s  %-20s  %-25s  %-35s  '%s'  '%s'", macro, name, domain, dest, u, g)
   elseif m == "vhost_proxy_oidc_user" or m == "vhost_proxy_oidc_group" then
     return string.format("Use %-28s  %-20s  %-25s  %-35s  '%s'", macro, name, domain, dest, users)
   elseif m == "vhost_proxy_basic" then
@@ -374,30 +416,33 @@ tr.disabled-row td{opacity:.38;font-style:italic}
 local JS = [[<script>
 function onMacroChange(sel) {
   var m = sel.value.toLowerCase();
-  document.getElementById('row_oidc_users').style.display  = m === 'vhost_proxy_oidc_user'  ? '' : 'none';
-  document.getElementById('row_group_users').style.display = m === 'vhost_proxy_oidc_group' ? '' : 'none';
-  document.getElementById('row_basic_users').style.display = m === 'vhost_proxy_basic'      ? '' : 'none';
-  document.getElementById('row_auth').style.display        = m === 'vhost_proxy_basic'      ? '' : 'none';
+  var isOidc = m === 'vhost_proxy_oidc';
+  document.getElementById('row_oidc_users').style.display  = isOidc ? '' : 'none';
+  document.getElementById('row_group_users').style.display = isOidc ? '' : 'none';
+  document.getElementById('row_basic_users').style.display = m === 'vhost_proxy_basic' ? '' : 'none';
+  document.getElementById('row_auth').style.display        = m === 'vhost_proxy_basic' ? '' : 'none';
 }
 function serializeUsers(form) {
   var m = form.querySelector('[name=macro]').value.toLowerCase();
   var val = '';
-  var sel, fb;
-  if (m === 'vhost_proxy_oidc_user') {
-    sel = document.getElementById('sel_oidc_users');
-    fb  = document.getElementById('fb_oidc');
-  } else if (m === 'vhost_proxy_oidc_group') {
-    sel = document.getElementById('sel_group_users');
-    fb  = document.getElementById('fb_group');
+  if (m === 'vhost_proxy_oidc') {
+    var selU = document.getElementById('sel_oidc_users');
+    var selG = document.getElementById('sel_group_users');
+    var fbU  = document.getElementById('fb_oidc');
+    var fbG  = document.getElementById('fb_group');
+    var uVals = selU ? Array.from(selU.selectedOptions).map(function(o){return o.value;}) : (fbU ? fbU.value.split('|').filter(Boolean) : []);
+    var gVals = selG ? Array.from(selG.selectedOptions).map(function(o){return '@'+o.value;}) : (fbG && fbG.value ? fbG.value.split('|').filter(Boolean).map(function(g){return '@'+g;}) : []);
+    val = uVals.concat(gVals).join('|');
+    document.getElementById('users_val').value = val;
   } else if (m === 'vhost_proxy_basic') {
-    sel = document.getElementById('sel_basic_users');
-    fb  = document.getElementById('fb_basic');
-  }
-  if (sel) {
-    var selected = Array.from(sel.selectedOptions).map(function(o){return o.value;}).join('|');
-    if (selected !== '') document.getElementById('users_val').value = selected;
-  } else if (fb) {
-    document.getElementById('users_val').value = fb.value;
+    var sel = document.getElementById('sel_basic_users');
+    var fb  = document.getElementById('fb_basic');
+    if (sel) {
+      val = Array.from(sel.selectedOptions).map(function(o){return o.value;}).join('|');
+      if (val !== '') document.getElementById('users_val').value = val;
+    } else if (fb) {
+      document.getElementById('users_val').value = fb.value;
+    }
   }
   return true;
 }
@@ -751,14 +796,14 @@ local function show_form(r, fname, lineno, pre, errmsg)
   r:puts('<div class="form-row"><label>Name:</label>'
     .. '<input name=name value="' .. h((pre and pre.name) or "") .. '" placeholder="myapp" required></div>')
 
-  -- Domain
+  -- Domain (select from known domains)
   local known_domains = get_known_domains()
-  local dl = '<datalist id="domain_list">'
-  for _, d in ipairs(known_domains) do dl = dl .. '<option value="' .. h(d) .. '">' end
-  dl = dl .. '</datalist>'
-  r:puts('<div class="form-row"><label>Domain:</label>'
-    .. '<input name=domain list="domain_list" value="' .. h((pre and pre.domain) or "") .. '" placeholder="example.com" required>'
-    .. dl .. '</div>')
+  r:puts('<div class="form-row"><label>Domain:</label><select name=domain required>')
+  for _, d in ipairs(known_domains) do
+    local sel = (pre and pre.domain == d) and ' selected' or ''
+    r:puts('<option value="' .. h(d) .. '"' .. sel .. '>' .. h(d) .. '</option>')
+  end
+  r:puts('</select></div>')
 
   -- Destination
   r:puts('<div class="form-row"><label>Ziel-URL:</label>'
@@ -777,8 +822,8 @@ local function show_form(r, fname, lineno, pre, errmsg)
   end
   local sel_style = "min-width:180px;background:#0d0d1a;color:#ddd;border:1px solid #2a2a4e;padding:.3em"
 
-  -- OIDC users multi-select
-  r:puts('<div class="form-row" id=row_oidc_users style="display:' .. (cur == "vhost_proxy_oidc_user" and "" or "none") .. '">')
+  -- OIDC users multi-select (shown for combined OIDC type)
+  r:puts('<div class="form-row" id=row_oidc_users style="display:' .. (cur == "vhost_proxy_oidc" and "" or "none") .. '">')
   r:puts('<label>Benutzer:</label>')
   if kc_users_list then
     r:puts('<select multiple size=6 id=sel_oidc_users style="' .. sel_style .. '">')
@@ -792,18 +837,18 @@ local function show_form(r, fname, lineno, pre, errmsg)
   end
   r:puts('</div>')
 
-  -- OIDC group multi-select
-  r:puts('<div class="form-row" id=row_group_users style="display:' .. (cur == "vhost_proxy_oidc_group" and "" or "none") .. '">')
+  -- OIDC group multi-select (shown for combined OIDC type)
+  r:puts('<div class="form-row" id=row_group_users style="display:' .. (cur == "vhost_proxy_oidc" and "" or "none") .. '">')
   r:puts('<label>Gruppen:</label>')
   if kc_groups_list then
     r:puts('<select multiple size=6 id=sel_group_users style="' .. sel_style .. '">')
     for _, g in ipairs(kc_groups_list) do
-      local s = pre_sel[g.name] and ' selected' or ''
+      local s = pre_sel["@" .. g.name] and ' selected' or ''
       r:puts('<option value="' .. h(g.name) .. '"' .. s .. '>' .. h(g.name) .. '</option>')
     end
     r:puts('</select>')
   else
-    r:puts('<input id=fb_group value="' .. h((pre and pre.users) or "") .. '" placeholder="groupname">')
+    r:puts('<input id=fb_group value="" placeholder="groupname">')
   end
   r:puts('</div>')
 
@@ -1419,7 +1464,8 @@ kc_list_users = function(token)
   local all = json_arr_flat(raw)
   local out = {}
   for _, u in ipairs(all) do
-    if not (u.username or ""):match("^service%-account%-") then
+    if not (u.username or ""):match("^service%-account%-") and
+       not (u.username or ""):match("^ProxySys%-") then
       out[#out+1] = u
     end
   end
