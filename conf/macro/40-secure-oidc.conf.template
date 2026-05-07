@@ -82,6 +82,18 @@
   OIDCRefreshAccessTokenBeforeExpiry 300
 </Macro>
 
+# OIDC_NO_ACCESS_HANDLER
+# Helper macro — wired into every claim/group-restricted OIDC macro.
+# Registers the /oidc-no-access endpoint (accessible without re-auth so the
+# ErrorDocument subrequest can be served) and the Lua handler that renders
+# the "wrong account" page with a logout+re-login button.
+<Macro OIDC_NO_ACCESS_HANDLER>
+  LuaMapHandler ^/oidc-no-access$ /var/www/html/oidc-no-access.lua handle
+  <Location /oidc-no-access>
+    Require all granted
+  </Location>
+</Macro>
+
 # CLIENTOIDC_VALIDUSER $(SITENAME) $(DOMAINNAME)
 # Protects a vhost with OIDC — any authenticated user is allowed.
 # GeoIP country check applies; internal networks bypass both checks.
@@ -124,6 +136,7 @@
 # GeoIP country check applies; internal networks bypass both checks.
 <Macro CLIENTOIDC_CLAIM $(SITENAME) $(DOMAINNAME) $(AUTHORENTRY)>
   USE OIDCBASE $(SITENAME) $(DOMAINNAME)
+  USE OIDC_NO_ACCESS_HANDLER
 
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
   IncludeOptional /etc/apache2/config/extra-countries.conf
@@ -131,6 +144,7 @@
   <Location />
     AuthType openid-connect
     OIDCUnAutzAction 403
+    ErrorDocument 403 /oidc-no-access
 
     <RequireAny>
       # Internal networks always pass through
@@ -223,6 +237,7 @@
 # GeoIP country check applies; internal networks bypass both checks.
 <Macro CLIENTOIDC_GROUP $(SITENAME) $(DOMAINNAME) $(GROUP)>
   USE OIDCBASE $(SITENAME) $(DOMAINNAME)
+  USE OIDC_NO_ACCESS_HANDLER
 
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
   IncludeOptional /etc/apache2/config/extra-countries.conf
@@ -230,6 +245,7 @@
   <Location />
     AuthType openid-connect
     OIDCUnAutzAction 403
+    ErrorDocument 403 /oidc-no-access
 
     <RequireAny>
       # Internal networks always pass through
@@ -288,6 +304,7 @@
 # GeoIP country check applies; internal networks bypass both checks.
 <Macro CLIENTOIDC_CLAIM_OR_GROUP $(SITENAME) $(DOMAINNAME) $(USERS) $(GROUPS)>
   USE OIDCBASE $(SITENAME) $(DOMAINNAME)
+  USE OIDC_NO_ACCESS_HANDLER
 
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
   IncludeOptional /etc/apache2/config/extra-countries.conf
@@ -295,6 +312,7 @@
   <Location />
     AuthType openid-connect
     OIDCUnAutzAction 403
+    ErrorDocument 403 /oidc-no-access
 
     <RequireAny>
       # Internal networks always pass through
