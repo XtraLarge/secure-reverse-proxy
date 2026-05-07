@@ -659,20 +659,32 @@ log "Starting Apache..."
 # ── Reload listener (root background process) ─────────────────────────────────
 # www-data cannot signal PID 1 directly (no-new-privileges prevents sudo/setuid).
 # A root process started here survives exec and handles the reload on behalf of www-data.
-RELOAD_FIFO="/run/apache-reload.fifo"
-rm -f "$RELOAD_FIFO"
-mkfifo "$RELOAD_FIFO"
-chmod 666 "$RELOAD_FIFO"
-(while true; do
-    read -r _ < "$RELOAD_FIFO" || sleep 1
-    APID=$(pgrep -o -x apache2 2>/dev/null) || continue
-    sleep 2
-    kill -TERM "$APID" 2>/dev/null
-    # Wait up to 10 s for graceful stop; SIGKILL if master is stuck (e.g. WebSocket workers)
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
+#
+# We use a touch-file instead of a named FIFO so that the Lua writer (admin.lua)
+# never blocks — a FIFO open blocks when no reader is present (e.g. listener is
+# still processing a previous reload), which would freeze Apache workers and
+# make the admin UI completely unresponsive.
+RELOAD_TRIGGER="/run/apache-reload-requested"
+rm -f "$RELOAD_TRIGGER"
+(
+  trap 'exit 0' TERM
+  while true; do
+    if [ -f "$RELOAD_TRIGGER" ]; then
+      rm -f "$RELOAD_TRIGGER"
+      APID=$(pgrep -o -x apache2 2>/dev/null) || { sleep 1; continue; }
+      # 2 s grace so Apache can flush the HTTP response before TERM arrives
+      sleep 2
+      kill -TERM "$APID" 2>/dev/null
+      # Wait up to 5 s for clean shutdown; WebSocket workers may not stop on TERM
+      for _ in 1 2 3 4 5; do
         sleep 1
         kill -0 "$APID" 2>/dev/null || break
-    done
-    kill -0 "$APID" 2>/dev/null && kill -KILL "$APID" 2>/dev/null || true
-done) &
+      done
+      # SIGKILL master + any orphaned workers so the container restarts promptly
+      kill -0 "$APID" 2>/dev/null && kill -KILL "$APID" 2>/dev/null || true
+      pkill -KILL -x apache2 2>/dev/null || true
+    fi
+    sleep 1
+  done
+) &
 exec "$@"

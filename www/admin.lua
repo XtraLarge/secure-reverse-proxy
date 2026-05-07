@@ -89,12 +89,13 @@ local function _chmod600(path)
   end
 end
 
--- Signal Apache graceful reload via FIFO; io.open primary, os.execute fallback
+-- Signal Apache reload by touching a trigger file (non-blocking).
+-- A FIFO would block if the listener is busy or has crashed, freezing Apache workers.
 local function _apache_reload()
-  local fifo = '/run/apache-reload.fifo'
-  local f = io.open(fifo, 'w')
-  if f then f:write('reload\n'); f:close(); return true end
-  return os.execute('echo reload > '..fifo..' 2>/dev/null') == 0
+  local trigger = '/run/apache-reload-requested'
+  local f = io.open(trigger, 'w')
+  if f then f:close(); return true end
+  return os.execute('touch '..trigger..' 2>/dev/null') == 0
 end
 
 -- Keycloak Admin API — uses the Proxy client's service account (client_credentials)
