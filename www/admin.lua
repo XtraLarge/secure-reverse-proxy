@@ -1180,19 +1180,23 @@ local function do_apply(r)
     return show_list(r, "ERR: Graceful reload fehlgeschlagen")
   end
   clear_pending_reload()
-  local msg = "OK: Apache graceful reload ausgef\xC3\xBCh\x72t"
-  if KC_ADMIN_URL ~= "" and kc_sync_redirects then
-    local tok, _ = kc_token(r)
-    if tok and TOC_DOMAIN ~= "" then
-      local ok, kmsg = kc_sync_redirects(TOC_DOMAIN, tok)
-      if ok then
-        msg = msg .. "\nOK: Keycloak redirect URIs aktualisiert (" .. kmsg .. ")"
-      else
-        msg = msg .. "\nWARN: Keycloak sync fehlgeschlagen — " .. kmsg
-      end
-    end
-  end
-  show_list(r, msg)
+  -- The FIFO signal is sent; entrypoint.sh waits 2 s before sending TERM.
+  -- Render a countdown page so the browser sees a response before Apache stops.
+  r:puts(page_head("Neustart l\xC3\xA4uft\xE2\x80\xA6", "/"))
+  r:puts([[<div class="main"><div class="card">]])
+  r:puts('<p style="color:#ffff99;font-size:1.05em">&#9654;&nbsp;Apache wird neu gestartet&hellip;</p>')
+  r:puts('<p class="dim" style="margin-top:.5em">Seite wird automatisch neu geladen (<span id="sec">7</span>&thinsp;s)</p>')
+  r:puts([[</div></div>
+<script>
+var s=7;
+(function tick(){
+  var el=document.getElementById('sec');
+  if(el)el.textContent=s;
+  if(s<=0){window.location='/';return;}
+  s--;setTimeout(tick,1000);
+})();
+</script>
+</body></html>]])
 end
 
 -- ── AddOn form ────────────────────────────────────────────────────────────────

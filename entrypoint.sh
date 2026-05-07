@@ -666,6 +666,7 @@ chmod 666 "$RELOAD_FIFO"
 (while true; do
     read -r _ < "$RELOAD_FIFO" || sleep 1
     APID=$(pgrep -o -x apache2 2>/dev/null) || continue
+    sleep 2
     kill -TERM "$APID" 2>/dev/null
     # Wait up to 10 s for graceful stop; SIGKILL if master is stuck (e.g. WebSocket workers)
     for _ in 1 2 3 4 5 6 7 8 9 10; do
