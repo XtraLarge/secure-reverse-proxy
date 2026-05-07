@@ -534,12 +534,14 @@ done
 log "cron daemon started (rotate-oidc-key.sh runs at 03:00 daily)"
 
 # ── Configure and start rsyslog ───────────────────────────────────────────────
-# LOG_FILE     — path to consolidated log file (default: /var/log/apache2/apache.log)
-#                set to "off" to disable local file logging
-# SYSLOG_REMOTE — remote syslog target, e.g. "udp://10.x.x.x:514" or "tcp://host:514"
-#                 empty = no remote forwarding
+# LOG_FILE          — path to consolidated log file (default: /var/log/apache2/apache.log)
+#                     set to "off" to disable local file logging
+# SYSLOG_REMOTE     — remote syslog target, e.g. "udp://10.x.x.x:514" or "tcp://host:514"
+#                     empty = no remote forwarding
+# LOG_RETENTION_DAYS — days to keep rotated log files (default: 14)
 LOG_FILE="${LOG_FILE:-/var/log/apache2/apache.log}"
 SYSLOG_REMOTE="${SYSLOG_REMOTE:-}"
+LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
 
 RSYSLOG_ROUTING="/etc/rsyslog.d/50-apache-routing.conf"
 LOGROTATE_ACTIVE="/etc/logrotate.d/apache-active"
@@ -563,14 +565,15 @@ LOGROTATE_ACTIVE="/etc/logrotate.d/apache-active"
   echo "}"
 } > "$RSYSLOG_ROUTING"
 
-# Build logrotate config (only when file logging is enabled)
+# Build logrotate config
 if [[ "${LOG_FILE}" != "off" && -n "${LOG_FILE}" ]]; then
   touch "${LOG_FILE}"
   chmod 0640 "${LOG_FILE}"
   cat > "$LOGROTATE_ACTIVE" <<LOGROTATE_EOF
+# rsyslog-written consolidated log — reload rsyslog after rotate
 ${LOG_FILE} {
     daily
-    rotate 14
+    rotate ${LOG_RETENTION_DAYS}
     compress
     delaycompress
     missingok
@@ -580,10 +583,26 @@ ${LOG_FILE} {
         pkill -HUP rsyslogd 2>/dev/null || true
     endscript
 }
+
+# Apache-native logs — reopen via graceful signal after rotate
+/var/log/apache2/geo_access.log
+/var/log/apache2/error.log
+/var/log/apache2/access.log
+/var/log/apache2/other_vhosts_access.log {
+    daily
+    rotate ${LOG_RETENTION_DAYS}
+    compress
+    delaycompress
+    missingok
+    notifempty
+    sharedscripts
+    postrotate
+        pgrep -x apache2 >/dev/null && kill -USR1 \$(pgrep -o -x apache2) 2>/dev/null || true
+    endscript
+}
 LOGROTATE_EOF
-  log "rsyslog: logging to ${LOG_FILE} (logrotate: daily, keep 14)"
+  log "rsyslog: logging to ${LOG_FILE} (logrotate: daily, keep ${LOG_RETENTION_DAYS})"
 else
-  # Remove logrotate config if file logging is disabled
   rm -f "$LOGROTATE_ACTIVE"
   log "rsyslog: file logging disabled (LOG_FILE=off)"
 fi
