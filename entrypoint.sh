@@ -497,7 +497,11 @@ ACTIVE_SSL_DIR="/run/apache2/active-ssl"
 mkdir -p "$ACTIVE_SSL_DIR"
 
 mapfile -t _ALL_DOMAINS < <(
-    grep -rih '^[[:space:]]*use[[:space:]]' /etc/apache2/sites/ 2>/dev/null \
+    grep -rih '^[[:space:]]*use[[:space:]]' \
+        /etc/apache2/sites/ \
+        /etc/apache2/sites-enabled/ \
+        /etc/apache2/sites-admin/ \
+        2>/dev/null \
     | awk '{print $3; print $4}' \
     | grep -E '^[A-Za-z0-9]([A-Za-z0-9-]*\.)+[A-Za-z]{2,}$' \
     | sort -u
