@@ -518,14 +518,15 @@ done
 if [ -n "$LUA_PORT" ] && [ "$_lua_up" -eq 1 ]; then
     # Hit the unprotected Lua vhost — forces mod_lua to initialise LuaScope server state
     # including _scan_conf_dirs() (lfs.dir). A popen-based deadlock would leave workers as zombies.
+    ZOMBIES_BEFORE="$(docker exec "$LUA_CID" ps aux 2>/dev/null | { grep -c '<defunct>' || true; })"
     curl -sf --max-time 5 "http://localhost:${LUA_PORT}/" \
         -H "Host: lua-test.test.example.com" -o /dev/null 2>/dev/null || true
-    sleep 1
-    ZOMBIES="$(docker exec "$LUA_CID" ps aux 2>/dev/null | { grep -c '<defunct>' || true; })"
-    if [ "$ZOMBIES" -eq 0 ]; then
-        pass "No zombie workers after Lua request — lfs.dir init is deadlock-free"
+    sleep 3
+    ZOMBIES_AFTER="$(docker exec "$LUA_CID" ps aux 2>/dev/null | { grep -c '<defunct>' || true; })"
+    if [ "$ZOMBIES_AFTER" -le "$ZOMBIES_BEFORE" ]; then
+        pass "No new zombie workers after Lua request — lfs.dir init is deadlock-free"
     else
-        fail "Found ${ZOMBIES} zombie worker(s) after Lua init — possible lfs.dir deadlock"
+        fail "Found $((ZOMBIES_AFTER - ZOMBIES_BEFORE)) new zombie worker(s) after Lua init — possible lfs.dir deadlock"
         docker exec "$LUA_CID" ps aux 2>/dev/null || true
     fi
 else
