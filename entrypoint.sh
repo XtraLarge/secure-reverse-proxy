@@ -563,11 +563,11 @@ LOGROTATE_ACTIVE="/etc/logrotate.d/apache-active"
     _rhost="${_hostport%%:*}"
     _rport="${_hostport##*:}"
     echo "    action(type=\"omfwd\" target=\"${_rhost}\" port=\"${_rport}\" protocol=\"${_proto}\")"
-    log "rsyslog: remote forwarding → ${_proto}://${_rhost}:${_rport}"
   fi
   echo "    stop"
   echo "}"
 } > "$RSYSLOG_ROUTING"
+[[ -n "${SYSLOG_REMOTE}" ]] && log "rsyslog: remote forwarding → ${_proto}://${_rhost}:${_rport}"
 
 # Build logrotate config
 if [[ "${LOG_FILE}" != "off" && -n "${LOG_FILE}" ]]; then
