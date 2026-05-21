@@ -182,6 +182,7 @@ local function parse_vhost_line(line)
 
   local macro = parts[2]
   local m     = macro:lower()
+  if not m:match("^vhost_") then return nil end
   local users, groups, authtype = "", "", ""
 
   if m == "vhost_proxy_oidc" then
