@@ -668,7 +668,9 @@ log "Starting Apache..."
 # never blocks — a FIFO open blocks when no reader is present (e.g. listener is
 # still processing a previous reload), which would freeze Apache workers and
 # make the admin UI completely unresponsive.
-RELOAD_TRIGGER="/run/apache-reload-requested"
+RELOAD_TRIGGER="/run/apache-proxy/reload-requested"
+mkdir -p /run/apache-proxy
+chown www-data: /run/apache-proxy
 rm -f "$RELOAD_TRIGGER"
 (
   trap 'exit 0' TERM

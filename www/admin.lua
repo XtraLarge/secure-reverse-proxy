@@ -92,7 +92,7 @@ end
 -- Signal Apache reload by touching a trigger file (non-blocking).
 -- A FIFO would block if the listener is busy or has crashed, freezing Apache workers.
 local function _apache_reload()
-  local trigger = '/run/apache-reload-requested'
+  local trigger = '/run/apache-proxy/reload-requested'
   local f = io.open(trigger, 'w')
   if f then f:close(); return true end
   return os.execute('touch '..trigger..' 2>/dev/null') == 0
