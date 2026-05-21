@@ -128,6 +128,14 @@ local MACRO_TYPES = {
   "VHost_Proxy_Basic",
   "VHost_Alias",
 }
+local MACRO_LABELS = {
+  VHost_Proxy         = "Kein Auth \xE2\x80\x94 \xC3\xB6ffentlich zug\xC3\xA4nglich",
+  VHost_Proxy_Open    = "Kein Auth \xE2\x80\x94 nur aus internen Netzen",
+  VHost_Proxy_OIDC    = "OIDC-Login \xE2\x80\x94 bestimmte Nutzer / Gruppen",
+  VHost_Proxy_OIDC_Any= "OIDC-Login \xE2\x80\x94 jeder angemeldete Nutzer",
+  VHost_Proxy_Basic   = "HTTP-Basic-Auth \xE2\x80\x94 Passwort-gesch\xC3\xBCtzt",
+  VHost_Alias         = "Weiterleitung \xE2\x80\x94 Redirect auf andere URL",
+}
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -328,7 +336,13 @@ local function validate_dest(s)
 end
 
 local function validate_users(s)
-  return trim(s):match("^[a-zA-Z0-9%.@_|%-]*$") ~= nil
+  s = trim(s)
+  if s == "" then return true end
+  for tok in s:gmatch("[^|]+") do
+    tok = trim(tok)
+    if tok == "" or not tok:match("^@?[a-zA-Z0-9%._%%-]+$") then return false end
+  end
+  return true
 end
 
 local function fexists(p)
@@ -789,8 +803,9 @@ local function show_form(r, fname, lineno, pre, errmsg)
   local cur = trim((pre and pre.macro) or "VHost_Proxy"):lower()
   r:puts('<div class="form-row"><label>Typ:</label><select name=macro onchange="onMacroChange(this)">')
   for _, m in ipairs(MACRO_TYPES) do
-    local sel = (m:lower() == cur) and " selected" or ""
-    r:puts('<option value="' .. m .. '"' .. sel .. '>' .. m .. '</option>')
+    local sel   = (m:lower() == cur) and " selected" or ""
+    local label = MACRO_LABELS[m] or m
+    r:puts('<option value="' .. m .. '"' .. sel .. '>' .. h(label) .. '</option>')
   end
   r:puts('</select></div>')
 
@@ -800,12 +815,14 @@ local function show_form(r, fname, lineno, pre, errmsg)
 
   -- Domain (select from known domains)
   local known_domains = get_known_domains()
-  r:puts('<div class="form-row"><label>Domain:</label><select name=domain required>')
+  r:puts('<div class="form-row"><label>Domain:</label>')
+  r:puts('<input name=domain list=domain_list required'
+    .. ' value="' .. h((pre and pre.domain) or "") .. '" placeholder="example.com">')
+  r:puts('<datalist id=domain_list>')
   for _, d in ipairs(known_domains) do
-    local sel = (pre and pre.domain == d) and ' selected' or ''
-    r:puts('<option value="' .. h(d) .. '"' .. sel .. '>' .. h(d) .. '</option>')
+    r:puts('<option value="' .. h(d) .. '">')
   end
-  r:puts('</select></div>')
+  r:puts('</datalist></div>')
 
   -- Destination
   r:puts('<div class="form-row"><label>Ziel-URL:</label>'
@@ -1391,7 +1408,7 @@ local function kc_api_get(path, token)
   io.open(tmp,"w"):write("Authorization: Bearer " .. token):close()
   -- Append "\nHTTP_STATUS:NNN" so we can detect non-200 responses.
   local cmd = string.format(
-    'curl -s -k -H @%s -w "\\nHTTP_STATUS:%%{http_code}" "%s%s" 2>/dev/null',
+    'curl -s -k --max-time 10 -H @%s -w "\\nHTTP_STATUS:%%{http_code}" "%s%s" 2>/dev/null',
     tmp, base, path)
   local p = io.popen(cmd); local out = p:read("*a"); p:close()
   os.remove(tmp)
@@ -1413,7 +1430,7 @@ local function kc_api_write(method, path, body, token)
     local tmp_b = os.tmpname()
     io.open(tmp_b,"w"):write(body):close()
     cmd = string.format(
-      'curl -s -k -o %s -w "%%{http_code}" -X %s'
+      'curl -s -k --max-time 10 -o %s -w "%%{http_code}" -X %s'
       ..' -H @%s -H "Content-Type: application/json" --data @%s "%s%s" 2>/dev/null',
       tmp_o, method, tmp_h, tmp_b, base, path)
     local p = io.popen(cmd); local status = tonumber(p:read("*a") or "0"); p:close()
@@ -1422,7 +1439,7 @@ local function kc_api_write(method, path, body, token)
     return status, rbody
   else
     cmd = string.format(
-      'curl -s -k -o %s -w "%%{http_code}" -X %s -H @%s "%s%s" 2>/dev/null',
+      'curl -s -k --max-time 10 -o %s -w "%%{http_code}" -X %s -H @%s "%s%s" 2>/dev/null',
       tmp_o, method, tmp_h, base, path)
     local p = io.popen(cmd); local status = tonumber(p:read("*a") or "0"); p:close()
     local f = io.open(tmp_o); local rbody = f and f:read("*a") or ""; if f then f:close() end
@@ -1543,7 +1560,7 @@ local function kc_user_create(data, token)
   end
   -- Fetch the new user's UUID
   local found = json_arr_flat(kc_api_get(
-    "/users?username=" .. data.username .. "&exact=true", token))
+    "/users?username=" .. ue(data.username) .. "&exact=true", token))
   if #found == 0 then return nil, "Nutzer angelegt, aber UUID nicht lesbar" end
   return found[1].id, nil
 end
@@ -2024,7 +2041,7 @@ kc_token = function(r)
   local tmp = os.tmpname()
   io.open(tmp, "w"):write(body):close()
   local cmd = string.format(
-    'curl -s -k -X POST --data @%s "%s" 2>/dev/null', tmp, token_url)
+    'curl -s -k --max-time 10 -X POST --data @%s "%s" 2>/dev/null', tmp, token_url)
   local p = io.popen(cmd)
   local out = p:read("*a")
   p:close()
@@ -2073,7 +2090,7 @@ local function kc_client_exists(domain, token)
   local tmp = os.tmpname()
   io.open(tmp,"w"):write("Authorization: Bearer " .. token):close()
   local cmd = string.format(
-    'curl -s -k -H @%s "%s/clients?clientId=%s&search=false" 2>/dev/null',
+    'curl -s -k --max-time 10 -H @%s "%s/clients?clientId=%s&search=false" 2>/dev/null',
     tmp, base, cid)
   local p = io.popen(cmd); local out = p:read("*a"); p:close()
   os.remove(tmp)
