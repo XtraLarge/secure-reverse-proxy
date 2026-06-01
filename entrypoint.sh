@@ -673,6 +673,7 @@ mkdir -p /run/apache-proxy
 chown www-data: /run/apache-proxy
 rm -f "$RELOAD_TRIGGER"
 (
+  set +e
   trap 'exit 0' TERM
   while true; do
     if [ -f "$RELOAD_TRIGGER" ]; then
@@ -680,7 +681,7 @@ rm -f "$RELOAD_TRIGGER"
       APID=$(pgrep -o -x apache2 2>/dev/null) || { sleep 1; continue; }
       # 2 s grace so Apache can flush the HTTP response before TERM arrives
       sleep 2
-      kill -TERM "$APID" 2>/dev/null
+      kill -TERM "$APID" 2>/dev/null || true
       # Wait up to 5 s for clean shutdown; WebSocket workers may not stop on TERM
       for _ in 1 2 3 4 5; do
         sleep 1
