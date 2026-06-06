@@ -61,6 +61,9 @@
   OIDCCookieSameSite              On
   OIDCCookieHTTPOnly              On
   OIDCStateCookiePrefix           $(DOMAINNAME)-Auth-State-
+  # Cap accumulated state cookies — delete the oldest instead of aborting the
+  # auth request when too many pile up (e.g. after a proxy outage).
+  OIDCStateMaxNumberOfCookies     7 true
 
   # Redis session cache — store sessions server-side to avoid oversized cookies
   OIDCSessionType                 server-cache
