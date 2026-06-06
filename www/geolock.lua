@@ -107,9 +107,11 @@ local function save_extra(codes)
   return true
 end
 
+-- Signal Apache reload by touching the trigger file the entrypoint listener
+-- watches (same mechanism as admin.lua). The old FIFO path had no reader.
 local function graceful_reload()
-  local f = io.open("/run/apache-reload.fifo", "w")
-  if f then f:write("reload\n"); f:close() end
+  local f = io.open("/run/apache-proxy/reload-requested", "w")
+  if f then f:close() end
 end
 
 local function self_disable(domain)

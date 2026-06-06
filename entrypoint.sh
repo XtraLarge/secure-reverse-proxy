@@ -670,8 +670,14 @@ log "Starting Apache..."
 # make the admin UI completely unresponsive.
 RELOAD_TRIGGER="/run/apache-proxy/reload-requested"
 mkdir -p /run/apache-proxy
-chown www-data: /run/apache-proxy
-rm -f "$RELOAD_TRIGGER"
+# Dir is root-owned but group-writable by www-data: admin.lua (www-data worker)
+# creates the trigger via the group bit, while root (the owner) can delete it.
+# This works without CAP_DAC_OVERRIDE, which the hardened prod container drops —
+# a www-data-owned dir would make root's rm below fail with EACCES and, under
+# set -e, crash-loop the container on every reload.
+chown root:www-data /run/apache-proxy
+chmod 0770 /run/apache-proxy
+rm -f "$RELOAD_TRIGGER" 2>/dev/null || true
 (
   set +e
   trap 'exit 0' TERM
