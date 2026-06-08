@@ -20,7 +20,7 @@ services:
             redis:
                 condition: service_healthy
         networks:
-            VLan10:
+            your-macvlan-net:
                 ipv4_address: \${IP}
             backend:
         env_file:
@@ -90,9 +90,9 @@ services:
             - backend
 
 networks:
-    VLan10:
+    your-macvlan-net:
         external: true
-        name: VLan10
+        name: your-macvlan-net
     backend:
         driver: bridge
         internal: true

@@ -74,8 +74,8 @@ ask TOC_TITLE   "TOC page title"      "Service Overview"
 
 header "Network"
 say "The proxy container gets its own IP on an existing macvlan Docker network."
-say "Example: network name 'VLan10', container IP '10.10.25.50'."
-ask MACVLAN_NET  "Existing macvlan network name"       "VLan10"
+say "Example: network name 'your-macvlan-net', container IP '10.0.0.50'."
+ask MACVLAN_NET  "Existing macvlan network name"       "your-macvlan-net"
 ask PROXY_IP     "Container IP on that network"        ""
 while [[ -z "$PROXY_IP" || ! "$PROXY_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; do
   warn "Enter a valid IP address"

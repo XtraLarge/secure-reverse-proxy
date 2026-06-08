@@ -18,4 +18,4 @@ This fixture must stay free of production credentials.
 For `dc`-managed Docker hosts there are two helper installers:
 
 - `tests/install-dc-test-compose.sh`: test stack with published ports
-- `tests/install-dc-proxy-compose.sh`: proxy-style stack for `/data/proxy` with `VLan10` and optional `keycloak` profile
+- `tests/install-dc-proxy-compose.sh`: proxy-style stack for `/data/proxy` with `your-macvlan-net` and optional `keycloak` profile
