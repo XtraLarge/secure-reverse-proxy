@@ -300,48 +300,33 @@ end
 
 local socket = require("socket")
 
--- Probe-Token-Cache (per Worker, LuaScope server)
-local _probe_token         = nil
-local _probe_token_expires = 0
+-- ── Status vom Hintergrund-Prober (status-probe.sh) ───────────────────
+-- /run/apache-proxy/status.tab  (tab-separiert: host \t intern \t extern \t ci \t ce)
+-- toc.lua liest nur; gemessen wird minuetlich per Cron, entkoppelt vom Seitenaufruf.
+local STATUSMAP = {}
+local STATUS_FILE = "/run/apache-proxy/status.tab"
 
-local function get_probe_token()
-  local now = os.time()
-  if _probe_token and now < _probe_token_expires then return _probe_token end
-
-  local user    = PROBE_USER
-  local pass    = os.getenv("TOC_PROBE_PASS")         or ""
-  local turl    = os.getenv("TOC_PROBE_TOKEN_URL")    or ""
-  local cid     = os.getenv("TOC_PROBE_CLIENT_ID")    or ""
-  local csecret = os.getenv("TOC_PROBE_CLIENT_SECRET") or ""
-
-  if user == "" or pass == "" or turl == "" or cid == "" then return nil end
-
-  local tmpf = "/tmp/.toc_probe_req"
-  local f = io.open(tmpf, "w")
-  if not f then return nil end
-  f:write('url = "' .. turl .. '"\n')
-  f:write('insecure\n')
-  f:write('data-urlencode = "grant_type=password"\n')
-  f:write('data-urlencode = "client_id=' .. cid .. '"\n')
-  if csecret ~= "" then f:write('data-urlencode = "client_secret=' .. csecret .. '"\n') end
-  f:write('data-urlencode = "username=' .. user .. '"\n')
-  f:write('data-urlencode = "password=' .. pass .. '"\n')
-  f:close()
-
-  local p = io.popen("curl -s --config " .. tmpf .. " 2>/dev/null")
-  if not p then os.remove(tmpf); return nil end
-  local resp = p:read("*a"); p:close()
-  os.remove(tmpf)
-
-  local token   = resp:match('"access_token"%s*:%s*"([^"]+)"')
-  local expires = tonumber(resp:match('"expires_in"%s*:%s*(%d+)')) or 60
-
-  if token then
-    _probe_token         = token
-    _probe_token_expires = now + expires - 10
-    return token
+local function load_status()
+  for k in pairs(STATUSMAP) do STATUSMAP[k] = nil end
+  local f = io.open(STATUS_FILE, "r")
+  if not f then return end
+  for line in f:lines() do
+    if line:sub(1,1) ~= "#" then
+      local host, intern, extern = line:match("^(%S+)\t(%S+)\t(%S+)")
+      if host then
+        STATUSMAP[host:lower()] = { intern = intern, extern = extern }
+      end
+    end
   end
-  return nil
+  f:close()
+end
+
+-- Status-Zustand -> Emoji
+local function status_emoji(state)
+  if state == "up" then return "&#128994;"        -- gruen
+  elseif state == "down" then return "&#128308;"  -- rot
+  elseif state == "warn" then return "&#128993;"  -- gelb
+  else return "&#9898;" end                       -- weiss/unbekannt
 end
 
 -- Ports, die wir als "Host lebt wahrscheinlich" akzeptieren
@@ -521,13 +506,11 @@ function otable()
       if E == "NAME" then
         O = O ..  "  <td><a href=\"" .. "https://" .. S .. "." .. A[CO]["DOMAIN"] .. PORT_SUFFIX .. "\">" .. S .. "</a>"
       elseif E == "STATUS" then
-        O = O ..  "  <td align=\"center\">" .. S
+        local st = STATUSMAP[(A[CO]["NAME"] .. "." .. A[CO]["DOMAIN"]):lower()]
+        O = O ..  "  <td align=\"center\">" .. (st and status_emoji(st.intern) or "&#8212;")
       elseif E == "EXTST" then
-        if A[CO]["STATUS"] == "&#128308;" or A[CO]["SECURE"] ~= "OpenID Connect" then
-          O = O ..  "  <td align=\"center\">-"
-        else
-          O = O ..  "  <td align=\"center\"><span class=\"extst\" data-host=\"" .. A[CO]["NAME"] .. "." .. A[CO]["DOMAIN"] .. "\">&#9203;</span>"
-        end
+        local st = STATUSMAP[(A[CO]["NAME"] .. "." .. A[CO]["DOMAIN"]):lower()]
+        O = O ..  "  <td align=\"center\">" .. (st and status_emoji(st.extern) or "&#8212;")
       elseif E == "SECURE" then
         O = O ..  "  <td align=\"center\">" .. S 
       elseif E == "DEST" then
@@ -745,19 +728,8 @@ var tf = new TableFilter('XLTab', {
 });
 tf.init();
 window.onload = function() {
-  var f = document.getElementById('flt1_XLTab');
+  var f = document.getElementById('flt2_XLTab');
   if (f) f.focus();
-  document.querySelectorAll('span.extst').forEach(function(span) {
-    var host = span.getAttribute('data-host');
-    if (!host) return;
-    fetch('/extcheck?host=' + encodeURIComponent(host))
-      .then(function(r){ return r.text(); })
-      .then(function(code){
-        var c = parseInt(code.trim(), 10);
-        span.innerHTML = (c >= 200 && c < 400) ? '&#128994;' : '&#128308;';
-      })
-      .catch(function(){ span.innerHTML = '&#128308;'; });
-  });
 };
 </script>]]
 
@@ -831,33 +803,21 @@ for _, filename in ipairs(_scan_conf_dirs()) do
   input(FILE, DOMAIN)
 end
 
+-- Sortierung: nach Domain clustern, dann alphabetisch nach Name (case-insensitive)
+table.sort(A, function(x, y)
+  local dx, dy = (x.DOMAIN or ""):lower(), (y.DOMAIN or ""):lower()
+  if dx ~= dy then return dx < dy end
+  return (x.NAME or ""):lower() < (y.NAME or ""):lower()
+end)
+
 function handle(r)
   REMOTE_USER = r.user or REMOTE_USER
-
-  if r.uri == "/extcheck" then
-    r.content_type = "text/plain"
-    local host = (r.args or ""):match("host=([^&]+)")
-    if host and host:match("^[%w%.%-]+$") then
-      local token = get_probe_token()
-      local auth  = token and (' -H "Authorization: Bearer ' .. token .. '"') or ""
-      local p = io.popen("curl -sk" .. auth .. " --resolve " .. host .. ":443:127.0.0.1 -o /dev/null -w '%{http_code}' --max-time 3 https://" .. host .. "/ 2>/dev/null")
-      if p then r:puts(p:read("*a") or "000"); p:close()
-      else r:puts("000") end
-    else
-      r:puts("000")
-    end
-    return apache2.OK
-  end
 
   -- Set MIME type to text/html:
   r.content_type = "text/html"
 
-  -- Refresh service status at most once per minute (LuaScope server keeps state alive).
-  local now = os.time()
-  if now - _last_status_check >= _STATUS_INTERVAL then
-    check_all_services()
-    _last_status_check = now
-  end
+  -- Aktuellen Status vom Hintergrund-Prober laden (/run/apache-proxy/status.tab).
+  load_status()
 
   -- Derive domain from request hostname (e.g. "toc.example.com" → "example.com").
   -- This is more reliable than extracting the domain from the conf filename, which

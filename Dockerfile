@@ -89,6 +89,11 @@ RUN chmod 0644 /etc/cron.d/rotate-oidc-key /etc/cron.d/geoip-update /etc/cron.d/
 COPY apache-watchdog.sh /usr/local/bin/apache-watchdog.sh
 RUN chmod +x /usr/local/bin/apache-watchdog.sh
 
+COPY status-probe.sh /usr/local/bin/status-probe.sh
+RUN chmod +x /usr/local/bin/status-probe.sh
+COPY cron.d/status-probe /etc/cron.d/status-probe
+RUN chmod 0644 /etc/cron.d/status-probe
+
 # Runtime directory for generated configs; sites/ for user-managed domain configs
 # acme-webroot/ serves ACME HTTP-01 challenge tokens (certbot --webroot -w /var/www/acme-webroot)
 RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites /etc/apache2/config/oidc-clients /var/www/acme-webroot

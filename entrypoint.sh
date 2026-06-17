@@ -659,6 +659,13 @@ if [[ -n "${ACME_EMAIL:-}" ]]; then
     (sleep 10 && /usr/local/bin/acme-init.sh) &
 fi
 
+# ── Initialer Statuslauf (Hintergrund) ───────────────────────────────────────
+# Damit /run/apache-proxy/status.tab nicht erst nach dem ersten Cron-Minutentakt
+# existiert. 25 s Verzoegerung gibt Apache Zeit, erreichbar zu werden.
+if [ -x /usr/local/bin/status-probe.sh ]; then
+    (sleep 25 && /usr/local/bin/status-probe.sh) &
+fi
+
 log "Starting Apache..."
 # ── Reload listener (root background process) ─────────────────────────────────
 # www-data cannot signal PID 1 directly (no-new-privileges prevents sudo/setuid).

@@ -230,6 +230,20 @@ local function parse_vhost_line(line)
   }
 end
 
+-- Sortierschluessel fuer eine Conf-Zeile in der Admin-Liste (nach Eintragsname)
+local function row_sort_key(line)
+  local v = parse_vhost_line(line)
+  if v then return (v.name or ""):lower() end
+  if is_geolock_line(line) then return "geolock" end
+  if is_disabled_line(line) then
+    local raw = trim(line):gsub("^#%s*", "")
+    local vd = parse_vhost_line(raw)
+    if vd then return (vd.name or ""):lower() end
+    if is_geolock_line(raw) then return "geolock" end
+  end
+  return "\255\255\255"
+end
+
 local function build_line(macro, name, domain, dest, users, authtype)
   local m = trim(macro):lower()
   name     = trim(name)
@@ -654,7 +668,15 @@ local function show_list(r, msg)
       r:puts('<p class="dim">Keine VHost-Eintr\xC3\xA4ge in dieser Datei.</p>')
     else
       r:puts('<table><tr><th>Typ</th><th>Name</th><th>Domain</th><th>Ziel</th><th>Benutzer</th><th>Aktionen</th></tr>')
-      for lineno, line in ipairs(lines) do
+      local _order = {}
+      for _ln = 1, #lines do _order[#_order + 1] = _ln end
+      table.sort(_order, function(_a, _b)
+        local ka, kb = row_sort_key(lines[_a]), row_sort_key(lines[_b])
+        if ka ~= kb then return ka < kb end
+        return _a < _b
+      end)
+      for _, lineno in ipairs(_order) do
+        local line = lines[lineno]
         if is_vhost_line(line) and not is_no_admin(lines, lineno) then
           local v = parse_vhost_line(line)
           if v then
@@ -770,6 +792,22 @@ local function get_known_domains()
   end
   table.sort(ordered)
   return ordered
+end
+
+-- Domain einer Conf-Datei bestimmen (haeufigste Domain ihrer VHost-Zeilen)
+local function domain_of_file(fname)
+  if not fname or fname == "" or fname:match("[/\\]") then return "" end
+  local lines = read_lines(SITES_DIR .. fname)
+  if not lines then return "" end
+  local count, best, bestn = {}, "", 0
+  for _, line in ipairs(lines) do
+    local v = parse_vhost_line(line)
+    if v and v.domain ~= "" then
+      count[v.domain] = (count[v.domain] or 0) + 1
+      if count[v.domain] > bestn then bestn = count[v.domain]; best = v.domain end
+    end
+  end
+  return best
 end
 
 local function show_form(r, fname, lineno, pre, errmsg)
@@ -2963,7 +3001,7 @@ function handle(r)
     if fname == "" or fname:match("[/\\]") then
       show_list(r, "ERR: Keine Datei angegeben")
     else
-      show_form(r, fname, nil, nil, nil)
+      show_form(r, fname, nil, { domain = domain_of_file(fname) }, nil)
     end
 
   elseif action == "edit" then
