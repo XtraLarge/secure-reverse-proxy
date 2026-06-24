@@ -1,0 +1,19 @@
+name: naming-guard
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["master"]
+
+permissions:
+  contents: read
+
+jobs:
+  naming-guard:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run naming-guard (keine internen Netz-/Hostnamen)
+        run: bash scripts/naming-guard.sh

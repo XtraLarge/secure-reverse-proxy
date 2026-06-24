@@ -1,0 +1,12 @@
+# Lokaler Schutz vor dem Push: faengt interne Netz-/Hostnamen vor dem Commit.
+# Aktivieren:  pip install pre-commit && pre-commit install
+# (Das CI-Gate naming-guard.yml ist die massgebliche, erzwungene Pruefung.)
+repos:
+  - repo: local
+    hooks:
+      - id: naming-guard
+        name: naming-guard (keine internen Netz-/Hostnamen)
+        entry: scripts/naming-guard.sh
+        language: script
+        pass_filenames: false
+        always_run: true
