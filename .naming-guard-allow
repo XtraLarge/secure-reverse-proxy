@@ -1,0 +1,4 @@
+# naming-guard Allowlist — eine erweiterte Regex (ERE) je Zeile.
+# Gematcht wird gegen 'datei:zeile:inhalt'. Nur fuer bewusste, gepruefte Ausnahmen.
+# Beispiel (auskommentiert):
+# ^docs/example\.md:.*10\.10\.0\.1
