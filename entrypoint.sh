@@ -562,7 +562,7 @@ LOGROTATE_ACTIVE="/etc/logrotate.d/apache-active"
     _hostport="${SYSLOG_REMOTE#*://}"        # host:port
     _rhost="${_hostport%%:*}"
     _rport="${_hostport##*:}"
-    echo "    action(type=\"omfwd\" target=\"${_rhost}\" port=\"${_rport}\" protocol=\"${_proto}\")"
+    echo "    action(type=\"omfwd\" target=\"${_rhost}\" port=\"${_rport}\" protocol=\"${_proto}\" Template=\"RSYSLOG_SyslogProtocol23Format\")"
   fi
   echo "    stop"
   echo "}"
