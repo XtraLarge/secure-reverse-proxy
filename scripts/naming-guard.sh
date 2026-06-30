@@ -11,7 +11,12 @@ set -euo pipefail
 
 cd -- "$(git rev-parse --show-toplevel)"
 
-PATTERN='10\.10\.|\.fritz\.box|derwerres\.de'
+# Abdeckung: interne 10.<VLAN>.x.x Host-IPs aller internen VLANs (2. Oktett = VLAN-ID,
+# nonzero) sowie das Exposed-Net (2. Oktett 0, 3. Oktett nonzero); zusaetzlich die
+# interne Router-Domain und die Eigen-Domain (bare und als FQDN-Suffix).
+# Bewusst NICHT erfasst (generische Beispiele): RFC1918-CIDR-Ranges (/8, /12, /16)
+# und Doku-Beispiel-Backends 10.0.0.x.
+PATTERN='10\.[1-9][0-9]?\.[0-9]{1,3}\.[0-9]{1,3}|10\.0\.[1-9][0-9]{0,2}\.[0-9]{1,3}|fritz\.box|derwerres\.de'
 ALLOW_FILE='.naming-guard-allow'
 
 allow_filter() {
