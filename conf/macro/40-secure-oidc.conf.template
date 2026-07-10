@@ -76,13 +76,21 @@
 
   OIDCProviderBackChannelLogoutSupported On
 
-  # Keep sessions alive while the user is active.
-  # Each request resets the inactivity timer; the access_token is silently
-  # refreshed via the refresh_token before it expires so there is no mid-session
-  # logout. The hard limit (SessionMaxDuration) forces a full re-login after 24h.
+  # Keep sessions alive while the user is active. Each request resets the
+  # inactivity timer. The hard limit (SessionMaxDuration) forces a full
+  # re-login after 24h.
+  #
+  # NOTE: proactive access_token refresh (OIDCRefreshAccessTokenBeforeExpiry) is
+  # intentionally NOT enabled. This proxy only authenticates and forwards identity
+  # claims to backends; the access_token is never passed upstream (it is even
+  # explicitly unset). Combined with Keycloak refresh-token rotation, SPAs that
+  # fire many concurrent requests triggered parallel refreshes racing on the
+  # already-rotated refresh_token -> "invalid_grant / Token is not active" error
+  # floods in the log, with no user impact (logout=0). The server-cache session
+  # lives independently of the access_token lifetime, so no proactive refresh is
+  # required.
   OIDCSessionInactivityTimeout     28800
   OIDCSessionMaxDuration           86400
-  OIDCRefreshAccessTokenBeforeExpiry 300
 </Macro>
 
 # OIDC_NO_ACCESS_HANDLER
