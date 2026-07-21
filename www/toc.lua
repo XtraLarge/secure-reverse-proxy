@@ -207,16 +207,16 @@ end
 
 -- parse security type
 function ssec (S)
-  local T;
-  if endswith(S,"alias")   then T="-"
-    elseif endswith(S,"any")   then T="OpenID Connect"
-    elseif endswith(S,"oidc")  then T="OpenID Connect"
-    elseif endswith(S,"basic") then T="Basic"
-    elseif endswith(S,"ccert") then T="Client Certificate"
-    elseif endswith(S,"otp")   then T="One Time Password"
-    else T="-"
+  -- Schlüsselwort-Suche im (bereits kleingeschriebenen) Makronamen, damit ALLE
+  -- OIDC-Varianten greifen — auch VHost_Proxy_OIDC_User/_Group/_Any, die nicht
+  -- auf "oidc" enden. An VHost_Proxy-Makros gibt es real nur zwei Auth-Verfahren:
+  -- OIDC und Basic. OTP/PIN (GeoLock) werden separat gesetzt; ein ClientCert-Makro
+  -- existiert nicht -> kein eigener Zweig nötig.
+  local s = string.lower(S or "")
+  if     string.find(s, "oidc",  1, true) then return "OpenID Connect"
+    elseif string.find(s, "basic", 1, true) then return "Basic"
+    else return "-"   -- Alias/Redirect, VHost_Proxy_Open, plain VHost_Proxy (GeoIP/intern): keine Authentifizierung
   end
-  return T;
 end
 
 -- check if logged-in user may see this entry

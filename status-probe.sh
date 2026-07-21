@@ -154,5 +154,7 @@ done
   fi
 } > "$TMP" 2>/dev/null
 
+# status.tab muss von Apache (www-data) gelesen werden -> Gruppe www-data + 640
+chown root:www-data "$TMP" 2>/dev/null || chgrp www-data "$TMP" 2>/dev/null || true
 chmod 640 "$TMP" 2>/dev/null || true
 mv -f "$TMP" "$OUT" 2>/dev/null || rm -f "$TMP"
