@@ -174,9 +174,11 @@ def derive_servernames(macro, params):
         if params and DOMAIN_VALID.match(params[0]):
             return [f"geolock.{params[0]}"]
     elif m == 'domain_init':
-        # Use Domain_Init DOMAINNAME STDDOMAIN → toc.DOMAINNAME, logout.DOMAINNAME
+        # Voller Frame: toc./logout./admin./geolock. sind ALLE in Domain_Init gebuendelt.
+        # Use Domain_Init DOMAINNAME STDDOMAIN ADMINUSER
         if params and DOMAIN_VALID.match(params[0]):
-            return [f"toc.{params[0]}", f"logout.{params[0]}"]
+            return [f"toc.{params[0]}", f"logout.{params[0]}",
+                    f"admin.{params[0]}", f"geolock.{params[0]}"]
     return []
 
 servernames = set()

@@ -15,7 +15,7 @@
 
 MacroIgnoreEmptyArgs
 
-<Macro Domain_Init $(DOMAINNAME) $(STDDOMAIN)>
+<Macro Domain_Init $(DOMAINNAME) $(STDDOMAIN) $(ADMINUSER)>
 
   # Bare domain: redirect to www (or whatever STDDOMAIN is)
   <VirtualHost *:80>
@@ -98,6 +98,13 @@ MacroIgnoreEmptyArgs
     </Location>
 
   </VirtualHost>
+
+  # ── Infrastruktur-VHosts, fest im Frame gekapselt ──────────────────────────
+  # Admin- und GeoLock-Verwaltungsoberflaeche gehoeren zum Grundsystem und
+  # werden hier IM Frame eingebunden, damit sie durch Bearbeiten des Domain-
+  # Bodys nicht versehentlich entfernt/beschaedigt werden koennen.
+  USE Admin_VHost   $(DOMAINNAME) $(ADMINUSER)
+  USE GeoLock_VHost $(DOMAINNAME) $(ADMINUSER)
 
 </Macro>
 
