@@ -1228,11 +1228,160 @@ end
 
 local kc_sync_redirects  -- forward declaration; assigned after KC helpers below
 
+-- ── Normalisierung der Site-Config beim Anwenden ─────────────────────────────
+-- Ordnet die verwalteten "Use VHost_*"-Eintraege unter Zwischenueberschriften
+-- (Aliases / Proxy / OIDC / Basic), richtet die Spalten aus und sortiert je
+-- Gruppe nach Name. Frame (Kopf + Domain_Init .. Domain_Final), '# no-admin'-
+-- Marker, deaktivierte (# Use ...) und sonstige Kommentare bleiben erhalten.
+-- KEINE Semantik-Aenderung: Makro und Argumente 1:1, nur Whitespace/Reihenfolge.
+local NORM_DASH  = "\226\148\128"   -- U+2500 (─)
+local NORM_ORDER = { "alias", "proxy", "oidc", "basic" }
+local NORM_HEAD  = {
+  alias = "Aliases (Redirect, keine Authentifizierung)",
+  proxy = "Reverse Proxy ohne Login (GeoIP-Laenderlock + internes Netz)",
+  oidc  = "OIDC-geschuetzt (OpenID Connect)",
+  basic = "Basic-Auth",
+}
+local function norm_category(macro)
+  local m = (macro or ""):lower()
+  if m == "vhost_alias" then return "alias"
+  elseif m:find("oidc", 1, true) then return "oidc"
+  elseif m:find("basic", 1, true) then return "basic"
+  else return "proxy" end
+end
+-- Tokenisiert '<macro> <args...>' (nach 'Use '); 'quoted'-Felder bleiben ein Token.
+local function norm_tokenize(body)
+  local toks, i, n = {}, 1, #body
+  while i <= n do
+    local c = body:sub(i, i)
+    if c:match("%s") then
+      i = i + 1
+    elseif c == "'" then
+      local j = body:find("'", i + 1, true) or n
+      toks[#toks + 1] = body:sub(i, j); i = j + 1
+    else
+      local j = i
+      while j <= n and not body:sub(j, j):match("%s") do j = j + 1 end
+      toks[#toks + 1] = body:sub(i, j - 1); i = j
+    end
+  end
+  return toks
+end
+-- Spaltenbuendige Zeile aus Tokens (macro,name,domain,dest,rest...); gleiche Breiten wie build_line.
+local function norm_align(toks, disabled)
+  local macro  = toks[1] or ""
+  local name   = toks[2] or ""
+  local domain = toks[3] or ""
+  local dest   = toks[4] or ""
+  local rest = {}
+  for k = 5, #toks do rest[#rest + 1] = toks[k] end
+  local s
+  if #rest > 0 then
+    s = string.format("Use %-28s  %-20s  %-25s  %-35s  %s", macro, name, domain, dest, table.concat(rest, "  "))
+  elseif dest ~= "" then
+    s = string.format("Use %-28s  %-20s  %-25s  %s", macro, name, domain, dest)
+  elseif name ~= "" then
+    s = string.format("Use %-28s  %s", macro, name)
+  else
+    s = "Use " .. macro
+  end
+  s = s:gsub("%s+$", "")
+  if disabled then s = "# " .. s end
+  return s
+end
+local function norm_heading(cat)
+  return "# " .. NORM_DASH .. NORM_DASH .. " " .. (NORM_HEAD[cat] or cat) .. " " .. string.rep(NORM_DASH, 20)
+end
+local function normalize_site_lines(lines)
+  local head, tail, entries = {}, {}, {}
+  local i, found_init = 1, false
+  while i <= #lines do
+    head[#head + 1] = lines[i]
+    if lines[i]:lower():match("^%s*use%s+domain_init") then i = i + 1; found_init = true; break end
+    i = i + 1
+  end
+  if not found_init then return lines end   -- kein Frame -> unveraendert (sicher)
+  local marker, notes = nil, {}
+  local function flush(cat, key, aligned)
+    entries[#entries + 1] = { cat = cat, key = key, marker = marker, notes = notes, line = aligned }
+    marker, notes = nil, {}
+  end
+  local hit_final = false
+  while i <= #lines do
+    local t = trim(lines[i]); local low = t:lower()
+    if low:match("^use%s+domain_final") then
+      while i <= #lines do tail[#tail + 1] = lines[i]; i = i + 1 end
+      hit_final = true; break
+    elseif t == "" then
+      -- Leerzeilen verwerfen
+    elseif low == "# no-admin" then
+      marker = "# no-admin"
+    elseif t:match("^#%s*[Uu][Ss][Ee]%s+[Vv][Hh][Oo][Ss][Tt]_") then
+      local toks = norm_tokenize((t:gsub("^#%s*[Uu][Ss][Ee]%s+", "")))
+      flush(norm_category(toks[1]), (toks[2] or ""):lower(), norm_align(toks, true))
+    elseif t:match("^[Uu][Ss][Ee]%s+[Vv][Hh][Oo][Ss][Tt]_") then
+      local toks = norm_tokenize((t:gsub("^[Uu][Ss][Ee]%s+", "")))
+      flush(norm_category(toks[1]), (toks[2] or ""):lower(), norm_align(toks, false))
+    elseif t:match("^#%s*" .. NORM_DASH) or t:match("^#%s*[%-]+%s*$") then
+      -- alte Sektions-Trenner verwerfen (werden neu erzeugt)
+    else
+      notes[#notes + 1] = t   -- sonstiger Kommentar -> Notiz an naechsten Eintrag
+    end
+    i = i + 1
+  end
+  if not hit_final then return lines end
+  local out = {}
+  for _, l in ipairs(head) do out[#out + 1] = l end
+  for _, cat in ipairs(NORM_ORDER) do
+    local bucket = {}
+    for _, e in ipairs(entries) do if e.cat == cat then bucket[#bucket + 1] = e end end
+    if #bucket > 0 then
+      table.sort(bucket, function(a, b) return a.key < b.key end)
+      out[#out + 1] = ""
+      out[#out + 1] = norm_heading(cat)
+      for _, e in ipairs(bucket) do
+        for _, nt in ipairs(e.notes or {}) do out[#out + 1] = nt end
+        if e.marker then out[#out + 1] = e.marker end
+        out[#out + 1] = e.line
+      end
+    end
+  end
+  if marker or #notes > 0 then
+    out[#out + 1] = ""
+    for _, nt in ipairs(notes) do out[#out + 1] = nt end
+    if marker then out[#out + 1] = marker end
+  end
+  out[#out + 1] = ""
+  for _, l in ipairs(tail) do out[#out + 1] = l end
+  return out
+end
+
 local function do_apply(r)
+  -- Bereinigung beim Anwenden: alle Site-Configs normalisieren. Sicher via
+  -- .bak-norm + Rollback, falls der configtest danach fehlschlaegt.
+  local norm_baks = {}
+  for _, fpath in ipairs(list_conf_files()) do
+    local lines = read_lines(fpath)
+    if lines then
+      local ok_n, normalized = pcall(normalize_site_lines, lines)
+      if ok_n and type(normalized) == "table" then
+        local fbak, ftmp = fpath .. ".bak-norm", fpath .. ".tmp-norm"
+        if write_lines(ftmp, normalized) then
+          if os.rename(fpath, fbak) then
+            if os.rename(ftmp, fpath) then
+              norm_baks[#norm_baks + 1] = { path = fpath, bak = fbak }
+            else os.rename(fbak, fpath); os.remove(ftmp) end
+          else os.remove(ftmp) end
+        else os.remove(ftmp) end
+      end
+    end
+  end
   local test_ok, test_out = configtest()
   if not test_ok then
-    return show_list(r, "ERR: Konfigurationstest fehlgeschlagen — Reload abgebrochen.\n" .. (test_out or ""))
+    for _, b in ipairs(norm_baks) do os.remove(b.path); os.rename(b.bak, b.path) end
+    return show_list(r, "ERR: Konfigurationstest nach Normalisierung fehlgeschlagen — nichts angewendet.\n" .. (test_out or ""))
   end
+  for _, b in ipairs(norm_baks) do os.remove(b.bak) end
   if not _apache_reload() then
     return show_list(r, "ERR: Graceful reload fehlgeschlagen")
   end
