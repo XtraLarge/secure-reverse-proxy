@@ -219,6 +219,38 @@ function ssec (S)
   end
 end
 
+-- Zuverlaessige USERS-Ableitung je Makro-Typ (SICHERHEITSRELEVANT).
+-- Die USERS-Spalte ist ein Audit-Instrument: sie MUSS die tatsaechliche
+-- Zugriffsbeschraenkung zeigen. Das fruehere finalword(line,7) war fragil und
+-- traf bei VHost_Proxy_OIDC (Felder: 'users' 'groups') die GRUPPEN (Wort 7)
+-- statt der User (Wort 6) -> bei leeren Gruppen faelschlich "-".
+-- Feldpositionen: Use <macro> <name> <domain> <dest> [<w6>] [<w7>]
+function derive_users(line)
+  local m  = (word(line, 2) or ""):lower()
+  local function unq(w) return (w or ""):gsub("'", "") end
+  local w6 = unq(word(line, 6))
+  local w7 = unq(word(line, 7))
+  local function ul(t) return (t:gsub("|", ", ")) end           -- Userliste
+  local function gl(t) return "@" .. (t:gsub("|", ", @")) end   -- Gruppenliste (@)
+  if m == "vhost_alias" or m == "vhost_proxy" or m == "vhost_proxy_open" then
+    return "-"                                    -- keine Auth-Allowlist (Redirect/offen/GeoIP)
+  elseif m == "vhost_proxy_oidc_any" then
+    return "- ALL -"                              -- jeder ANGEMELDETE User
+  elseif m == "vhost_proxy_oidc_user" then
+    return w6 ~= "" and ul(w6) or "-"
+  elseif m == "vhost_proxy_oidc_group" then
+    return w6 ~= "" and gl(w6) or "-"
+  elseif m == "vhost_proxy_oidc" then
+    local parts = {}
+    if w6 ~= "" then parts[#parts + 1] = ul(w6) end
+    if w7 ~= "" then parts[#parts + 1] = gl(w7) end
+    return #parts > 0 and table.concat(parts, ", ") or "-"
+  elseif m == "vhost_proxy_basic" or m == "vhost_proxy_ws_basic" then
+    return w7 ~= "" and ul(w7) or "-"
+  end
+  return "-"
+end
+
 -- check if logged-in user may see this entry
 function user_may_see(entry)
   local users = entry["USERS"] or ""
@@ -231,6 +263,9 @@ function user_may_see(entry)
   -- All authenticated OIDC users can see Basic auth entries (they are accessible
   -- from internal networks without credentials, and from external with the password).
   if entry["SECURE"] == "Basic" then return true end
+  -- Group-restricted (@group): Gruppenzugehoerigkeit ist hier nicht bekannt
+  -- (die Proxy-Makros erzwingen den echten Zugriff) -> Zeile nicht verbergen.
+  if users:find("@", 1, true) then return true end
   -- Empty REMOTE_USER (shouldn't happen after auth, but be safe)
   if REMOTE_USER == "" then return true end
   local u_lower = REMOTE_USER:lower()
@@ -614,12 +649,12 @@ function parse(line)
     ["IPORT"]  = siport(word(line,5));
     ["SECURE"] = ssec(word(line,2));
     ["USERS"]  = (function()
-                   local u = finalword(line,7):gsub("'",""):gsub("|",", ")
+                   local u = derive_users(line)
                    if PROBE_USER ~= "" then
                      local p = PROBE_USER:lower():gsub("([%.%-%+%?%(%)%[%]%^%$%%])", "%%%1")
                      u = u:gsub(", "..p, ""):gsub(p..", ", ""):gsub("^"..p.."$", "-")
                    end
-                   return u:match("^https?://") and "-" or u
+                   return u
                  end)();
   });
 
