@@ -253,7 +253,7 @@ Use VHost_Alias  <site>  <domain>  <target-url>
 Use VHost_Proxy_OIDC_User  <site>  <domain>  <backend-url>/  'alice|bob'
 
 # Reverse proxy — specific OIDC groups only (pipe-separated, case-insensitive)
-Use VHost_Proxy_OIDC_Group  <site>  <domain>  <backend-url>/  'editors|admins'
+Use VHost_Proxy_OIDC  <site>  <domain>  <backend-url>/  ''  'editors|admins'
 
 # Reverse proxy — any authenticated OIDC user
 Use VHost_Proxy_OIDC_Any  <site>  <domain>  <backend-url>/
@@ -278,7 +278,7 @@ USE Domain_Init example.com www
 
 Use VHost_Alias          www       example.com  https://www-backend.internal/
 Use VHost_Proxy_OIDC_User  app       example.com  http://10.0.0.5:8080/   'alice|bob'
-Use VHost_Proxy_OIDC_Group wiki      example.com  http://10.0.0.8:3000/   'editors'
+Use VHost_Proxy_OIDC       wiki      example.com  http://10.0.0.8:3000/   ''  'editors'
 Use VHost_Proxy_OIDC_Any   monitor   example.com  http://10.0.0.6:3000/
 Use VHost_Proxy          idp       example.com  https://10.0.0.7:8443/
 Use Admin_VHost          example.com  'alice'
