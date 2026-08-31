@@ -129,8 +129,8 @@ local MACRO_TYPES = {
   "VHost_Alias",
 }
 local MACRO_LABELS = {
-  VHost_Proxy         = "Kein Auth \xE2\x80\x94 \xC3\xB6ffentlich zug\xC3\xA4nglich",
-  VHost_Proxy_Open    = "Kein Auth \xE2\x80\x94 nur aus internen Netzen",
+  VHost_Proxy         = "Kein Auth \xE2\x80\x94 GeoIP-L\xC3\xA4ndersperre (kein Login)",
+  VHost_Proxy_Open    = "Kein Auth \xE2\x80\x94 kein GeoLock (weltweit zug\xC3\xA4nglich)",
   VHost_Proxy_OIDC    = "OIDC-Login \xE2\x80\x94 bestimmte Nutzer / Gruppen",
   VHost_Proxy_OIDC_Any= "OIDC-Login \xE2\x80\x94 jeder angemeldete Nutzer",
   VHost_Proxy_Basic   = "HTTP-Basic-Auth \xE2\x80\x94 Passwort-gesch\xC3\xBCtzt",
