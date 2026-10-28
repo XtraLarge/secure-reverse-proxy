@@ -8,9 +8,10 @@
 #   ${INTERNAL_NETWORKS}      — written to /etc/apache2/conf-runtime/internal-networks.conf
 
 # CLIENTAPIKEY $(SITENAME) $(DOMAINNAME)
-# Protects a location with X-API-Key header auth + GeoIP country check.
-# Internal networks bypass all checks.
-# API keys are loaded from /etc/apache2/config/apikeys/<sitename>.keys
+# Protects a location with X-API-Key header auth.
+# - Internal networks bypass all checks
+# - Valid API key bypasses GeoIP (machine-to-machine auth)
+# - Without API key: GeoIP check applies (future use)
 #
 <Macro CLIENTAPIKEY $(SITENAME) $(DOMAINNAME)>
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
@@ -25,11 +26,11 @@
       # Internal networks always pass through
       Include /etc/apache2/conf-runtime/internal-networks.conf
 
-      # External: must be from allowed country AND have valid API key
-      <RequireAll>
-        Require expr "reqenv('AllowCountry') != ''"
-        Require env ValidAPIKey
-      </RequireAll>
+      # Valid API key alone is sufficient (no GeoIP needed for M2M)
+      Require env ValidAPIKey
+
+      # Without API key: need allowed country (for browser-based fallback)
+      Require expr "reqenv('AllowCountry') != ''"
     </RequireAny>
   </Location>
 </Macro>
@@ -81,7 +82,7 @@
     USE SSL $(DOMAINNAME)
     USE CLIENTAPIKEY $(SITENAME) $(DOMAINNAME)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
-    USE PROXY_WS $(DESTINATION)
+    USE PROXY $(DESTINATION)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
   </VirtualHost>
 </Macro>
