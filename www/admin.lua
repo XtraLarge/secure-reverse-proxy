@@ -3301,6 +3301,24 @@ function handle(r)
   elseif action == "toggle_disable" and r.method == "POST" then
     do_toggle_disable(r, post)
 
+  -- API Key Management (loaded from admin-apikeys.lua)
+  elseif action == "apikeys" then
+    local sitename = trim(get["site"] or "")
+    if sitename == "" then
+      show_list(r, "ERR: Kein Sitename für API Keys")
+    else
+      local ak = require("admin-apikeys")
+      ak.show_apikeys(r, sitename, nil)
+    end
+
+  elseif action == "apikey_create" and r.method == "POST" then
+    local ak = require("admin-apikeys")
+    ak.do_apikey_create(r, post)
+
+  elseif action == "apikey_delete" and r.method == "POST" then
+    local ak = require("admin-apikeys")
+    ak.do_apikey_delete(r, post)
+
   elseif action == "geolock" then
     show_geolock_view(r, nil)
 

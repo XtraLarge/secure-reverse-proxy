@@ -1,0 +1,87 @@
+# ── API-Key Auth macros ───────────────────────────────────────────────────────
+#
+# Provides header-based API key authentication for machine-to-machine access.
+# Keys are stored in /etc/apache2/config/apikeys/<sitename>.keys (one key per line).
+#
+# Template variables substituted at container start:
+#   ${GEOIP_ALLOW_COUNTRIES}  — pipe-separated ISO country codes (e.g. DE|AT|CH)
+#   ${INTERNAL_NETWORKS}      — written to /etc/apache2/conf-runtime/internal-networks.conf
+
+# CLIENTAPIKEY $(SITENAME) $(DOMAINNAME)
+# Protects a location with X-API-Key header auth + GeoIP country check.
+# Internal networks bypass all checks.
+# API keys are loaded from /etc/apache2/config/apikeys/<sitename>.keys
+#
+<Macro CLIENTAPIKEY $(SITENAME) $(DOMAINNAME)>
+  SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
+  IncludeOptional /etc/apache2/config/extra-countries.conf
+
+  # Load API keys from file (LuaHookAccessChecker validates X-API-Key header)
+  LuaHookAccessChecker /etc/apache2/www/apikey-auth.lua check_apikey early
+  SetEnv APIKEY_FILE /etc/apache2/config/apikeys/$(SITENAME).keys
+
+  <Location />
+    <RequireAny>
+      # Internal networks always pass through
+      Include /etc/apache2/conf-runtime/internal-networks.conf
+
+      # External: must be from allowed country AND have valid API key
+      <RequireAll>
+        Require expr "reqenv('AllowCountry') != ''"
+        Require env ValidAPIKey
+      </RequireAll>
+    </RequireAny>
+  </Location>
+</Macro>
+
+# VHost_Proxy_APIKey $(SITENAME) $(DOMAINNAME) $(DESTINATION)
+# Full vhost with API-Key auth + reverse proxy.
+# API keys stored in /etc/apache2/config/apikeys/<sitename>.keys
+#
+# Example:
+#   Use VHost_Proxy_APIKey ha-mcp-api derwerres.de http://10.0.0.9:9583/
+<Macro VHost_Proxy_APIKey $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
+  <VirtualHost *:80>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE REWRITE2URL "https://$(SITENAME).$(DOMAINNAME)"
+  </VirtualHost>
+
+  <VirtualHost *:443>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE SSL $(DOMAINNAME)
+    USE CLIENTAPIKEY $(SITENAME) $(DOMAINNAME)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    USE PROXY $(DESTINATION)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+  </VirtualHost>
+</Macro>
+
+# VHost_Proxy_WS_APIKey $(SITENAME) $(DOMAINNAME) $(DESTINATION)
+# Full vhost with API-Key auth + WebSocket-capable reverse proxy.
+# Use for MCP servers, live streams, or other WebSocket backends.
+#
+# Example:
+#   Use VHost_Proxy_WS_APIKey ha-mcp-api derwerres.de http://10.0.0.9:9583/
+<Macro VHost_Proxy_WS_APIKey $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
+  <VirtualHost *:80>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE REWRITE2URL "https://$(SITENAME).$(DOMAINNAME)"
+  </VirtualHost>
+
+  <VirtualHost *:443>
+    ServerName $(SITENAME).$(DOMAINNAME)
+    USE LOGGING $(SITENAME) $(DOMAINNAME)
+    USE DEFAULTS
+    USE SSL $(DOMAINNAME)
+    USE CLIENTAPIKEY $(SITENAME) $(DOMAINNAME)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    USE PROXY_WS $(DESTINATION)
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+  </VirtualHost>
+</Macro>
