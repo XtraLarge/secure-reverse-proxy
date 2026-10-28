@@ -66,6 +66,9 @@ COPY www/toc.lua       /var/www/html/toc.lua
 COPY www/admin.lua     /var/www/html/admin.lua
 COPY www/admin-kc.lua  /var/www/html/admin-kc.lua
 COPY www/geolock.lua   /var/www/html/geolock.lua
+COPY www/apikey-auth.lua /etc/apache2/www/apikey-auth.lua
+COPY www/admin-apikeys.lua /etc/apache2/www/admin-apikeys.lua
+COPY www/oidc-no-access.lua /var/www/html/oidc-no-access.lua
 COPY www/help/         /var/www/help/
 COPY www/cgi/          /var/www/cgi/
 COPY www/res/          /var/www/res/
@@ -96,7 +99,7 @@ RUN chmod 0644 /etc/cron.d/status-probe
 
 # Runtime directory for generated configs; sites/ for user-managed domain configs
 # acme-webroot/ serves ACME HTTP-01 challenge tokens (certbot --webroot -w /var/www/acme-webroot)
-RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/sites /etc/apache2/config/oidc-clients /var/www/acme-webroot
+RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/www /etc/apache2/sites /etc/apache2/config/oidc-clients /etc/apache2/config/apikeys /var/www/acme-webroot
 
 # ── Volumes ──────────────────────────────────────────────────────────────────
 # ssl/              Manual TLS certificates, one subdir per domain:
