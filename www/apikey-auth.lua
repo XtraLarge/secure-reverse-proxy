@@ -56,8 +56,10 @@ function check_apikey(r)
     
     local valid_keys = load_keys(keyfile)
     if valid_keys[apikey] then
+        -- Use BOTH methods to ensure Apache sees the env var
         r.subprocess_env["ValidAPIKey"] = "1"
-        return apache2.DECLINED
+        r:setenv("ValidAPIKey", "1")
+        return apache2.OK
     end
     
     r:warn("Invalid API key from " .. (r.useragent_ip or "unknown") .. " for " .. servername)
