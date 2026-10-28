@@ -1,5 +1,6 @@
 -- API Key Authentication for Apache mod_lua
 -- Validates X-API-Key header OR api_key query parameter against keys in a file
+-- Used as LuaAuthzProvider for "Require apikey" directive
 
 local key_cache = {}
 
@@ -38,8 +39,10 @@ local function get_query_param(args, name)
     return nil
 end
 
--- Apache hook: check API key (GLOBAL function for mod_lua)
-function check_apikey(r)
+-- LuaAuthzProvider: return true if API key is valid
+-- Usage in Apache: LuaAuthzProvider apikey /path/to/this.lua authz_check_apikey
+--                  Require apikey
+function authz_check_apikey(r, who, ...)
     local servername = r.server_name or ""
     local sitename = servername:match("^([^.]+)") or "default"
     local keyfile = "/etc/apache2/config/apikeys/" .. sitename .. ".keys"
@@ -51,17 +54,14 @@ function check_apikey(r)
     end
     
     if not apikey then
-        return apache2.DECLINED
+        return apache2.AUTHZ_DENIED_NO_USER
     end
     
     local valid_keys = load_keys(keyfile)
     if valid_keys[apikey] then
-        -- Use BOTH methods to ensure Apache sees the env var
-        r.subprocess_env["ValidAPIKey"] = "1"
-        r:setenv("ValidAPIKey", "1")
-        return apache2.OK
+        return apache2.AUTHZ_GRANTED
     end
     
     r:warn("Invalid API key from " .. (r.useragent_ip or "unknown") .. " for " .. servername)
-    return apache2.DECLINED
+    return apache2.AUTHZ_DENIED
 end
