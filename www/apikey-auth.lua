@@ -33,12 +33,10 @@ end
 
 -- Apache hook: check API key (GLOBAL function for mod_lua)
 function check_apikey(r)
-    -- Get the API key file path from environment
-    local keyfile = r.subprocess_env["APIKEY_FILE"]
-    if not keyfile then
-        r:err("APIKEY_FILE environment variable not set")
-        return apache2.DECLINED
-    end
+    -- Derive key file path from ServerName (sitename.domain -> sitename)
+    local servername = r.server_name or ""
+    local sitename = servername:match("^([^.]+)") or "default"
+    local keyfile = "/etc/apache2/config/apikeys/" .. sitename .. ".keys"
     
     -- Get the X-API-Key header
     local apikey = r.headers_in["X-API-Key"]
@@ -56,6 +54,6 @@ function check_apikey(r)
     end
     
     -- Invalid key - log and decline (let RequireAny deny)
-    r:warn("Invalid API key from " .. (r.useragent_ip or "unknown"))
+    r:warn("Invalid API key from " .. (r.useragent_ip or "unknown") .. " for " .. servername)
     return apache2.DECLINED
 end
