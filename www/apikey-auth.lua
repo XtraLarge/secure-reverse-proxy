@@ -2,8 +2,6 @@
 -- Validates X-API-Key header against keys in a file
 -- Called via LuaHookAccessChecker in CLIENTAPIKEY macro
 
-local M = {}
-
 -- Cache for loaded keys (per-request, not persistent)
 local key_cache = {}
 
@@ -33,8 +31,8 @@ local function load_keys(filepath)
     return keys
 end
 
--- Apache hook: check API key
-function M.check_apikey(r)
+-- Apache hook: check API key (GLOBAL function for mod_lua)
+function check_apikey(r)
     -- Get the API key file path from environment
     local keyfile = r.subprocess_env["APIKEY_FILE"]
     if not keyfile then
@@ -61,5 +59,3 @@ function M.check_apikey(r)
     r:warn("Invalid API key from " .. (r.useragent_ip or "unknown"))
     return apache2.DECLINED
 end
-
-return M
