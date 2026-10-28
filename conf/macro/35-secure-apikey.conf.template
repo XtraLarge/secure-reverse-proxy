@@ -27,11 +27,11 @@
       # Internal networks always pass through
       Include /etc/apache2/conf-runtime/internal-networks.conf
 
-      # External: must be from allowed country AND have valid API key
-      <RequireAll>
-        Require expr "reqenv('AllowCountry') != ''"
-        Require env ValidAPIKey
-      </RequireAll>
+      # Valid API key alone is sufficient (for cloud services like Claude from US)
+      Require env ValidAPIKey
+
+      # Or: Allowed country WITHOUT API key (for browser access from DE/GR)
+      Require expr "reqenv('AllowCountry') != ''"
     </RequireAny>
   </Location>
 </Macro>
