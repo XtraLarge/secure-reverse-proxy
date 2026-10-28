@@ -1,5 +1,5 @@
 -- API Key Authentication for Apache mod_lua
--- Validates X-API-Key header against keys in a file
+-- Validates X-API-Key header OR api_key query parameter against keys in a file
 -- Called via LuaHookAccessChecker in CLIENTAPIKEY macro
 
 -- Cache for loaded keys (per-request, not persistent)
@@ -31,6 +31,17 @@ local function load_keys(filepath)
     return keys
 end
 
+-- Parse query string to get api_key parameter
+local function get_query_param(query_string, param_name)
+    if not query_string then return nil end
+    for key, value in query_string:gmatch("([^&=]+)=([^&]*)") do
+        if key == param_name then
+            return value
+        end
+    end
+    return nil
+end
+
 -- Apache hook: check API key (GLOBAL function for mod_lua)
 function check_apikey(r)
     -- Derive key file path from ServerName (sitename.domain -> sitename)
@@ -38,8 +49,13 @@ function check_apikey(r)
     local sitename = servername:match("^([^.]+)") or "default"
     local keyfile = "/etc/apache2/config/apikeys/" .. sitename .. ".keys"
     
-    -- Get the X-API-Key header
+    -- Get the API key from header OR query parameter
     local apikey = r.headers_in["X-API-Key"]
+    if not apikey then
+        -- Try query parameter as fallback (for clients that cannot send headers)
+        apikey = get_query_param(r.args, "api_key")
+    end
+    
     if not apikey then
         -- No API key provided - let RequireAny handle it
         return apache2.DECLINED
