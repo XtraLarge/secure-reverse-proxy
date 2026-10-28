@@ -40,8 +40,6 @@ local function get_query_param(args, name)
 end
 
 -- LuaAuthzProvider: return true if API key is valid
--- Usage in Apache: LuaAuthzProvider apikey /path/to/this.lua authz_check_apikey
---                  Require apikey
 function authz_check_apikey(r, who, ...)
     local servername = r.server_name or ""
     local sitename = servername:match("^([^.]+)") or "default"
@@ -54,7 +52,8 @@ function authz_check_apikey(r, who, ...)
     end
     
     if not apikey then
-        return apache2.AUTHZ_DENIED_NO_USER
+        -- No API key = denied (let other Require directives handle it)
+        return apache2.AUTHZ_DENIED
     end
     
     local valid_keys = load_keys(keyfile)
