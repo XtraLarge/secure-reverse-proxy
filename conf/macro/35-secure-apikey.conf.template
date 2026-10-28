@@ -8,29 +8,30 @@
 #   ${INTERNAL_NETWORKS}      — written to /etc/apache2/conf-runtime/internal-networks.conf
 
 # CLIENTAPIKEY $(SITENAME) $(DOMAINNAME)
-# Protects a location with X-API-Key header auth.
-# - Internal networks bypass all checks
-# - Valid API key bypasses GeoIP (machine-to-machine auth)
-# - Without API key: GeoIP check applies (future use)
+# Protects a location with X-API-Key header auth + GeoIP country check.
+# Internal networks bypass all checks.
+# API keys are loaded from /etc/apache2/config/apikeys/<sitename>.keys
 #
 <Macro CLIENTAPIKEY $(SITENAME) $(DOMAINNAME)>
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
   IncludeOptional /etc/apache2/config/extra-countries.conf
 
+  # WICHTIG: SetEnv MUSS vor LuaHookAccessChecker stehen!
+  SetEnv APIKEY_FILE /etc/apache2/config/apikeys/$(SITENAME).keys
+
   # Load API keys from file (LuaHookAccessChecker validates X-API-Key header)
   LuaHookAccessChecker /etc/apache2/www/apikey-auth.lua check_apikey early
-  SetEnv APIKEY_FILE /etc/apache2/config/apikeys/$(SITENAME).keys
 
   <Location />
     <RequireAny>
       # Internal networks always pass through
       Include /etc/apache2/conf-runtime/internal-networks.conf
 
-      # Valid API key alone is sufficient (no GeoIP needed for M2M)
-      Require env ValidAPIKey
-
-      # Without API key: need allowed country (for browser-based fallback)
-      Require expr "reqenv('AllowCountry') != ''"
+      # External: must be from allowed country AND have valid API key
+      <RequireAll>
+        Require expr "reqenv('AllowCountry') != ''"
+        Require env ValidAPIKey
+      </RequireAll>
     </RequireAny>
   </Location>
 </Macro>
@@ -82,7 +83,7 @@
     USE SSL $(DOMAINNAME)
     USE CLIENTAPIKEY $(SITENAME) $(DOMAINNAME)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
-    USE PROXY $(DESTINATION)
+    USE PROXY_WS $(DESTINATION)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
   </VirtualHost>
 </Macro>
