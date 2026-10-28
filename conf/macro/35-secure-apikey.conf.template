@@ -6,21 +6,21 @@
 # API-Key authentication BYPASSES GeoIP - the key IS the authentication.
 # Internal networks also bypass all checks.
 
-# Register the Lua authorization provider (once at server level)
-LuaAuthzProvider apikey /etc/apache2/www/apikey-auth.lua authz_check_apikey
-
 # CLIENTAPIKEY $(SITENAME) $(DOMAINNAME)
 # Protects a location with API-Key auth. No GeoIP required for valid API keys.
 # API keys are loaded from /etc/apache2/config/apikeys/<sitename>.keys
 #
 <Macro CLIENTAPIKEY $(SITENAME) $(DOMAINNAME)>
+  # Lua hook sets ValidAPIKey env var if key is valid
+  LuaHookAccessChecker /etc/apache2/www/apikey-auth.lua check_apikey early
+
   <Location />
     <RequireAny>
       # Internal networks always pass through
       Include /etc/apache2/conf-runtime/internal-networks.conf
 
       # Valid API key (from header X-API-Key or query param api_key)
-      Require apikey
+      Require env ValidAPIKey
     </RequireAny>
   </Location>
 </Macro>
