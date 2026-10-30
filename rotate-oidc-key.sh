@@ -29,6 +29,7 @@ printf 'OIDCCryptoPassphrase  "%s"\n' "${NEW_KEY}" > "$PASSPHRASE_CONF"
 
 # Restart the container cleanly: SIGTERM to PID 1 (Apache, via exec in entrypoint).
 # Docker's restart policy brings the container back up with a fresh entrypoint run.
-# apachectl graceful is intentionally avoided — it leaves the container unhealthy.
+# A full restart is kept on purpose here (fresh entrypoint run incl. passphrase include);
+# graceful reloads work since cap_add KILL (see docker-compose.yml).
 echo "[rotate-oidc-key] Passphrase rotated — restarting container ($(date -u +%FT%TZ))"
 kill -TERM 1

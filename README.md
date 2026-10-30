@@ -427,7 +427,10 @@ docker compose logs -f proxy
 # Test Apache config without restarting
 docker compose exec proxy apache2ctl configtest
 
-# Reload Apache (full restart via tini — graceful reload not reliable in Docker)
+# Reload Apache gracefully (requires cap_add KILL, see Security section)
+docker compose exec proxy apache2ctl -k graceful
+
+# Full restart via tini (fresh entrypoint run)
 docker compose exec proxy kill -TERM 1
 
 # Stop
@@ -451,6 +454,7 @@ services:
     image: ghcr.io/xtralarge/secure-reverse-proxy:latest
     cap_add:
       - CHOWN
+      - KILL              # graceful reload: root master must signal the www-data mod_cgid daemon
       - NET_BIND_SERVICE
       - SETGID
       - SETUID

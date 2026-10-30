@@ -433,7 +433,10 @@ docker compose logs -f proxy
 # Apache-Konfiguration testen ohne Neustart
 docker compose exec proxy apache2ctl configtest
 
-# Apache nach Änderungen an sites/ oder AddOn/ neu laden (Container-Neustart)
+# Apache nach Änderungen an sites/ oder AddOn/ neu laden (graceful, benötigt cap_add KILL)
+docker compose exec proxy apache2ctl -k graceful
+
+# Kompletter Neustart über tini (Entrypoint läuft neu)
 docker compose exec proxy kill -TERM 1
 
 # Stoppen
@@ -457,6 +460,7 @@ services:
     image: xtralarge71/secure-reverse-proxy:latest
     cap_add:
       - CHOWN
+      - KILL              # graceful reload: root master must signal the www-data mod_cgid daemon
       - NET_BIND_SERVICE
       - SETGID
       - SETUID

@@ -704,6 +704,15 @@ log "Starting Apache..."
 # www-data cannot signal PID 1 directly (no-new-privileges prevents sudo/setuid).
 # A root process started here survives exec and handles the reload on behalf of www-data.
 #
+# Reload strategy (admin GUI):
+#   1. Keycloak redirect-URI sync (same as on container start) so that newly added
+#      OIDC vhosts can log in without a container restart.
+#   2. configtest — on failure nothing is reloaded; Apache keeps the running config.
+#   3. apache2ctl -k graceful — open connections (SSE/MCP, WebSockets) keep running.
+#   4. Verify Apache answers; only if it does not, fall back to a full container
+#      restart (TERM, then KILL). Graceful requires cap_add KILL: without it the
+#      root master cannot signal the www-data mod_cgid daemon and blocks in waitpid().
+#
 # We use a touch-file instead of a named FIFO so that the Lua writer (admin.lua)
 # never blocks — a FIFO open blocks when no reader is present (e.g. listener is
 # still processing a previous reload), which would freeze Apache workers and
@@ -725,8 +734,35 @@ rm -f "$RELOAD_TRIGGER" 2>/dev/null || true
     if [ -f "$RELOAD_TRIGGER" ]; then
       rm -f "$RELOAD_TRIGGER"
       APID=$(pgrep -o -x apache2 2>/dev/null) || { sleep 1; continue; }
-      # 2 s grace so Apache can flush the HTTP response before TERM arrives
+      # 2 s grace so Apache can flush the HTTP response first
       sleep 2
+      log "Reload requested — syncing Keycloak redirect URIs"
+      _kc_register_redirect_uris || log "WARNING: Keycloak redirect URI sync failed (continuing)"
+      if ! apache2ctl configtest >/dev/null 2>&1; then
+        log "ERROR: configtest failed — reload skipped, Apache keeps running with the previous config"
+        apache2ctl configtest 2>&1 | grep -v AH02800 | tail -5
+        sleep 1; continue
+      fi
+      if apache2ctl -k graceful >/dev/null 2>&1; then
+        # Old children may still answer for a moment: wait, then require 3 consecutive OKs
+        sleep 3
+        _ok=0
+        for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+          if curl -fso /dev/null --max-time 2 http://localhost/; then
+            _ok=$((_ok + 1)); [ "$_ok" -ge 3 ] && break
+          else
+            _ok=0
+          fi
+          sleep 1
+        done
+        if [ "$_ok" -ge 3 ] && kill -0 "$APID" 2>/dev/null; then
+          log "Graceful reload OK (master PID ${APID} unchanged)"
+          sleep 1; continue
+        fi
+        log "WARNING: Apache not answering after graceful reload — falling back to full restart"
+      else
+        log "WARNING: apache2ctl -k graceful failed — falling back to full restart"
+      fi
       kill -TERM "$APID" 2>/dev/null || true
       # Wait up to 5 s for clean shutdown; WebSocket workers may not stop on TERM
       for _ in 1 2 3 4 5; do
