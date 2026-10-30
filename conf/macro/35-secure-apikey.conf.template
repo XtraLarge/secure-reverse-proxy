@@ -30,7 +30,7 @@
 # API keys stored in /etc/apache2/config/apikeys/<sitename>.keys
 #
 # Example:
-#   Use VHost_Proxy_APIKey ha-mcp-api derwerres.de http://10.0.0.9:9583/
+#   Use VHost_Proxy_APIKey my-api example.net http://<backend-host>:8080/
 <Macro VHost_Proxy_APIKey $(SITENAME) $(DOMAINNAME) $(DESTINATION)>
   <VirtualHost *:80>
     ServerName $(SITENAME).$(DOMAINNAME)
