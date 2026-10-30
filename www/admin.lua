@@ -1390,11 +1390,12 @@ local function do_apply(r)
     return show_list(r, "ERR: Graceful reload fehlgeschlagen")
   end
   clear_pending_reload()
-  -- The FIFO signal is sent; entrypoint.sh waits 2 s before sending TERM.
-  -- Render a countdown page so the browser sees a response before Apache stops.
-  r:puts(page_head("Neustart l\xC3\xA4uft\xE2\x80\xA6", "/"))
+  -- The trigger file is set; entrypoint.sh waits 2 s, syncs Keycloak redirect URIs
+  -- and reloads Apache gracefully (full restart only as fallback).
+  -- Render a countdown page so the browser sees a response first.
+  r:puts(page_head("Neu laden\xE2\x80\xA6", "/"))
   r:puts([[<div class="main"><div class="card">]])
-  r:puts('<p style="color:#ffff99;font-size:1.05em">&#9654;&nbsp;Apache wird neu gestartet&hellip;</p>')
+  r:puts('<p style="color:#ffff99;font-size:1.05em">&#9654;&nbsp;Konfiguration wird neu geladen (graceful, bestehende Verbindungen bleiben erhalten)&hellip;</p>')
   r:puts('<p class="dim" style="margin-top:.5em">Seite wird automatisch neu geladen (<span id="sec">7</span>&thinsp;s)</p>')
   r:puts([[</div></div>
 <script>

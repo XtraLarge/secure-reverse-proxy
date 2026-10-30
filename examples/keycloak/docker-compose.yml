@@ -27,6 +27,7 @@ services:
       - ALL
     cap_add:
       - CHOWN
+      - KILL              # graceful reload: root master must signal the www-data mod_cgid daemon
       - NET_BIND_SERVICE
       - SETGID
       - SETUID

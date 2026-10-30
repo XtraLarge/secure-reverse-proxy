@@ -353,6 +353,7 @@ echo "[27] Compose-like capabilities allow clean cgid startup"
 CAP_CID="$(docker run -d --rm \
     --cap-drop ALL \
     --cap-add CHOWN \
+    --cap-add KILL \
     --cap-add NET_BIND_SERVICE \
     --cap-add SETGID \
     --cap-add SETUID \
@@ -371,6 +372,38 @@ if docker logs "$CAP_CID" 2>&1 | grep -Eq 'AH01238|AH01243|AH02156'; then
     docker logs "$CAP_CID" 2>&1 || true
 else
     pass "Compose-like startup is free of cgid/setgid errors"
+fi
+
+echo ""
+echo "[27b] Graceful reload with compose-like capabilities keeps serving"
+# Without CAP_KILL the root master cannot signal the www-data mod_cgid daemon,
+# blocks in waitpid() and stops serving entirely (regression 2026-10-30).
+sleep 8
+docker exec "$CAP_CID" apache2ctl -k graceful >/dev/null 2>&1 || true
+GRACE_OK=0
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 1
+    if docker exec "$CAP_CID" curl -so /dev/null --max-time 2 http://localhost/ 2>/dev/null; then GRACE_OK=1; fi
+done
+if [ "$GRACE_OK" = 1 ] && docker exec "$CAP_CID" curl -so /dev/null --max-time 2 http://localhost/; then
+    pass "Apache answers after graceful reload"
+else
+    fail "Apache stopped answering after graceful reload (missing CAP_KILL?)"
+fi
+
+echo ""
+echo "[27c] Admin-GUI reload trigger reloads gracefully (no container restart)"
+MPID_BEFORE="$(docker exec "$CAP_CID" pgrep -o -x apache2 2>/dev/null || true)"
+docker exec "$CAP_CID" touch /run/apache-proxy/reload-requested 2>/dev/null || true
+sleep 12
+MPID_AFTER="$(docker exec "$CAP_CID" pgrep -o -x apache2 2>/dev/null || true)"
+if [ -n "$MPID_BEFORE" ] && [ "$MPID_BEFORE" = "$MPID_AFTER" ] \
+   && docker exec "$CAP_CID" curl -so /dev/null --max-time 2 http://localhost/ \
+   && docker logs "$CAP_CID" 2>&1 | grep -q "Graceful reload OK"; then
+    pass "Reload trigger handled gracefully (master PID ${MPID_AFTER} unchanged)"
+else
+    fail "Reload trigger did not reload gracefully (before=${MPID_BEFORE} after=${MPID_AFTER})"
+    docker logs "$CAP_CID" 2>&1 | tail -20 || true
 fi
 
 docker rm -f "$CAP_CID" >/dev/null 2>&1 || true
