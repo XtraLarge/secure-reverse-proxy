@@ -30,9 +30,9 @@ MacroIgnoreEmptyArgs
     USE LOGGING https-default $(DOMAINNAME)
     USE DEFAULTS
     USE SSL $(DOMAINNAME)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/.pre*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/.preconfig
     USE REWRITE2URL "https://$(STDDOMAIN).$(DOMAINNAME)${HTTPS_PORT_SUFFIX}"
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/.post*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/.postconfig
   </VirtualHost>
 
   # TOC (table of contents) — OIDC-protected overview page
@@ -160,9 +160,9 @@ MacroIgnoreEmptyArgs
     USE LOGGING https-default $(DOMAINNAME)
     USE DEFAULTS
     USE SSL $(DOMAINNAME)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/.pre*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/.preconfig
     USE REWRITE2URL "https://$(STDDOMAIN).$(DOMAINNAME)${HTTPS_PORT_SUFFIX}"
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/.post*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/.postconfig
   </VirtualHost>
 
 </Macro>

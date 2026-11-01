@@ -20,7 +20,7 @@ services:
       - ./sites:/etc/apache2/sites:rw
 
       # Optional per-vhost Apache include snippets, e.g.:
-      #   AddOn/example.com/mysite.pre.conf
+      #   AddOn/example.com/mysite.preconfig  (and mysite.postconfig)
       - ./AddOn:/etc/apache2/AddOn:rw
 
       # Runtime config — basic.htpasswd, extra-countries.conf, oidc-clients/

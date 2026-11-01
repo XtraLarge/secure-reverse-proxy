@@ -1,0 +1,10 @@
+# Regression guard — this file must NEVER be loaded.
+#
+# AddOn snippets are included by exact name only:
+#   AddOn/<domain>/<site>.preconfig   and   AddOn/<domain>/<site>.postconfig
+# Older macros used the glob <site>.pre* / <site>.post*, which also pulled in
+# backups such as "<site>.preconfig.bak-2026..." and silently applied stale rules.
+#
+# The directive below is invalid on purpose: if a glob include ever comes back,
+# "apache2ctl configtest" fails and tests/run-tests.sh step [1b] reports it.
+ThisAddOnBackupMustNeverBeLoaded
