@@ -52,9 +52,9 @@
     USE DEFAULTS
     USE SSL $(DOMAINNAME)
     USE CLIENTBASIC $(AUTHORTYPE) '$(AUTHORENTRY)'
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
   </VirtualHost>
 </Macro>
 
@@ -78,8 +78,8 @@
     USE DEFAULTS
     USE SSL $(DOMAINNAME)
     USE CLIENTBASIC $(AUTHORTYPE) '$(AUTHORENTRY)'
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
   </VirtualHost>
 </Macro>

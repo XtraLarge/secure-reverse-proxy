@@ -56,6 +56,18 @@ else
 fi
 
 echo ""
+echo "[1b] AddOn snippets are included by exact name only (no backups)"
+# tests/AddOn/test.example.com/monitor.preconfig.bak-regression contains an
+# invalid directive; it must not appear in the include list.
+if run apache2ctl -t -D DUMP_INCLUDES 2>&1 | grep -q "monitor.preconfig.bak-regression"; then
+    fail "AddOn backup file was included — macros must use <site>.preconfig/.postconfig, not a glob"
+elif run apache2ctl -t -D DUMP_INCLUDES 2>&1 | grep -q "AddOn/test.example.com/monitor.preconfig"; then
+    pass "monitor.preconfig included, monitor.preconfig.bak-regression ignored"
+else
+    fail "monitor.preconfig not found in DUMP_INCLUDES"
+fi
+
+echo ""
 echo "[2] Apache configtest with empty sites-enabled"
 EMPTY_DIR=$(mktemp -d)
 if docker run --rm \

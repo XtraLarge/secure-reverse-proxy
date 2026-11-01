@@ -201,9 +201,9 @@
     USE SSL $(DOMAINNAME)
     USE SECURITY_HEADERS
     USE CLIENTOIDC_CLAIM $(SITENAME) $(DOMAINNAME) '$(USERS)'
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
   </VirtualHost>
 </Macro>
 
@@ -230,9 +230,9 @@
     USE SSL $(DOMAINNAME)
     USE SECURITY_HEADERS
     USE CLIENTOIDC_VALIDUSER $(SITENAME) $(DOMAINNAME)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
   </VirtualHost>
 </Macro>
 
@@ -309,9 +309,9 @@
     USE SSL $(DOMAINNAME)
     USE SECURITY_HEADERS
     USE CLIENTOIDC_CLAIM_OR_GROUP $(SITENAME) $(DOMAINNAME) '$(USERS)' '$(GROUPS)'
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
   </VirtualHost>
 </Macro>
 
@@ -340,9 +340,9 @@
       </RequireAny>
     </Location>
 
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
   </VirtualHost>
 </Macro>
 
@@ -367,8 +367,8 @@
     USE DEFAULTS
     USE SSL $(DOMAINNAME)
     USE SECURITY_HEADERS
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).pre*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).post*
+    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
   </VirtualHost>
 </Macro>
