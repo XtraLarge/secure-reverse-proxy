@@ -532,26 +532,32 @@ local function geo_site_mode(domain, name)
   if c:find("AllowCountry=1", 1, true) then return "off" end
   return "default"
 end
-local GEO_OFF = "<span style=\"color:#c0392b;font-weight:600\">"
+local function geo_val(v, why)
+  -- Zellinhalt nur "ja"/"nein" (filterbar), Herkunft als Tooltip
+  local style = v == "nein" and ' style="color:#c0392b;font-weight:600"' or ""
+  return '<span title="' .. why .. '"' .. style .. '>' .. v .. '</span>'
+end
 function geo_cell(e)
   local name, typ, macro = (e.NAME or ""), (e.TYP or ""), (e.MACRO or ""):lower()
   if typ == "Redirect" or name:lower() == "logout" then return "&#8212;" end
-  if typ == "GeoLock" then return GEO_OFF .. "aus</span> (weltweit, Login+PIN)" end
-  if macro == "" then return "an (fest)" end          -- TOC/Admin aus Domain_Init
+  if typ == "GeoLock" then
+    return geo_val("nein", "Weltweit erreichbar, damit L&auml;nder auch aus dem Ausland freigeschaltet werden k&ouml;nnen. Schutz: Keycloak-Login + PIN.")
+  end
+  if macro == "" then return geo_val("ja", "Fest im Rahmen-Makro (TOC/Admin).") end
   local mode = geo_site_mode((e.DOMAIN or ""):lower(), name:lower())
-  if mode == "on"  then return "an (erzwungen)" end
-  if mode == "off" then return GEO_OFF .. "aus</span> (Override)" end
-  if macro == "vhost_proxy_open" then return GEO_OFF .. "aus</span> (Std.)" end
-  return "an (Std.)"
+  if mode == "on"  then return geo_val("ja",   "In der Admin-UI eingeschaltet.") end
+  if mode == "off" then return geo_val("nein", "In der Admin-UI ausgeschaltet.") end
+  if macro == "vhost_proxy_open" then return geo_val("nein", "Vorgabe des Makros VHost_Proxy_Open (weltweit offen).") end
+  return geo_val("ja", "Vorgabe des Makros " .. (e.MACRO or "") .. ".")
 end
 local function geo_note()
-  local allow = os.getenv("GEOIP_ALLOW_COUNTRIES") or ""
-  local extra = (geo_read("/etc/apache2/config/extra-countries.conf") or ""):match('"^%(([A-Z|]+)%)%$"') or ""
   local function esc(x) return (x:gsub("[^A-Z|]", "")) end
-  local txt = "GeoIP erlaubt: " .. (allow ~= "" and esc(allow):gsub("|", ", ") or "&#8212;")
-  if extra ~= "" then txt = txt .. " &middot; zus&auml;tzlich freigeschaltet: " .. esc(extra):gsub("|", ", ") end
+  local allow = esc(os.getenv("GEOIP_ALLOW_COUNTRIES") or "")
+  local extra = esc((geo_read("/etc/apache2/config/extra-countries.conf") or ""):match('"^%(([A-Z|]+)%)%$"') or "")
+  local txt = "GeoIP = ja: von au&szlig;en nur aus " .. (allow ~= "" and allow:gsub("|", ", ") or "&#8212;") .. " erreichbar"
+  if extra ~= "" then txt = txt .. " (vor&uuml;bergehend zus&auml;tzlich: " .. extra:gsub("|", ", ") .. ")" end
   return "<p style=\"margin:.4em 0;font-size:.9em\">" .. txt ..
-         " &middot; interne Netze sind immer ausgenommen</p>\n"
+         ". Interne Netze sind immer ausgenommen.</p>\n"
 end
 
 function otable()
@@ -826,12 +832,13 @@ var tf = new TableFilter('XLTab', {
   col_4: 'select',
   col_6: 'select',
   col_9: 'select',
+  col_10: 'select',
   auto_filter: { delay: 300 },
   extensions: [{ name: 'sort' }],
   case_sensitive: false,
   col_types: [
     'string','string','string','string','string',
-    'string','string','ipaddress','Number','string','string'
+    'string','string','ipaddress','Number','string','string','string'
   ]
 });
 tf.init();
