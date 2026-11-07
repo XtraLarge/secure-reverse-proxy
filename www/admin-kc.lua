@@ -817,9 +817,38 @@ end
 
 -- ── Entry point ───────────────────────────────────────────────────────────────
 
+-- Defence in depth for state-changing requests (anything but GET/HEAD):
+-- an authenticated user is required and the request must originate from this
+-- host (blocks cross-site form posts / CSRF without tokens). Browsers send
+-- Origin (or at least Referer) automatically on form posts.
+local function reject_foreign_write(r, user)
+  if r.method == "GET" or r.method == "HEAD" then return false end
+  local function same_host(u)
+    local host = u and u:match("^[Hh][Tt][Tt][Pp][Ss]?://([^/:]+)")
+    return host ~= nil and host:lower() == (r.hostname or ""):lower()
+  end
+  local origin  = r.headers_in["Origin"]
+  local referer = r.headers_in["Referer"]
+  local ok
+  if origin and origin ~= "" and origin ~= "null" then
+    ok = same_host(origin)
+  else
+    ok = same_host(referer)
+  end
+  if (user or "") ~= "" and ok then return false end
+  r:warn("write request rejected (user=" .. ((user or "") ~= "" and "set" or "none")
+    .. ", method=" .. tostring(r.method) .. ", origin=" .. tostring(origin)
+    .. ", referer=" .. tostring(referer) .. ")")
+  r.status = 403
+  r.content_type = "text/plain"
+  r:puts("Forbidden")
+  return true
+end
+
 function handle(r)
   r.content_type = "text/html; charset=utf-8"
   REMOTE_USER = r.user or ""
+  if reject_foreign_write(r, REMOTE_USER) then return apache2.OK end
 
   -- Configuration check
   if KC_URL == "" then

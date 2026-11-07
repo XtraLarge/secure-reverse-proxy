@@ -600,6 +600,34 @@ function parse(line)
 # USE Domain_Final example.com www
 
   --]]
+  -- Domain_Init embeds the admin and geolock vhosts (frame refactor):
+  --   USE Domain_Init <domain> <stddomain> '<adminusers>'
+  if startswith(string.lower(all_trim(line)), "use domain_init ") then
+    local domain  = string.lower(word(line, 3) or "")
+    local pattern = (word(line, 5) or ""):gsub("'", "")
+    if domain == "" then return end
+    if pattern ~= "" then ADMIN_USERS[domain] = pattern end
+    local users = pattern ~= "" and pattern:gsub("|", ", ") or "-"
+    for _, sub in ipairs({ "admin", "geolock" }) do
+      local key = sub .. "." .. domain
+      if not A_seen[key] then
+        A_seen[key] = true
+        table.insert(A, {
+          ["NAME"]   = sub,
+          ["DOMAIN"] = domain,
+          ["TYP"]    = sub == "admin" and "WebHost" or "GeoLock",
+          ["DEST"]   = "https://" .. sub .. "." .. domain .. PORT_SUFFIX,
+          ["IPROT"]  = "-",
+          ["IIP"]    = "-",
+          ["IPORT"]  = "-",
+          ["SECURE"] = sub == "admin" and "OpenID Connect" or "PIN",
+          ["USERS"]  = users,
+        })
+      end
+    end
+    return
+  end
+
   -- Collect admin user list from Admin_VHost lines
   if startswith(string.lower(all_trim(line)), "use admin_vhost") then
     local domain  = string.lower(word(line, 3))
@@ -670,7 +698,7 @@ end
 function input (FILE, DOMAIN)
   -- get all lines from a file, returns an empty 
   -- list/table if the file does not exist
-  if not file_exists(FILE) then os.exit(); end
+  if not file_exists(FILE) then return end
   local VORHER = #A
   for line in io.lines(FILE) do
     parse(string.lower(line));
@@ -846,7 +874,7 @@ table.sort(A, function(x, y)
 end)
 
 function handle(r)
-  REMOTE_USER = r.user or REMOTE_USER
+  REMOTE_USER = r.user or ""
 
   -- Set MIME type to text/html:
   r.content_type = "text/html"

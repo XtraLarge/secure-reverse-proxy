@@ -126,7 +126,6 @@ local MACRO_TYPES = {
   "VHost_Proxy_OIDC",
   "VHost_Proxy_OIDC_Any",
   "VHost_Proxy_Basic",
-  "VHost_Proxy_APIKey",
   "VHost_Alias",
 }
 local MACRO_LABELS = {
@@ -135,7 +134,6 @@ local MACRO_LABELS = {
   VHost_Proxy_OIDC    = "OIDC-Login \xE2\x80\x94 bestimmte Nutzer / Gruppen",
   VHost_Proxy_OIDC_Any= "OIDC-Login \xE2\x80\x94 jeder angemeldete Nutzer",
   VHost_Proxy_Basic   = "HTTP-Basic-Auth — Passwort-geschützt",
-  VHost_Proxy_APIKey  = "API-Key \xe2\x80\x94 Programmatischer Zugriff",
   VHost_Alias         = "Weiterleitung \xE2\x80\x94 Redirect auf andere URL",
 }
 
@@ -401,7 +399,6 @@ tr:hover td{background:#111130}
 .card{background:#0a0a22;border:1px solid #2a2a4e;border-radius:5px;padding:1em;margin-bottom:1.3em}
 .tag{font-size:.75em;background:#0f3460;color:#7ecfff;padding:2px 7px;border-radius:3px;white-space:nowrap}
 .tag-basic{background:#2d1a00;color:#ffb366}
-.tag-apikey{background:#002d1a;color:#66ffb3}
 .tag-alias{background:#1a2d00;color:#99ff66}
 .tag-proxy{background:#001a2d;color:#66ccff}
 .tag-oidc{background:#1a002d;color:#cc99ff}
@@ -576,7 +573,6 @@ local function macro_tag(m)
   if ml:find("geolock")  then cls = cls .. " tag-geo"
   elseif ml:find("_open")   then cls = cls .. " tag-open"
   elseif ml:find("basic")   then cls = cls .. " tag-basic"
-  elseif ml:find("apikey")  then cls = cls .. " tag-apikey"
   elseif ml:find("_any")    then cls = cls .. " tag-oidc"
   elseif ml:find("oidc")    then cls = cls .. " tag-claim"
   elseif ml:find("alias")   then cls = cls .. " tag-alias"
@@ -3128,9 +3124,39 @@ end
 
 -- ── Request dispatcher ────────────────────────────────────────────────────────
 
+-- Defence in depth for state-changing requests (anything but GET/HEAD):
+-- an authenticated user is required and the request must originate from this
+-- host (blocks cross-site form posts / CSRF without tokens). Browsers send
+-- Origin (or at least Referer) automatically on form posts.
+local function reject_foreign_write(r, user)
+  if r.method == "GET" or r.method == "HEAD" then return false end
+  local function same_host(u)
+    local host = u and u:match("^[Hh][Tt][Tt][Pp][Ss]?://([^/:]+)")
+    return host ~= nil and host:lower() == (r.hostname or ""):lower()
+  end
+  local origin  = r.headers_in["Origin"]
+  local referer = r.headers_in["Referer"]
+  local ok
+  if origin and origin ~= "" and origin ~= "null" then
+    ok = same_host(origin)
+  else
+    ok = same_host(referer)
+  end
+  if (user or "") ~= "" and ok then return false end
+  r:warn("write request rejected (user=" .. ((user or "") ~= "" and "set" or "none")
+    .. ", method=" .. tostring(r.method) .. ", origin=" .. tostring(origin)
+    .. ", referer=" .. tostring(referer) .. ")")
+  r.status = 403
+  r.content_type = "text/plain"
+  r:puts("Forbidden")
+  return true
+end
+
 function handle(r)
   r.content_type = "text/html; charset=UTF-8"
   ADMIN_REMOTE_USER = r.user or ""
+
+  if reject_foreign_write(r, ADMIN_REMOTE_USER) then return apache2.OK end
 
   local get  = r:parseargs()
   local post = {}
@@ -3305,24 +3331,6 @@ function handle(r)
 
   elseif action == "toggle_disable" and r.method == "POST" then
     do_toggle_disable(r, post)
-
-  -- API Key Management (loaded from admin-apikeys.lua)
-  elseif action == "apikeys" then
-    local sitename = trim(get["site"] or "")
-    if sitename == "" then
-      show_list(r, "ERR: Kein Sitename für API Keys")
-    else
-      local ak = require("admin-apikeys")
-      ak.show_apikeys(r, sitename, nil)
-    end
-
-  elseif action == "apikey_create" and r.method == "POST" then
-    local ak = require("admin-apikeys")
-    ak.do_apikey_create(r, post)
-
-  elseif action == "apikey_delete" and r.method == "POST" then
-    local ak = require("admin-apikeys")
-    ak.do_apikey_delete(r, post)
 
   elseif action == "geolock" then
     show_geolock_view(r, nil)
