@@ -117,7 +117,7 @@ export -f probe_one do_curl
 export PORT MAXTIME
 
 # Echte Proxy-Einträge sammeln: "host;macro;domain"
-# Dazu je Domain die vom Rahmen (Domain_Init) erzeugten Lua-Apps admin und geolock;
+# Dazu je Domain die vom Rahmen (Domain_Init) erzeugten Lua-Apps admin, geolock und toc;
 # beide verlangen immer Keycloak -> wie OIDC prüfen.
 mapfile -t SPECS < <(
   {
@@ -127,7 +127,8 @@ mapfile -t SPECS < <(
              if (name!="" && dom!="") printf "%s.%s;%s;%s\n", name, dom, macro, dom }'
     grep -rhiE '^[[:space:]]*Use[[:space:]]+Domain_Init[[:space:]]' "$SITES_DIR"/*.conf 2>/dev/null \
     | awk '{ dom=$3; if (dom!="") { printf "admin.%s;VHost_Proxy_OIDC_Frame;%s\n", dom, dom;
-                                  printf "geolock.%s;VHost_Proxy_OIDC_Frame;%s\n", dom, dom } }'
+                                  printf "geolock.%s;VHost_Proxy_OIDC_Frame;%s\n", dom, dom;
+                                  printf "toc.%s;VHost_Proxy_OIDC_Frame;%s\n", dom, dom } }'
   } | sort -u
 )
 
