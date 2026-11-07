@@ -116,26 +116,36 @@ probe_one() {
 export -f probe_one do_curl
 export PORT MAXTIME
 
-# Echte Proxy-Einträge sammeln: "host;macro"
+# Echte Proxy-Einträge sammeln: "host;macro;domain"
+# Dazu je Domain die vom Rahmen (Domain_Init) erzeugten Lua-Apps admin und geolock;
+# beide verlangen immer Keycloak -> wie OIDC prüfen.
 mapfile -t SPECS < <(
-  grep -rhiE '^[[:space:]]*Use[[:space:]]+VHost_Proxy' "$SITES_DIR"/*.conf 2>/dev/null \
-  | grep -vE '\.bak' \
-  | awk '{ macro=$2; name=$3; dom=$4;
-           if (name!="" && dom!="") printf "%s.%s;%s;%s\n", name, dom, macro, dom }' \
-  | sort -u
+  {
+    grep -rhiE '^[[:space:]]*Use[[:space:]]+VHost_Proxy' "$SITES_DIR"/*.conf 2>/dev/null \
+    | grep -vE '\.bak' \
+    | awk '{ macro=$2; name=$3; dom=$4;
+             if (name!="" && dom!="") printf "%s.%s;%s;%s\n", name, dom, macro, dom }'
+    grep -rhiE '^[[:space:]]*Use[[:space:]]+Domain_Init[[:space:]]' "$SITES_DIR"/*.conf 2>/dev/null \
+    | awk '{ dom=$3; if (dom!="") { printf "admin.%s;VHost_Proxy_OIDC_Frame;%s\n", dom, dom;
+                                  printf "geolock.%s;VHost_Proxy_OIDC_Frame;%s\n", dom, dom } }'
+  } | sort -u
 )
 
-# Öffentliche IP je Domain ermitteln (häufigste *öffentliche* IP; private/gepinnte ignorieren)
+# Öffentliche IP je Domain ermitteln. Zuerst die Hauptdomain selbst: Bei Split-DNS
+# zeigen die Site-Namen intern auf den Proxy, die Hauptdomain bleibt öffentlich.
+# Danach die Site-Namen (private/gepinnte IPs werden ignoriert).
+_is_public() {
+  case "$1" in 10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|127.*|'') return 1 ;; esac
+  return 0
+}
 declare -A DOMPUB
 for spec in "${SPECS[@]}"; do
   dom="${spec##*;}"
   [ -n "${DOMPUB[$dom]:-}" ] && continue
-  host="${spec%%;*}"
-  ip="$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1; exit}')"
-  case "$ip" in
-    10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|127.*|'') continue ;;
-    *) DOMPUB[$dom]="$ip" ;;
-  esac
+  for host in "$dom" "${spec%%;*}"; do
+    ip="$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1; exit}')"
+    if _is_public "$ip"; then DOMPUB[$dom]="$ip"; break; fi
+  done
 done
 
 # Probe-Specs mit Public-IP anreichern: "host;macro;pubip"

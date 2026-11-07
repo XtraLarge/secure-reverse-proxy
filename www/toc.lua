@@ -540,7 +540,7 @@ end
 function geo_cell(e)
   local name, typ, macro = (e.NAME or ""), (e.TYP or ""), (e.MACRO or ""):lower()
   if typ == "Redirect" or name:lower() == "logout" then return "&#8212;" end
-  if typ == "GeoLock" then
+  if name:lower() == "geolock" and macro == "" then
     return geo_val("nein", "Weltweit erreichbar, damit L&auml;nder auch aus dem Ausland freigeschaltet werden k&ouml;nnen. Schutz: Keycloak-Login + PIN.")
   end
   if macro == "" then return geo_val("ja", "Fest im Rahmen-Makro (TOC/Admin).") end
@@ -570,9 +570,9 @@ function otable()
   O = O .. "<thead align=\"center\"><tr>\n"
   for E = 1, #TT do
     if ((TT[E] == "Secured") or (TT[E] == "GeoIP") or (TT[E] == "Status") or (TT[E] == "Ext") or (TT[E] == "Type") or (TT[E] == "Int. Proto.") or (TT[E] == "Int. IP") or (TT[E] == "Int. Port")) then
-      O = O .. "<th align=\"center\">" .. T[E] .. "</th> "
+      O = O .. "<th align=\"center\">" .. TT[E] .. "</th> "
     else
-      O = O .. "<th align=\"left\">" .. T[E] .. "</th> "
+      O = O .. "<th align=\"left\">" .. TT[E] .. "</th> "
     end
   end
   O = O .. "</tr>\n</thead>\n"
@@ -668,7 +668,7 @@ function parse(line)
         table.insert(A, {
           ["NAME"]   = sub,
           ["DOMAIN"] = domain,
-          ["TYP"]    = sub == "admin" and "WebHost" or "GeoLock",
+          ["TYP"]    = "WebHost",
           ["DEST"]   = "https://" .. sub .. "." .. domain .. PORT_SUFFIX,
           ["IPROT"]  = "-",
           ["IIP"]    = "-",
@@ -702,7 +702,7 @@ function parse(line)
     table.insert(A, {
       ["NAME"]   = "geolock",
       ["DOMAIN"] = gl_domain,
-      ["TYP"]    = "GeoLock",
+      ["TYP"]    = "WebHost",
       ["DEST"]   = "",
       ["IPROT"]  = "-",
       ["IIP"]    = "-",
@@ -837,6 +837,7 @@ var tf = new TableFilter('XLTab', {
   col_9: 'select',
   col_10: 'select',
   auto_filter: { delay: 300 },
+  clear_filter_text: 'alle',
   extensions: [{ name: 'sort' }],
   case_sensitive: false,
   col_types: [
