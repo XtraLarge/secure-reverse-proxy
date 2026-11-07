@@ -548,7 +548,10 @@ function geo_cell(e)
   if mode == "on"  then return geo_val("ja",   "In der Admin-UI eingeschaltet.") end
   if mode == "off" then return geo_val("nein", "In der Admin-UI ausgeschaltet.") end
   if macro == "vhost_proxy_open" then return geo_val("nein", "Vorgabe des Makros VHost_Proxy_Open (weltweit offen).") end
-  return geo_val("ja", "Vorgabe des Makros " .. (e.MACRO or "") .. ".")
+  -- Makroname in der ueblichen Schreibweise (die Zeile wurde kleingeschrieben geparst)
+  local CASE = { vhost = "VHost", proxy = "Proxy", oidc = "OIDC", user = "User", basic = "Basic", ws = "WS", open = "Open" }
+  local pretty = macro:gsub("[^_]+", function(w) return CASE[w] or w end)
+  return geo_val("ja", "Vorgabe des Makros " .. pretty .. ".")
 end
 local function geo_note()
   local function esc(x) return (x:gsub("[^A-Z|]", "")) end
