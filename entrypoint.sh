@@ -36,6 +36,8 @@ _read_secret REDIS_PASSWORD
 _read_secret OIDC_CRYPTO_PASSPHRASE
 _read_secret ACME_EMAIL
 _read_secret KEYCLOAK_ADMIN_PASS
+_read_secret KEYCLOAK_API_CLIENT_SECRET
+_read_secret GEOLOCK_PIN
 
 # ── Required variables ────────────────────────────────────────────────────────
 [[ -n "${OIDC_PROVIDER_METADATA_URL:-}" ]] \
@@ -132,7 +134,9 @@ fi
 # all https://<vhost>${OIDC_REDIRECT_PATH} URIs are registered in Keycloak.
 # Idempotent and non-fatal.  Requires KEYCLOAK_ADMIN_USER + KEYCLOAK_ADMIN_PASS.
 _kc_register_redirect_uris() {
-    [[ -z "${KEYCLOAK_ADMIN_USER:-}" || -z "${KEYCLOAK_ADMIN_PASS:-}" ]] && return 0
+    if [[ -z "${KEYCLOAK_API_CLIENT_ID:-}" || -z "${KEYCLOAK_API_CLIENT_SECRET:-}" ]]; then
+        [[ -z "${KEYCLOAK_ADMIN_USER:-}" || -z "${KEYCLOAK_ADMIN_PASS:-}" ]] && return 0
+    fi
     [[ -z "${KEYCLOAK_ADMIN_URL:-}" ]] && return 0
 
     _KC_API="${KEYCLOAK_ADMIN_URL}" \
@@ -140,7 +144,9 @@ _kc_register_redirect_uris() {
     _KC_HTTPS_PORT_SUFFIX="${HTTPS_PORT_SUFFIX}" \
     _KC_DEFAULT_CLIENT="${OIDC_CLIENT_ID}" \
     _KC_ADMIN_USER="${KEYCLOAK_ADMIN_USER}" \
-    _KC_ADMIN_PASS="${KEYCLOAK_ADMIN_PASS}" \
+    _KC_ADMIN_PASS="${KEYCLOAK_ADMIN_PASS:-}" \
+    _KC_API_CLIENT_ID="${KEYCLOAK_API_CLIENT_ID:-}" \
+    _KC_API_CLIENT_SECRET="${KEYCLOAK_API_CLIENT_SECRET:-}" \
     python3 << 'PYEOF'
 import json, os, re, glob, ssl
 import urllib.request, urllib.parse
@@ -231,9 +237,16 @@ def http(url, data=None, method=None, headers=None):
         print(f"[entrypoint] Keycloak HTTP error: {e}", flush=True)
         return None
 
-tok = http(token_url,
-           data=urllib.parse.urlencode({'grant_type': 'password', 'client_id': 'admin-cli',
-                                        'username': adm_user, 'password': adm_pass}).encode(),
+api_id  = os.environ.get('_KC_API_CLIENT_ID', '')
+api_sec = os.environ.get('_KC_API_CLIENT_SECRET', '')
+if api_id and api_sec:
+    form = {'grant_type': 'client_credentials', 'client_id': api_id, 'client_secret': api_sec}
+else:
+    print("[entrypoint] Keycloak: WARNING using KEYCLOAK_ADMIN_USER/PASS (password grant) — "
+          "configure a service account via KEYCLOAK_API_CLIENT_ID/_SECRET", flush=True)
+    form = {'grant_type': 'password', 'client_id': 'admin-cli',
+            'username': adm_user, 'password': adm_pass}
+tok = http(token_url, data=urllib.parse.urlencode(form).encode(),
            headers={'Content-Type': 'application/x-www-form-urlencoded'})
 if not tok or not tok.get('access_token'):
     print("[entrypoint] Keycloak: admin login failed — skipping redirect URI sync", flush=True)
@@ -291,6 +304,38 @@ PYEOF
 }
 _kc_register_redirect_uris
 
+# ── Keycloak token request for the admin UI (admin.lua) ──────────────────────
+# Apache workers no longer see secrets in their environment (see end of file).
+# admin.lua fetches its Keycloak admin token with:  curl -K <this file> <token_url>
+# Service account (client_credentials) preferred; admin password = legacy fallback.
+KC_TOKEN_REQ="/etc/apache2/conf-runtime/kc-token.curlrc"
+rm -f "$KC_TOKEN_REQ"
+if [[ -n "${KEYCLOAK_API_CLIENT_ID:-}" && -n "${KEYCLOAK_API_CLIENT_SECRET:-}" ]] \
+   || [[ -n "${KEYCLOAK_ADMIN_USER:-}" && -n "${KEYCLOAK_ADMIN_PASS:-}" ]]; then
+    ( umask 077
+      _KC_OUT="$KC_TOKEN_REQ" python3 - <<'PYEOF'
+import os, urllib.parse
+def q(s):  # curl config string quoting
+    return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
+cid, sec = os.environ.get('KEYCLOAK_API_CLIENT_ID', ''), os.environ.get('KEYCLOAK_API_CLIENT_SECRET', '')
+if cid and sec:
+    body = urllib.parse.urlencode({'grant_type': 'client_credentials', 'client_id': cid, 'client_secret': sec})
+else:
+    body = urllib.parse.urlencode({'grant_type': 'password', 'client_id': 'admin-cli',
+                                   'username': os.environ['KEYCLOAK_ADMIN_USER'],
+                                   'password': os.environ['KEYCLOAK_ADMIN_PASS']})
+with open(os.environ['_KC_OUT'], 'w') as f:
+    f.write('data = ' + q(body) + '\n')
+PYEOF
+    )
+    chmod 0640 "$KC_TOKEN_REQ"; chown root:www-data "$KC_TOKEN_REQ"
+    if [[ -n "${KEYCLOAK_API_CLIENT_ID:-}" ]]; then
+        log "Keycloak admin UI: service account ${KEYCLOAK_API_CLIENT_ID} (client_credentials)"
+    else
+        log "WARNING: Keycloak admin UI uses KEYCLOAK_ADMIN_USER/PASS — prefer a service account (KEYCLOAK_API_CLIENT_ID/_SECRET)"
+    fi
+fi
+
 # ── Generate internal networks include ────────────────────────────────────────
 # INTERNAL_NETWORKS: comma-separated CIDRs that bypass GeoIP and auth entirely.
 # These are injected into an Apache Include file used inside the auth macros.
@@ -305,6 +350,13 @@ for net in "${NETS[@]}"; do
     [[ "$net" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/([0-9]|[1-2][0-9]|3[0-2]))?$ ]] \
         || die "Invalid CIDR in INTERNAL_NETWORKS: '${net}'"
     echo "      Require expr \"%{REMOTE_ADDR} -ipmatch '${net}'\"" >> "$NETWORKS_FILE"
+done
+# Same networks as an env flag for the GeoLock layer (mod_rewrite, before auth)
+NETWORKS_ENV_FILE="/etc/apache2/conf-runtime/internal-env.conf"
+> "$NETWORKS_ENV_FILE"
+for net in "${NETS[@]}"; do
+    net="$(echo "$net" | tr -d ' ')"
+    echo "SetEnvIfExpr \"-R '${net}'\" InternalNet=1" >> "$NETWORKS_ENV_FILE"
 done
 
 # ── Generate OIDC crypto passphrase include ───────────────────────────────────
@@ -365,7 +417,7 @@ printf 'OIDCRedisCacheDatabase           %s\n'  "${REDIS_DB}"
 printf 'Include /etc/apache2/conf-runtime/redis-auth.conf\n'
 printf 'OIDCProviderBackChannelLogoutSupported On\n'
 } > "$IAM_ADMIN_OIDC_FILE"
-chmod 644 "$IAM_ADMIN_OIDC_FILE"
+chmod 600 "$IAM_ADMIN_OIDC_FILE"
 log "Generated iam-admin-oidc.conf (redirect URI: https://iam.${OIDC_COOKIE_DOMAIN}${HTTPS_PORT_SUFFIX}${OIDC_REDIRECT_PATH})"
 
 # ── Generate per-domain OIDC client credential files ─────────────────────────
@@ -397,7 +449,7 @@ _gen_oidc_client_conf() {
         local conf="/etc/apache2/conf-runtime/oidc-client-${domain}.conf"
         printf 'OIDCClientID     %s\n' "$client_id"     > "$conf"
         printf 'OIDCClientSecret %s\n' "$client_secret" >> "$conf"
-        chmod 644 "$conf"
+        chmod 600 "$conf"
         log "Generated oidc-client-${domain}.conf (client_id: ${client_id})"
     fi
 }
@@ -535,8 +587,36 @@ for _dom in "${_ALL_DOMAINS[@]+"${_ALL_DOMAINS[@]}"}"; do
     fi
 done
 
+# ── Secret-free environment for background daemons ───────────────────────────
+# Secrets are unset right before exec, but daemons started earlier would keep
+# them in their environment. _scrub runs a command without those variables.
+_scrub() {
+    local _a=() _v
+    for _v in $(compgen -e); do
+        case "$_v" in
+            *_FILE) ;;
+            *SECRET*|*PASSWORD|*PASS|*PASSPHRASE|*_PIN|*LICENSE_KEY) _a+=(-u "$_v") ;;
+        esac
+    done
+    env "${_a[@]}" "$@"
+}
+# _drop_secrets [KEEP...] — for background subshells: unset all secret variables
+# except the ones named, so commands they start do not inherit them.
+_drop_secrets() {
+    local _v _k _keep
+    for _v in $(compgen -e); do
+        case "$_v" in
+            *_FILE) continue ;;
+            *SECRET*|*PASSWORD|*PASS|*PASSPHRASE|*_PIN|*LICENSE_KEY) ;;
+            *) continue ;;
+        esac
+        _keep=0; for _k in "$@"; do [[ "$_v" == "$_k" ]] && _keep=1; done
+        (( _keep )) || unset "$_v"
+    done
+}
+
 # ── Start cron for daily key rotation + logrotate ────────────────────────────
-/usr/sbin/cron -f &
+_scrub /usr/sbin/cron -f &
 log "cron daemon started (rotate-oidc-key.sh runs at 03:00 daily)"
 
 # ── Configure and start rsyslog ───────────────────────────────────────────────
@@ -645,7 +725,7 @@ else
 fi
 
 # Start rsyslog — creates /dev/log (Unix socket) that Apache writes to
-/usr/sbin/rsyslogd
+_scrub /usr/sbin/rsyslogd
 sleep 0.3   # give rsyslog time to create /dev/log before Apache starts
 log "rsyslog started"
 
@@ -689,14 +769,14 @@ apache2ctl configtest || die "Apache config test failed — check your site conf
 # The self-signed placeholder above lets Apache start; now request the real
 # cert in the background.  The 10 s delay gives Apache time to become ready.
 if [[ -n "${ACME_EMAIL:-}" ]]; then
-    (sleep 10 && /usr/local/bin/acme-init.sh) &
+    (_drop_secrets; sleep 10 && /usr/local/bin/acme-init.sh) &
 fi
 
 # ── Initialer Statuslauf (Hintergrund) ───────────────────────────────────────
 # Damit /run/apache-proxy/status.tab nicht erst nach dem ersten Cron-Minutentakt
 # existiert. 25 s Verzoegerung gibt Apache Zeit, erreichbar zu werden.
 if [ -x /usr/local/bin/status-probe.sh ]; then
-    (sleep 25 && /usr/local/bin/status-probe.sh) &
+    (_drop_secrets; sleep 25 && /usr/local/bin/status-probe.sh) &
 fi
 
 log "Starting Apache..."
@@ -730,6 +810,9 @@ rm -f "$RELOAD_TRIGGER" 2>/dev/null || true
 (
   set +e
   trap 'exit 0' TERM
+  # Only the Keycloak redirect-URI sync needs a secret here (service account,
+  # or the admin password as legacy fallback).
+  _drop_secrets KEYCLOAK_API_CLIENT_SECRET KEYCLOAK_ADMIN_PASS
   while true; do
     if [ -f "$RELOAD_TRIGGER" ]; then
       rm -f "$RELOAD_TRIGGER"
@@ -776,4 +859,29 @@ rm -f "$RELOAD_TRIGGER" 2>/dev/null || true
     sleep 1
   done
 ) &
+# ── Secret hygiene before Apache starts ──────────────────────────────────────
+# All configs are rendered now. Files with secrets: root only; the few files
+# www-data needs at runtime: root:www-data 0640.
+for f in /etc/apache2/conf-runtime/oidc-passphrase.conf /etc/apache2/conf-runtime/oidc-passphrase.key \
+         /etc/apache2/conf-runtime/redis-auth.conf /etc/apache2/conf-runtime/iam-admin-oidc.conf \
+         /etc/apache2/conf-runtime/oidc-client-*.conf /etc/apache2/macro/40-secure-oidc.conf; do
+    [ -f "$f" ] && chown root:root "$f" && chmod 0600 "$f"
+done
+if [ -f /etc/apache2/conf-runtime/geolock-pin.hash ]; then
+    chmod 0640 /etc/apache2/conf-runtime/geolock-pin.hash
+    chown root:www-data /etc/apache2/conf-runtime/geolock-pin.hash
+fi
+# geolock.lua counts failed PINs here; the directory itself is root-only
+# (chmod before chown: without CAP_FOWNER root may only chmod its own files)
+[ -f /etc/apache2/conf-runtime/geolock.lock ] || printf '0' > /etc/apache2/conf-runtime/geolock.lock
+chmod 0600 /etc/apache2/conf-runtime/geolock.lock
+chown www-data:www-data /etc/apache2/conf-runtime/geolock.lock
+# Background helpers (reload listener, probes) were started above and keep
+# their environment; Apache master/workers/CGI must not see any secret.
+for v in $(compgen -e); do
+    case "$v" in
+        *_FILE) ;;
+        *SECRET*|*PASSWORD|*PASS|*PASSPHRASE|*_PIN|*LICENSE_KEY) unset "$v" ;;
+    esac
+done
 exec "$@"

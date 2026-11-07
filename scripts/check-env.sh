@@ -45,7 +45,9 @@ _has() { [[ -n "${ENV[${1}]:-}" ]]; }
 _check_required() {
     local key="$1" secret="${2:-0}"
     local val; val="$(_get "$key")"
-    if [[ -z "$val" ]]; then
+    if [[ -z "$val" && "$secret" == "1" ]] && _has "${key}_FILE"; then
+        _ok "${key}_FILE=$(_get "${key}_FILE") (Secret aus Datei)"
+    elif [[ -z "$val" ]]; then
         _err "${key} — Pflichtfeld fehlt"
     elif [[ "$secret" == "1" ]]; then
         _ok "${key}=*** (gesetzt)"

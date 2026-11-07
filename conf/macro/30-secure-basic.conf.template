@@ -52,6 +52,7 @@
     USE DEFAULTS
     USE SSL $(DOMAINNAME)
     USE CLIENTBASIC $(AUTHORTYPE) '$(AUTHORENTRY)'
+    USE GEOLOCK_LAYER $(SITENAME) $(DOMAINNAME)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
@@ -78,6 +79,7 @@
     USE DEFAULTS
     USE SSL $(DOMAINNAME)
     USE CLIENTBASIC $(AUTHORTYPE) '$(AUTHORENTRY)'
+    USE GEOLOCK_LAYER $(SITENAME) $(DOMAINNAME)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
     IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig

@@ -110,7 +110,6 @@ local KC_BASE_URL = (function()
   return KC_ADMIN_URL:gsub("/realms/", "/admin/realms/")
 end)()
 local KC_CLIENT_ID    = os.getenv("OIDC_CLIENT_ID")     or ""
-local KC_CLIENT_SECRET = os.getenv("OIDC_CLIENT_SECRET") or ""
 -- Derive token endpoint from OIDC_PROVIDER_METADATA_URL
 local KC_TOKEN_URL = (function()
   local meta = os.getenv("OIDC_PROVIDER_METADATA_URL") or ""
@@ -600,6 +599,67 @@ end
 
 -- ── List page ─────────────────────────────────────────────────────────────────
 
+-- ── GeoLock per site (override file read by GEOLOCK_LAYER) ───────────────────
+local GEOLOCK_SITE_DIR = "/etc/apache2/config/geolock/"
+local function geolock_name_ok(s)
+  return type(s) == "string" and s:match("^[%w][%w%.%-_]*$") ~= nil and not s:find("..", 1, true)
+end
+local function geolock_site_file(domain, name)
+  return GEOLOCK_SITE_DIR .. domain .. "/" .. name .. ".conf"
+end
+local function geolock_site_mode(domain, name)
+  if not (geolock_name_ok(domain) and geolock_name_ok(name)) then return "default" end
+  local c = read_file(geolock_site_file(domain, name))
+  if not c then return "default" end
+  if c:find("GEOLOCK=on", 1, true) then return "on" end
+  if c:find("AllowCountry=1", 1, true) then return "off" end
+  return "default"
+end
+-- Built-in default of a macro: VHost_Proxy_Open has no country lock, all others do.
+local function geolock_macro_default(macro)
+  return (macro or ""):lower() == "vhost_proxy_open" and "aus" or "an"
+end
+local function geolock_cell(v)
+  if (v.macro or ""):lower() == "vhost_alias" then return "\xE2\x80\x94" end
+  local mode = geolock_site_mode(v.domain, v.name)
+  local label = mode == "on" and "an" or mode == "off" and "aus"
+    or ("Standard (" .. geolock_macro_default(v.macro) .. ")")
+  local out = {}
+  out[#out + 1] = '<form method="POST" action="/?action=geolock_site" style="margin:0;display:flex;gap:.3em">'
+  out[#out + 1] = '<input type=hidden name=domain value="' .. h(v.domain) .. '">'
+  out[#out + 1] = '<input type=hidden name=name value="' .. h(v.name) .. '">'
+  out[#out + 1] = '<select name=mode title="GeoLock: ' .. h(label) .. '">'
+  for _, o in ipairs({ { "default", "Standard (" .. geolock_macro_default(v.macro) .. ")" },
+                       { "on", "an" }, { "off", "aus" } }) do
+    out[#out + 1] = '<option value="' .. o[1] .. '"' .. (o[1] == mode and " selected" or "")
+      .. '>' .. h(o[2]) .. '</option>'
+  end
+  out[#out + 1] = '</select><button class="btn b-cfg" type=submit>OK</button></form>'
+  return table.concat(out)
+end
+local function do_geolock_site(r, post, show)
+  local domain, name, mode = post["domain"] or "", post["name"] or "", post["mode"] or ""
+  if not (geolock_name_ok(domain) and geolock_name_ok(name)) then
+    return show(r, "ERR: Ung\xC3\xBCltiger Site- oder Domainname")
+  end
+  local f = geolock_site_file(domain, name)
+  if mode == "default" then
+    os.remove(f)
+  elseif mode == "on" then
+    if not write_file(f, "# GeoLock: an (Admin-UI)\nSetEnvIf Request_URI ^ GEOLOCK=on\n") then
+      return show(r, "ERR: Konnte " .. f .. " nicht schreiben")
+    end
+  elseif mode == "off" then
+    if not write_file(f, "# GeoLock: aus (Admin-UI)\nSetEnvIf Request_URI ^ AllowCountry=1\n") then
+      return show(r, "ERR: Konnte " .. f .. " nicht schreiben")
+    end
+  else
+    return show(r, "ERR: Ung\xC3\xBCltiger GeoLock-Modus")
+  end
+  set_pending_reload()
+  show(r, "OK: GeoLock f\xC3\xBCr " .. name .. "." .. domain .. " = " .. mode .. " \xE2\x80\x94 Konfiguration noch anwenden!")
+end
+
 local function show_list(r, msg)
   r:puts(page_head("Übersicht"))
   if msg then r:puts(msg_html(msg)) end
@@ -667,7 +727,7 @@ local function show_list(r, msg)
     if entries == 0 and disabled_count == 0 then
       r:puts('<p class="dim">Keine VHost-Eintr\xC3\xA4ge in dieser Datei.</p>')
     else
-      r:puts('<table><tr><th>Typ</th><th>Name</th><th>Domain</th><th>Ziel</th><th>Benutzer</th><th>Aktionen</th></tr>')
+      r:puts('<table><tr><th>Typ</th><th>Name</th><th>Domain</th><th>Ziel</th><th>Benutzer</th><th>GeoLock</th><th>Aktionen</th></tr>')
       local _order = {}
       for _ln = 1, #lines do _order[#_order + 1] = _ln end
       table.sort(_order, function(_a, _b)
@@ -692,6 +752,7 @@ local function show_list(r, msg)
             r:puts('<td>' .. h(v.domain) .. '</td>')
             r:puts('<td style="font-family:monospace;font-size:.82em">' .. h(v.dest) .. '</td>')
             r:puts('<td style="font-size:.82em">' .. h(v.users) .. '</td>')
+            r:puts('<td>' .. geolock_cell(v) .. '</td>')
             r:puts('<td><div class="actions">')
             -- Edit
             r:puts('<a class="btn b-edit" href="/?action=edit&amp;file='
@@ -726,7 +787,7 @@ local function show_list(r, msg)
           r:puts('<td>' .. macro_tag("GeoLock_VHost") .. '</td>')
           r:puts('<td>\xF0\x9F\x8C\x8D GeoLock</td>')
           r:puts('<td>' .. h(gl_domain) .. '</td>')
-          r:puts('<td colspan=2 style="font-size:.82em;color:#888">PIN-gesch\xC3\xBCtzt</td>')
+          r:puts('<td colspan=3 style="font-size:.82em;color:#888">PIN-gesch\xC3\xBCtzt</td>')
           r:puts('<td><div class="actions">')
           r:puts('<form method="POST" action="/?action=toggle_disable" style="margin:0">')
           r:puts('<input type=hidden name=file value="' .. h(fname) .. '">')
@@ -745,15 +806,16 @@ local function show_list(r, msg)
             r:puts('<td>' .. macro_tag("GeoLock_VHost") .. '</td>')
             r:puts('<td>\xF0\x9F\x8C\x8D GeoLock</td>')
             r:puts('<td>' .. h(gparts[3] or "") .. '</td>')
-            r:puts('<td colspan=2 style="font-size:.82em;color:#888">PIN-gesch\xC3\xBCtzt</td>')
+            r:puts('<td colspan=3 style="font-size:.82em;color:#888">PIN-gesch\xC3\xBCtzt</td>')
           elseif vd then
             r:puts('<td>' .. macro_tag(vd.macro) .. '</td>')
             r:puts('<td>' .. h(vd.name) .. '</td>')
             r:puts('<td>' .. h(vd.domain) .. '</td>')
             r:puts('<td style="font-family:monospace;font-size:.82em">' .. h(vd.dest) .. '</td>')
             r:puts('<td style="font-size:.82em">' .. h(vd.users) .. '</td>')
+            r:puts('<td></td>')
           else
-            r:puts('<td colspan=5 style="font-family:monospace;font-size:.82em">' .. h(raw_line) .. '</td>')
+            r:puts('<td colspan=6 style="font-family:monospace;font-size:.82em">' .. h(raw_line) .. '</td>')
           end
           r:puts('<td><div class="actions">')
           r:puts('<form method="POST" action="/?action=toggle_disable" style="margin:0">')
@@ -2208,32 +2270,28 @@ end
 
 -- ── Keycloak client management ───────────────────────────────────────────────
 
--- Get a Keycloak admin token from the current OIDC session.
--- The logged-in user must have manage-users / view-users roles on master-realm.
+-- Fetch a Keycloak admin token. The request (service account via client
+-- credentials, or the legacy admin password grant) is prepared by entrypoint.sh
+-- as a curl config file readable only by root and www-data, so no secret lives
+-- in the worker environment or in a temp file.
 -- Returns: token_string, nil  OR  nil, error_message
--- Fetches a fresh Keycloak admin token using KEYCLOAK_ADMIN_USER / _PASSWORD env vars.
+local KC_TOKEN_REQ = "/etc/apache2/conf-runtime/kc-token.curlrc"
 kc_token = function(r)
   if KC_ADMIN_URL == "" then
     return nil, "KEYCLOAK_ADMIN_URL nicht gesetzt"
   end
-
-  local user = os.getenv("KEYCLOAK_ADMIN_USER")    or ""
-  local pass = os.getenv("KEYCLOAK_ADMIN_PASS") or ""
-  if user == "" or pass == "" then
-    return nil, "KEYCLOAK_ADMIN_USER / KEYCLOAK_ADMIN_PASS nicht gesetzt"
+  local f = io.open(KC_TOKEN_REQ, "r")
+  if not f then
+    return nil, "Kein Keycloak-Zugang konfiguriert (KEYCLOAK_API_CLIENT_ID/_SECRET)"
   end
+  f:close()
 
   local token_url = KC_ADMIN_URL .. "/protocol/openid-connect/token"
-  local body = "client_id=admin-cli&grant_type=password"
-    .. "&username=" .. ue(user) .. "&password=" .. ue(pass)
-  local tmp = os.tmpname()
-  io.open(tmp, "w"):write(body):close()
   local cmd = string.format(
-    'curl -s -k --max-time 10 -X POST --data @%s "%s" 2>/dev/null', tmp, token_url)
+    'curl -s -k --max-time 10 -X POST -K %s "%s" 2>/dev/null', KC_TOKEN_REQ, token_url)
   local p = io.popen(cmd)
   local out = p:read("*a")
   p:close()
-  os.remove(tmp)
 
   local tok = out:match('"access_token"%s*:%s*"([^"]+)"')
   if not tok or tok == "" then
@@ -2790,7 +2848,8 @@ local function load_macros()
     "01-frame-domain.conf",
     "05-common.conf",
     "30-secure-basic.conf",
-    "40-secure-oidc.conf",
+    "10-geolock.conf.template",
+    "40-secure-oidc.conf.template",
   }
   local function parse_file(content)
     local lines = {}
@@ -3331,6 +3390,9 @@ function handle(r)
 
   elseif action == "toggle_disable" and r.method == "POST" then
     do_toggle_disable(r, post)
+
+  elseif action == "geolock_site" and r.method == "POST" then
+    do_geolock_site(r, post, show_list)
 
   elseif action == "geolock" then
     show_geolock_view(r, nil)
