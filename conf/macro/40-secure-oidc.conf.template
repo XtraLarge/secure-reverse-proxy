@@ -179,6 +179,40 @@
   </Location>
 </Macro>
 
+# CLIENTOIDC_CLAIM_STRICT $(SITENAME) $(DOMAINNAME) $(AUTHORENTRY)
+# Like CLIENTOIDC_CLAIM, but internal networks do NOT bypass the login:
+# a matching OIDC user is always required (GeoIP still applies externally).
+# Used for the admin vhost, which can rewrite the proxy configuration.
+<Macro CLIENTOIDC_CLAIM_STRICT $(SITENAME) $(DOMAINNAME) $(AUTHORENTRY)>
+  USE OIDCBASE $(SITENAME) $(DOMAINNAME)
+  USE OIDC_NO_ACCESS_HANDLER
+
+  SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
+  IncludeOptional /etc/apache2/config/extra-countries.conf
+
+  <Location />
+    AuthType openid-connect
+    OIDCUnAutzAction 403
+    ErrorDocument 403 /oidc-no-access
+
+    <RequireAll>
+      # Internal networks OR allowed country ...
+      <RequireAny>
+        Include /etc/apache2/conf-runtime/internal-networks.conf
+        Require expr "reqenv('AllowCountry') != ''"
+      </RequireAny>
+      # ... AND always a matching OIDC user
+      Require claim "preferred_username~(?i)^($(AUTHORENTRY))$"
+    </RequireAll>
+  </Location>
+
+  # OIDC redirect URI — must be accessible but serves no real content
+  <Location ${OIDC_REDIRECT_PATH}>
+    AuthType openid-connect
+    Require valid-user
+  </Location>
+</Macro>
+
 # VHost_Proxy_OIDC_User $(SITENAME) $(DOMAINNAME) $(DESTINATION) $(USERS)
 # Full vhost with OIDC auth + reverse proxy.
 # Only users matching $(USERS) (pipe-separated, case-insensitive regex) are allowed.
