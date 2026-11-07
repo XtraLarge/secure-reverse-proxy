@@ -587,8 +587,22 @@ for _dom in "${_ALL_DOMAINS[@]+"${_ALL_DOMAINS[@]}"}"; do
     fi
 done
 
+# ── Secret-free environment for background daemons ───────────────────────────
+# Secrets are unset right before exec, but daemons started earlier would keep
+# them in their environment. _scrub runs a command without those variables.
+_scrub() {
+    local _a=() _v
+    for _v in $(compgen -e); do
+        case "$_v" in
+            *_FILE) ;;
+            *SECRET*|*PASSWORD|*PASS|*PASSPHRASE|*_PIN|*LICENSE_KEY) _a+=(-u "$_v") ;;
+        esac
+    done
+    env "${_a[@]}" "$@"
+}
+
 # ── Start cron for daily key rotation + logrotate ────────────────────────────
-/usr/sbin/cron -f &
+_scrub /usr/sbin/cron -f &
 log "cron daemon started (rotate-oidc-key.sh runs at 03:00 daily)"
 
 # ── Configure and start rsyslog ───────────────────────────────────────────────
@@ -697,7 +711,7 @@ else
 fi
 
 # Start rsyslog — creates /dev/log (Unix socket) that Apache writes to
-/usr/sbin/rsyslogd
+_scrub /usr/sbin/rsyslogd
 sleep 0.3   # give rsyslog time to create /dev/log before Apache starts
 log "rsyslog started"
 
@@ -741,14 +755,14 @@ apache2ctl configtest || die "Apache config test failed — check your site conf
 # The self-signed placeholder above lets Apache start; now request the real
 # cert in the background.  The 10 s delay gives Apache time to become ready.
 if [[ -n "${ACME_EMAIL:-}" ]]; then
-    (sleep 10 && /usr/local/bin/acme-init.sh) &
+    (sleep 10 && _scrub /usr/local/bin/acme-init.sh) &
 fi
 
 # ── Initialer Statuslauf (Hintergrund) ───────────────────────────────────────
 # Damit /run/apache-proxy/status.tab nicht erst nach dem ersten Cron-Minutentakt
 # existiert. 25 s Verzoegerung gibt Apache Zeit, erreichbar zu werden.
 if [ -x /usr/local/bin/status-probe.sh ]; then
-    (sleep 25 && /usr/local/bin/status-probe.sh) &
+    (sleep 25 && _scrub /usr/local/bin/status-probe.sh) &
 fi
 
 log "Starting Apache..."

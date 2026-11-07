@@ -68,9 +68,9 @@ end
 local function sha256hex(s)
   if #s > 256 then return "" end
   -- Write to temp file — avoids any shell escaping issues
-  local tmp = "/tmp/.geolock_pincheck"
+  local tmp = os.tmpname()   -- mkstemp: unique name, mode 0600 (no race, not readable by others)
   local f = io.open(tmp, "w")
-  if not f then return "" end
+  if not f then os.remove(tmp); return "" end
   f:write(s); f:close()
   local p = io.popen("sha256sum " .. tmp .. " 2>/dev/null")
   if not p then os.remove(tmp); return "" end
