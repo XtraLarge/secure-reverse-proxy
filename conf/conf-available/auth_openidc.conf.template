@@ -8,4 +8,5 @@
 # Global crypto passphrase — also set per-vhost in OIDCBASE macro.
 # Required here so mod_auth_openidc loads without errors when no vhost
 # defines it yet.
-OIDCCryptoPassphrase ${OIDC_CRYPTO_PASSPHRASE}
+# Same (daily rotated) key file as the vhosts; never read from the process environment
+Include /etc/apache2/conf-runtime/oidc-passphrase.conf

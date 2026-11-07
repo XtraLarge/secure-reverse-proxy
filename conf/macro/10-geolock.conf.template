@@ -1,0 +1,29 @@
+# ── GeoLock layer (per-site, independent of the auth type) ───────────────────
+#
+# Every site macro (VHost_Proxy*, not the frame vhosts) calls GEOLOCK_LAYER right
+# before its <site>.preconfig. Without an override file nothing changes: each
+# macro keeps its built-in default (GeoIP check in VHost_Proxy, the OIDC and
+# Basic macros; none in VHost_Proxy_Open).
+#
+# Per-site override (written by the admin UI, or by hand):
+#   /etc/apache2/config/geolock/<domain>/<site>.conf
+#     on  : SetEnvIf Request_URI ^ GEOLOCK=on      -> country lock enforced, also
+#                                                   for macros without auth
+#     off : SetEnvIf Request_URI ^ AllowCountry=1  -> country lock lifted, the
+#                                                   authentication stays
+# Internal networks (INTERNAL_NETWORKS) are never country-locked.
+# The lock is enforced by mod_rewrite before authentication, so it works the
+# same for every auth type and cannot be undone by <Location> merging.
+# A preconfig may still override per path, e.g.
+#   SetEnvIf Request_URI "^/api/" AllowCountry=1
+<Macro GEOLOCK_LAYER $(SITENAME) $(DOMAINNAME)>
+  SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
+  IncludeOptional /etc/apache2/config/extra-countries.conf
+  Include /etc/apache2/conf-runtime/internal-env.conf
+  IncludeOptional /etc/apache2/config/geolock/$(DOMAINNAME)/$(SITENAME).conf
+  RewriteEngine On
+  RewriteCond %{ENV:GEOLOCK} =on
+  RewriteCond %{ENV:AllowCountry} ^$
+  RewriteCond %{ENV:InternalNet} ^$
+  RewriteRule ^ - [F]
+</Macro>

@@ -181,6 +181,13 @@ Copy `.env.example` to `.env` and fill in your values.
 |---|---|---|---|
 | `KEYCLOAK_ADMIN_URL` | — | auto-derived | Keycloak Admin REST API base URL, e.g. `https://sso.example.com/admin/realms/myrealm`. Auto-derived from `OIDC_PROVIDER_METADATA_URL` if not set. |
 | `KEYCLOAK_ROLE_PREFIX` | — | — | Only show/manage roles with this name prefix (e.g. `proxy-`). Empty = all roles. |
+| `KEYCLOAK_API_CLIENT_ID` | — | — | Confidential client with a service account (client credentials) used by the admin UI and the redirect-URI sync. Give it only the needed `realm-management` roles (in realm `master`: client `master-realm`): `view-users`, `query-users`, `manage-users`, `query-groups`, `view-clients`, `query-clients`, `manage-clients`, `view-realm`. |
+| `KEYCLOAK_API_CLIENT_SECRET` | — | — | Secret of that client (or `KEYCLOAK_API_CLIENT_SECRET_FILE`) |
+| `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASS` | — | — | Legacy: admin password grant via `admin-cli`. Only used if no service account is configured. |
+
+### Secrets as files
+
+Every secret can be passed as a file instead: set `<VAR>_FILE=/run/secrets/<name>` and leave `<VAR>` unset (`OIDC_CLIENT_SECRET`, `OIDC_CRYPTO_PASSPHRASE`, `REDIS_PASSWORD`, `KEYCLOAK_API_CLIENT_SECRET`, `KEYCLOAK_ADMIN_PASS`, `GEOLOCK_PIN`, `GEOIP_LICENSE_KEY`, `ACME_EMAIL`). The entrypoint renders all configs and then removes the secrets from the environment before Apache starts, so workers, Lua and CGI never see them. Rendered files containing secrets are root-only (0600).
 
 ### Other
 
@@ -298,6 +305,17 @@ This creates the following vhosts:
 | `https://toc.example.com` | OIDC (any user) | built-in TOC page |
 | `https://admin.example.com` | OIDC (alice only) | built-in admin UI |
 | `https://logout.example.com` | — | built-in logout page |
+
+### GeoLock per site
+
+The country lock (`GEOIP_ALLOW_COUNTRIES`, plus the countries added at `geolock.<domain>`) is a separate layer in every site macro. Each macro keeps its default (`VHost_Proxy_Open`: off, all others: on); the admin UI can switch it per site to *on* or *off* without changing the auth type. The setting is stored in `config/geolock/<domain>/<site>.conf`:
+
+```apache
+SetEnvIf Request_URI ^ GEOLOCK=on        # on: enforce the lock, also without auth
+SetEnvIf Request_URI ^ AllowCountry=1    # off: lift the lock, authentication stays
+```
+
+Internal networks are never country-locked. A preconfig can still lift the lock for single paths, e.g. `SetEnvIf Request_URI "^/api/" AllowCountry=1`.
 
 ### Per-vhost AddOn snippets
 
