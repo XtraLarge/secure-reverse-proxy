@@ -8,8 +8,8 @@ TITLE       = os.getenv("TOC_TITLE") or "Inhaltsverzeichnis der Server"
 REMOTE_USER = os.getenv("TOC_REMOTE_USER_DEFAULT") or ""
 PORT_SUFFIX = os.getenv("HTTPS_PORT_SUFFIX") or ""
 PROBE_USER  = os.getenv("TOC_PROBE_USER") or ""
-T           = {"STATUS", "EXTST", "NAME", "DOMAIN", "TYP",  "DEST",        "IPROT",       "IIP",     "IPORT",     "SECURE",  "USERS"}
-TT          = {"Status", "Ext",   "Name", "Domain", "Type", "Destination", "Int. Proto.", "Int. IP", "Int. Port", "Secured", "Users"}
+T           = {"STATUS", "EXTST", "NAME", "DOMAIN", "TYP",  "DEST",        "IPROT",       "IIP",     "IPORT",     "SECURE",  "GEO",   "USERS"}
+TT          = {"Status", "Ext",   "Name", "Domain", "Type", "Destination", "Int. Proto.", "Int. IP", "Int. Port", "Secured", "GeoIP", "Users"}
 A           = {};
 A_seen      = {};   -- dedup set: "name.domain" keys already inserted into A
 ADMIN_USERS = {};   -- domain → pipe-separated admin user pattern (from Admin_VHost lines)
@@ -512,13 +512,55 @@ function check_all_services()
 end
 
 
+-- ── GeoIP-Spalte: effektiver Laender-Lock je Eintrag ─────────────────────────
+-- Gleiche Logik wie GEOLOCK_LAYER / admin.lua: Override-Datei je Site, sonst
+-- Makro-Vorgabe (VHost_Proxy_Open: aus, alle anderen: an). Interne Netze sind
+-- immer ausgenommen (Hinweis ueber der Tabelle).
+local GEOLOCK_SITE_DIR = "/etc/apache2/config/geolock/"
+local function geo_name_ok(x)
+  return type(x) == "string" and x:match("^[%w][%w%.%-_]*$") ~= nil and not x:find("..", 1, true)
+end
+local function geo_read(p)
+  local f = io.open(p, "r"); if not f then return nil end
+  local c = f:read("*a"); f:close(); return c
+end
+local function geo_site_mode(domain, name)
+  if not (geo_name_ok(domain) and geo_name_ok(name)) then return "default" end
+  local c = geo_read(GEOLOCK_SITE_DIR .. domain .. "/" .. name .. ".conf")
+  if not c then return "default" end
+  if c:find("GEOLOCK=on", 1, true) then return "on" end
+  if c:find("AllowCountry=1", 1, true) then return "off" end
+  return "default"
+end
+local GEO_OFF = "<span style=\"color:#c0392b;font-weight:600\">"
+function geo_cell(e)
+  local name, typ, macro = (e.NAME or ""), (e.TYP or ""), (e.MACRO or ""):lower()
+  if typ == "Redirect" or name:lower() == "logout" then return "&#8212;" end
+  if typ == "GeoLock" then return GEO_OFF .. "aus</span> (weltweit, Login+PIN)" end
+  if macro == "" then return "an (fest)" end          -- TOC/Admin aus Domain_Init
+  local mode = geo_site_mode((e.DOMAIN or ""):lower(), name:lower())
+  if mode == "on"  then return "an (erzwungen)" end
+  if mode == "off" then return GEO_OFF .. "aus</span> (Override)" end
+  if macro == "vhost_proxy_open" then return GEO_OFF .. "aus</span> (Std.)" end
+  return "an (Std.)"
+end
+local function geo_note()
+  local allow = os.getenv("GEOIP_ALLOW_COUNTRIES") or ""
+  local extra = (geo_read("/etc/apache2/config/extra-countries.conf") or ""):match('"^%(([A-Z|]+)%)%$"') or ""
+  local function esc(x) return (x:gsub("[^A-Z|]", "")) end
+  local txt = "GeoIP erlaubt: " .. (allow ~= "" and esc(allow):gsub("|", ", ") or "&#8212;")
+  if extra ~= "" then txt = txt .. " &middot; zus&auml;tzlich freigeschaltet: " .. esc(extra):gsub("|", ", ") end
+  return "<p style=\"margin:.4em 0;font-size:.9em\">" .. txt ..
+         " &middot; interne Netze sind immer ausgenommen</p>\n"
+end
+
 function otable()
   local O = ""
 
   -- head
   O = O .. "<thead align=\"center\"><tr>\n"
   for E = 1, #TT do
-    if ((TT[E] == "Secured") or (TT[E] == "Status") or (TT[E] == "Ext") or (TT[E] == "Type") or (TT[E] == "Int. Proto.") or (TT[E] == "Int. IP") or (TT[E] == "Int. Port")) then
+    if ((TT[E] == "Secured") or (TT[E] == "GeoIP") or (TT[E] == "Status") or (TT[E] == "Ext") or (TT[E] == "Type") or (TT[E] == "Int. Proto.") or (TT[E] == "Int. IP") or (TT[E] == "Int. Port")) then
       O = O .. "<th align=\"center\">" .. T[E] .. "</th> "
     else
       O = O .. "<th align=\"left\">" .. T[E] .. "</th> "
@@ -548,6 +590,8 @@ function otable()
         O = O ..  "  <td align=\"center\">" .. (st and status_emoji(st.extern) or "&#8212;")
       elseif E == "SECURE" then
         O = O ..  "  <td align=\"center\">" .. S 
+      elseif E == "GEO" then
+        O = O ..  "  <td align=\"center\">" .. geo_cell(A[CO])
       elseif E == "DEST" then
         if A[CO]["TYP"] == "Proxy" then
           O = O .. "  <td><a href=\"" ..  A[CO]["IPROTO"] .. "://" .. A[CO]["IIP"] .. ":" ..  
@@ -676,6 +720,7 @@ function parse(line)
     ["IIP"]    = siip(word(line,5));
     ["IPORT"]  = siport(word(line,5));
     ["SECURE"] = ssec(word(line,2));
+    ["MACRO"]  = word(line,2);
     ["USERS"]  = (function()
                    local u = derive_users(line)
                    if PROBE_USER ~= "" then
@@ -796,7 +841,7 @@ window.onload = function() {
 };
 </script>]]
 
-  local TABLE = "<div class=\"div_tbl_cont\"><table id=\"XLTab\">\n" ..
+  local TABLE = geo_note() .. "<div class=\"div_tbl_cont\"><table id=\"XLTab\">\n" ..
                 otable() ..
                 "</table></div>"
 
