@@ -600,6 +600,20 @@ _scrub() {
     done
     env "${_a[@]}" "$@"
 }
+# _drop_secrets [KEEP...] — for background subshells: unset all secret variables
+# except the ones named, so commands they start do not inherit them.
+_drop_secrets() {
+    local _v _k _keep
+    for _v in $(compgen -e); do
+        case "$_v" in
+            *_FILE) continue ;;
+            *SECRET*|*PASSWORD|*PASS|*PASSPHRASE|*_PIN|*LICENSE_KEY) ;;
+            *) continue ;;
+        esac
+        _keep=0; for _k in "$@"; do [[ "$_v" == "$_k" ]] && _keep=1; done
+        (( _keep )) || unset "$_v"
+    done
+}
 
 # ── Start cron for daily key rotation + logrotate ────────────────────────────
 _scrub /usr/sbin/cron -f &
@@ -755,14 +769,14 @@ apache2ctl configtest || die "Apache config test failed — check your site conf
 # The self-signed placeholder above lets Apache start; now request the real
 # cert in the background.  The 10 s delay gives Apache time to become ready.
 if [[ -n "${ACME_EMAIL:-}" ]]; then
-    (sleep 10 && _scrub /usr/local/bin/acme-init.sh) &
+    (_drop_secrets; sleep 10 && /usr/local/bin/acme-init.sh) &
 fi
 
 # ── Initialer Statuslauf (Hintergrund) ───────────────────────────────────────
 # Damit /run/apache-proxy/status.tab nicht erst nach dem ersten Cron-Minutentakt
 # existiert. 25 s Verzoegerung gibt Apache Zeit, erreichbar zu werden.
 if [ -x /usr/local/bin/status-probe.sh ]; then
-    (sleep 25 && _scrub /usr/local/bin/status-probe.sh) &
+    (_drop_secrets; sleep 25 && /usr/local/bin/status-probe.sh) &
 fi
 
 log "Starting Apache..."
@@ -796,6 +810,9 @@ rm -f "$RELOAD_TRIGGER" 2>/dev/null || true
 (
   set +e
   trap 'exit 0' TERM
+  # Only the Keycloak redirect-URI sync needs a secret here (service account,
+  # or the admin password as legacy fallback).
+  _drop_secrets KEYCLOAK_API_CLIENT_SECRET KEYCLOAK_ADMIN_PASS
   while true; do
     if [ -f "$RELOAD_TRIGGER" ]; then
       rm -f "$RELOAD_TRIGGER"
