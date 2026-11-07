@@ -86,12 +86,17 @@ rm -f "/etc/apache2/conf-runtime/geolock.lock"
 # GEOLOCK_COUNTRIES: pipe-separated country codes written to extra-countries.conf
 # on first start only. Subsequent container restarts keep whatever GeoLock set.
 GEOLOCK_EXTRA_CONF="/etc/apache2/config/extra-countries.conf"
+# An existing file is always kept, also "# no extra countries" written by the
+# GeoLock page when all extra countries were removed. Writing must never stop
+# the start: the file belongs to www-data and root has no CAP_DAC_OVERRIDE.
 if [[ -n "${GEOLOCK_COUNTRIES:-}" ]]; then
-    if [[ ! -f "${GEOLOCK_EXTRA_CONF}" ]] || \
-       ! grep -q "SetEnvIf GEOIP_COUNTRY_CODE" "${GEOLOCK_EXTRA_CONF}" 2>/dev/null; then
-        printf 'SetEnvIf GEOIP_COUNTRY_CODE "^(%s)$" AllowCountry\n' "${GEOLOCK_COUNTRIES}" \
-            > "${GEOLOCK_EXTRA_CONF}"
-        log "GeoLock: default countries written (${GEOLOCK_COUNTRIES})"
+    if [[ ! -f "${GEOLOCK_EXTRA_CONF}" ]]; then
+        if printf 'SetEnvIf GEOIP_COUNTRY_CODE "^(%s)$" AllowCountry\n' "${GEOLOCK_COUNTRIES}" \
+            > "${GEOLOCK_EXTRA_CONF}" 2>/dev/null; then
+            log "GeoLock: default countries written (${GEOLOCK_COUNTRIES})"
+        else
+            log "WARNING: GeoLock: cannot write ${GEOLOCK_EXTRA_CONF} — default countries not set"
+        fi
     else
         log "GeoLock: extra-countries.conf exists — keeping current settings"
     fi
