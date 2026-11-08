@@ -468,6 +468,10 @@ _gen_oidc_client_conf() {
 # Scan sites/ for domain names and generate conf files
 while IFS= read -r conf_file; do
     domain=$(basename "$conf_file" .conf)
+    if ! [[ "$domain" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || [[ "$domain" == *..* ]]; then
+        log "WARNING: sites/ file name '${domain//[^A-Za-z0-9._-]/?}' is no domain name — skipped"
+        continue
+    fi
     _gen_oidc_client_conf "$domain"
 done < <(find /etc/apache2/sites \
     -maxdepth 1 -name '*.conf' 2>/dev/null)

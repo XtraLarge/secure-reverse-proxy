@@ -16,7 +16,9 @@
 #                  no SSL program hooks, no server-level directives, Include only of
 #                  AddOn files and the public runtime includes, same Use checks as sites/
 #   everywhere     no ${...}, no Define/UnDefine, no own <Macro>, no symlinks or
-#                  special files; line continuations are joined, CR and BOM removed
+#                  special files, no control characters (except tab) or NUL bytes;
+#                  line continuations are joined (not allowed on the last line),
+#                  CR and BOM removed
 #
 # Usage: proxy-config-guard.sh                      (the real directories)
 #        GUARD_SITES=… GUARD_ADDON=… GUARD_CONFIG=… [GUARD_INCLUDE_ROOT=…] proxy-config-guard.sh
@@ -41,8 +43,9 @@ NOT_NAME_MACROS='^(rewrite2url|proxy|clientbasic|defaults|security_headers|oidc_
 # (Domain_*: domain + default subdomain) and are used in Include and log paths.
 check_use() {   # $1 file:line, $2 line
     local where="$1" l="$2" macro p1 p2
-    read -r _ macro p1 p2 _rest <<< "$l"
+    IFS=$' \t' read -r _ macro p1 p2 _rest <<< "$l"
     if [[ -z "${macro:-}" ]]; then report "$where: Use without macro"; return; fi
+    if ! [[ "$macro" =~ ^[A-Za-z0-9_]+$ ]]; then report "$where: Use: macro name '$macro' is not allowed here"; return; fi
     [[ "$macro" =~ $NOT_NAME_MACROS ]] && return
     for p in "${p1:-}" "${p2:-}"; do
         [[ -z "$p" ]] && continue
@@ -109,24 +112,27 @@ check_config_line() {   # $3 = kind (oidc|setenvif)
 }
 
 scan_file() {   # $1 file, $2 checker, $3 extra arg
-    local f="$1" checker="$2" extra="${3:-}" n=0 start=0 buf="" line l
+    local f="$1" checker="$2" extra="${3:-}" n=0 start=0 buf="" line l bad=0 cont=0
+    # bash drops NUL bytes while Apache ends the line there — both must see the same text
+    if [ "$(tr -d '\000' < "$f" | wc -c)" != "$(wc -c < "$f")" ]; then
+        report "$f: NUL bytes are not allowed here"; return
+    fi
     while IFS= read -r line || [ -n "$line" ]; do
-        n=$((n + 1)); [ -z "$buf" ] && start=$n
+        n=$((n + 1)); [ "$cont" = 0 ] && { start=$n; bad=0; }
         line="${line%$'\r'}"; [ "$n" = 1 ] && line="${line#$'\xef\xbb\xbf'}"
-        if [[ "$line" == *'\' ]]; then buf+="${line%\\}"; continue; fi   # Apache line continuation
-        buf+="$line"
-        l="${buf#"${buf%%[![:space:]]*}"}"; buf=""
-        case "$l" in ''|'#'*) continue ;; esac
         # Apache splits words at every whitespace incl. VT/FF; the checks here don't —
-        # control characters (except tab) are therefore rejected outright
-        if [[ "$l" == *[$'\x01'-$'\x08'$'\x0a'-$'\x1f'$'\x7f']* ]]; then
-            report "$f:$start: control characters are not allowed here"; continue
-        fi
+        # control characters (except tab) are rejected per physical line, before joining
+        if [[ "$line" == *[$'\x01'-$'\x08'$'\x0a'-$'\x1f'$'\x7f']* ]]; then bad=1; fi
+        if [[ "$line" == *'\' ]]; then buf+="${line%\\}"; cont=1; continue; fi   # Apache line continuation
+        buf+="$line"; cont=0
+        l="${buf#"${buf%%[![:space:]]*}"}"; buf=""
+        if [ "$bad" = 1 ]; then report "$f:$start: control characters are not allowed here"; continue; fi
+        case "$l" in ''|'#'*) continue ;; esac
         "$checker" "$f:$start" "$l" "$extra"
     done < "$f"
-    if [ -n "$buf" ]; then
-        l="${buf#"${buf%%[![:space:]]*}"}"
-        case "$l" in ''|'#'*) ;; *) "$checker" "$f:$start" "$l" "$extra" ;; esac
+    # a continuation on the last line has no end — never pass it on unchecked
+    if [ "$cont" = 1 ]; then
+        report "$f:$start: line continuation at end of file is not allowed here"
     fi
 }
 
