@@ -461,7 +461,9 @@ else
     echo "$LEAK_RES" | sed 's/root:[^ ]*/root:<cut>/' | tail -5
 fi
 docker rm -f "$LEAK_CID" >/dev/null 2>&1 || true
-rm -rf "$LEAK_SITES"
+# the container chowned the dir to www-data (uid 33) — remove its content from inside a container
+docker run --rm --entrypoint sh -v "$LEAK_SITES:/x" "$IMAGE" -c 'rm -rf /x/* /x/.[!.]*' >/dev/null 2>&1 || true
+rm -rf "$LEAK_SITES" 2>/dev/null || true
 
 echo ""
 echo "[27f] planted symlinks / directories in the run dir do not redirect root's writes"
@@ -700,7 +702,7 @@ for ex in example:example.com keycloak:127.0.0.1.nip.io setup:example.org; do
         echo "$EX_OUT" | grep -vE "AH00558" | tail -5
     fi
 done
-rm -rf "$EX_DIR"
+rm -rf "$EX_DIR" 2>/dev/null || true
 
 echo ""
 echo "[39] domain without certificate gets a self-signed placeholder (no failed start)"
@@ -720,7 +722,7 @@ else
     fail "no placeholder certificate or configtest failed"
     echo "$NC_OUT" | tail -5
 fi
-rm -rf "$NOCERT_DIR"
+rm -rf "$NOCERT_DIR" 2>/dev/null || true
 
 
 # ══════════════════════════════════════════════════════════════════════════════
