@@ -2,14 +2,16 @@
 #
 # Usage in your sites/ config:
 #
-#   USE Domain_Init  example.com www
-#   Use VHost_Proxy_OIDC_User  myapp  example.com  http://10.0.0.1:8080/  claim 'alice|bob'
+#   USE Domain_Init  example.com www 'alice|bob'
+#   Use VHost_Proxy_OIDC_User  myapp  example.com  http://10.0.0.1:8080/  'alice|bob'
 #   USE Domain_Final example.com www
 #
-# Domain_Init creates:
+# Domain_Init <domain> <default-subdomain> '<admin-users>' creates:
 #   - HTTP→HTTPS redirect for the bare domain
 #   - TOC vhost (table of contents, OIDC-protected, served by toc.lua)
 #   - LOGOUT vhost (OIDC backchannel logout + redirect)
+#   - ADMIN vhost (Admin_VHost, only <admin-users>, login always required)
+#   - GEOLOCK vhost (GeoLock_VHost, only <admin-users>, login + PIN)
 #
 # Domain_Final catches all undefined subdomains and redirects to $(STDDOMAIN).$(DOMAINNAME).
 
@@ -170,14 +172,14 @@ MacroIgnoreEmptyArgs
 
 # Admin_VHost $(DOMAINNAME) $(ADMINUSER)
 #
-# Optional OIDC-protected admin interface for managing VHost configurations.
+# OIDC-protected admin interface for managing VHost configurations.
 # Only users whose preferred_username claim matches $(ADMINUSER) are allowed.
 # $(ADMINUSER) may be a pipe-separated list, e.g. 'alice|bob'.
 #
 # Also exposes the internal Apache server-info endpoint at /server-info.
 #
-# Usage in your sites/ config (place after Domain_Init, before Domain_Final):
-#   Use Admin_VHost  example.com  'alice'
+# Included by Domain_Init (third parameter = admin users) — do not use it
+# directly in your sites/ config, that would define admin.<domain> twice.
 <Macro Admin_VHost $(DOMAINNAME) $(ADMINUSER)>
 
   <VirtualHost *:80>

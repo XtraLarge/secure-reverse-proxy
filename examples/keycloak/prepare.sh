@@ -25,6 +25,28 @@ else
     echo "Using existing certificate in ${CERT_ROOT}"
 fi
 
+SITES_DIR="${SCRIPT_DIR}/sites"
+SITE_FILE="${SITES_DIR}/127.0.0.1.nip.io.conf"
+mkdir -p "${SITES_DIR}"
+if [ ! -f "${SITE_FILE}" ]; then
+    cat > "${SITE_FILE}" <<'SITEEOF'
+# Demo site — created by prepare.sh. 'demo' may use admin. and geolock.
+USE Domain_Init 127.0.0.1.nip.io www 'demo'
+
+# Keycloak via the proxy (no proxy login, the browser needs it for the OIDC flow)
+Use VHost_Proxy_Open      keycloak  127.0.0.1.nip.io  http://keycloak:8080/
+
+# OIDC-protected test backend
+Use VHost_Proxy_OIDC_Any  whoami    127.0.0.1.nip.io  http://whoami:80/
+
+USE Domain_Final 127.0.0.1.nip.io www
+SITEEOF
+    echo "Created ${SITE_FILE}"
+else
+    echo "Using existing ${SITE_FILE}"
+fi
+
 echo "Ready:"
 echo "  env:   ${ENV_FILE}"
 echo "  certs: ${CERT_ROOT}"
+echo "  site:  ${SITE_FILE}"
