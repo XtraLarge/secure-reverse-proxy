@@ -800,18 +800,40 @@ _check_writable "/etc/apache2/config"         "config/"
 _check_writable "/etc/apache2/AddOn"          "AddOn/"
 _check_writable "/etc/apache2/sites"          "sites/"
 
-# _guard_ok — reject directives in sites/, AddOn/, config/ that would act as root when
-# Apache's root master parses them (see proxy-config-guard.sh). Findings go to the log.
-_guard_ok() {
-    local _out
-    _out="$(timeout 30 /usr/local/bin/proxy-config-guard.sh 2>&1)" && return 0
-    printf '%s\n' "$_out" | head -20 | while IFS= read -r _l; do log "config guard: $_l"; done
-    return 1
+# _build_snapshot — the only configuration root ever parses (see conf-available/cfgroot.conf).
+# sites/, AddOn/, config/ are writable by www-data; they are copied into a fresh root-only
+# directory (cp -P copies symlinks as symlinks, special files as such — nothing is followed),
+# Include paths to the live AddOn/config dirs are pointed at the copy, the config guard
+# checks the copy, and only a clean copy replaces /run/apache2/cfg. Changes www-data makes
+# afterwards have no effect until the next snapshot — no window between check and parse.
+SNAP_DIR="/run/apache2/cfg"
+_build_snapshot() {
+    local _new="${SNAP_DIR}.new" _old="${SNAP_DIR}.old" _d _out
+    rm -rf -- "$_new" "$_old"
+    mkdir -m 0700 "$_new" || return 1
+    for _d in sites AddOn config; do
+        if [ -d "/etc/apache2/$_d" ]; then
+            cp -RP --preserve=mode "/etc/apache2/$_d" "$_new/$_d" 2>/dev/null || { rm -rf -- "$_new"; return 1; }
+        else
+            mkdir "$_new/$_d"
+        fi
+    done
+    find "$_new/AddOn" -type f -print0 2>/dev/null | xargs -0 -r sed -i -E \
+        "s#^([[:space:]]*Include(Optional)?[[:space:]]+\"?)/etc/apache2/(AddOn|config)/#\\1${SNAP_DIR}/\\3/#I"
+    if ! _out="$(GUARD_SITES="$_new/sites" GUARD_ADDON="$_new/AddOn" GUARD_CONFIG="$_new/config" \
+                 GUARD_INCLUDE_ROOT="$SNAP_DIR" timeout 30 /usr/local/bin/proxy-config-guard.sh 2>&1)"; then
+        printf '%s\n' "$_out" | head -20 | sed "s#${_new}#/etc/apache2#" \
+            | while IFS= read -r _l; do log "config guard: $_l"; done
+        rm -rf -- "$_new"
+        return 1
+    fi
+    [ -d "$SNAP_DIR" ] && mv -T "$SNAP_DIR" "$_old"
+    mv -T "$_new" "$SNAP_DIR" && rm -rf -- "$_old"
 }
 
 # ── Config guard — before root parses the configuration for the first time ────
 # (LoadModule & co. would already act during the configtest below; fail closed)
-_guard_ok || die "config guard rejected the configuration in sites/, AddOn/ or config/ (see above)"
+_build_snapshot || die "config guard rejected the configuration in sites/, AddOn/ or config/ (see above)"
 
 # ── Validate Apache config ────────────────────────────────────────────────────
 log "Testing Apache configuration..."
@@ -897,8 +919,8 @@ _ssl_prepare() {
       log "Reload requested — syncing Keycloak redirect URIs"
       _kc_register_redirect_uris || log "WARNING: Keycloak redirect URI sync failed (continuing)"
       _ssl_prepare
-      # guard right before root parses the configuration (keeps the window small)
-      if ! _guard_ok; then
+      # fresh checked snapshot — the only thing configtest and graceful will parse
+      if ! _build_snapshot; then
         log "ERROR: config guard rejected the configuration — reload skipped, Apache keeps running with the previous config"
         sleep 1; continue
       fi

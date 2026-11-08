@@ -48,7 +48,7 @@
   <IfDefine !ADMIN_CONFIGTEST>
     IncludeOptional /etc/apache2/conf-runtime/oidc-client-$(DOMAINNAME).conf
   </IfDefine>
-  IncludeOptional /etc/apache2/config/oidc-clients/$(DOMAINNAME).conf
+  IncludeOptional ${CFGROOT}/config/oidc-clients/$(DOMAINNAME).conf
 
   OIDCRemoteUserClaim             ${OIDC_REMOTE_USER_CLAIM}
   OIDCScope                       "${OIDC_SCOPE}"
@@ -122,7 +122,7 @@
   USE OIDCBASE $(SITENAME) $(DOMAINNAME)
 
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-  IncludeOptional /etc/apache2/config/extra-countries.conf
+  IncludeOptional ${CFGROOT}/config/extra-countries.conf
 
   <Location />
     AuthType openid-connect
@@ -160,7 +160,7 @@
   USE OIDC_NO_ACCESS_HANDLER
 
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-  IncludeOptional /etc/apache2/config/extra-countries.conf
+  IncludeOptional ${CFGROOT}/config/extra-countries.conf
 
   <Location />
     AuthType openid-connect
@@ -198,7 +198,7 @@
   USE OIDC_NO_ACCESS_HANDLER
 
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-  IncludeOptional /etc/apache2/config/extra-countries.conf
+  IncludeOptional ${CFGROOT}/config/extra-countries.conf
 
   <Location />
     AuthType openid-connect
@@ -246,9 +246,9 @@
     USE SECURITY_HEADERS
     USE CLIENTOIDC_CLAIM $(SITENAME) $(DOMAINNAME) '$(USERS)'
     USE GEOLOCK_LAYER $(SITENAME) $(DOMAINNAME)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
   </VirtualHost>
 </Macro>
 
@@ -276,9 +276,9 @@
     USE SECURITY_HEADERS
     USE CLIENTOIDC_VALIDUSER $(SITENAME) $(DOMAINNAME)
     USE GEOLOCK_LAYER $(SITENAME) $(DOMAINNAME)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
   </VirtualHost>
 </Macro>
 
@@ -298,7 +298,7 @@
   USE OIDC_NO_ACCESS_HANDLER
 
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-  IncludeOptional /etc/apache2/config/extra-countries.conf
+  IncludeOptional ${CFGROOT}/config/extra-countries.conf
 
   <Location />
     AuthType openid-connect
@@ -356,9 +356,9 @@
     USE SECURITY_HEADERS
     USE CLIENTOIDC_CLAIM_OR_GROUP $(SITENAME) $(DOMAINNAME) '$(USERS)' '$(GROUPS)'
     USE GEOLOCK_LAYER $(SITENAME) $(DOMAINNAME)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
   </VirtualHost>
 </Macro>
 
@@ -378,7 +378,7 @@
     USE SECURITY_HEADERS
 
     SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-    IncludeOptional /etc/apache2/config/extra-countries.conf
+    IncludeOptional ${CFGROOT}/config/extra-countries.conf
 
     <Location />
       <RequireAny>
@@ -388,9 +388,9 @@
     </Location>
 
     USE GEOLOCK_LAYER $(SITENAME) $(DOMAINNAME)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
   </VirtualHost>
 </Macro>
 
@@ -416,8 +416,8 @@
     USE SSL $(DOMAINNAME)
     USE SECURITY_HEADERS
     USE GEOLOCK_LAYER $(SITENAME) $(DOMAINNAME)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
   </VirtualHost>
 </Macro>

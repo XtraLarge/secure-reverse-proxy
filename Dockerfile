@@ -56,7 +56,7 @@ COPY conf/sites-available/ /etc/apache2/sites-available/
 
 COPY conf/ports.conf /etc/apache2/ports.conf
 
-RUN a2enconf server-security macro cgid-runtime sites acme-webroot logging apacheinfo-internal tuning geoip
+RUN a2enconf server-security cfgroot macro cgid-runtime sites acme-webroot logging apacheinfo-internal tuning geoip
 
 COPY conf/rsyslog/  /etc/rsyslog.d/
 COPY conf/logrotate/ /etc/logrotate.d/

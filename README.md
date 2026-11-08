@@ -375,6 +375,27 @@ lock must hold regardless of preconfigs.
 
 Internal networks are never country-locked. A preconfig can still lift the lock for single paths, e.g. `SetEnvIf Request_URI "^/api/" AllowCountry=1`.
 
+### What sites/, AddOn/ and config/ may contain
+
+These directories are writable by the admin UI (www-data), while Apache's master runs
+as root. So Apache never parses them directly: before every start and reload the
+container copies them into a root-only snapshot (`/run/apache2/cfg`), checks the copy
+with `proxy-config-guard.sh` and only then reads it. A rejected configuration stops the
+start (fail closed) or skips the reload — Apache keeps the previous configuration — and
+the findings are logged; the admin UI shows them before saving.
+
+- `sites/*.conf`: only `Use <macro> …` lines (and `LogLevel`). The first two macro
+  parameters must be plain site/domain names (no paths, no `..`).
+- `AddOn/`: vhost directives, but no `LoadModule`/`LoadFile`, logs only to
+  `/var/log/apache2/` or syslog (no piped logs), no `RewriteMap` programs, no SSL program
+  hooks, no server-level directives (`User`, `PidFile`, `Mutex`, …), `Include` only of
+  other AddOn files and the public runtime includes (`internal-networks.conf`,
+  `internal-env.conf`, `iam-admin-oidc.conf`).
+- `config/`: `oidc-clients/<domain>.conf` only `OIDC*` directives,
+  `extra-countries.conf` and `geolock/…` only `SetEnvIf`.
+- everywhere: no `${…}`, no `Define`/`UnDefine`, no own `<Macro>`, no symlinks or
+  special files.
+
 ### Per-vhost AddOn snippets
 
 For per-vhost Apache directives (SSL proxy settings, custom headers, WebSocket

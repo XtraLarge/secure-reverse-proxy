@@ -18,9 +18,9 @@
 #   SetEnvIf Request_URI "^/api/" AllowCountry=1
 <Macro GEOLOCK_LAYER $(SITENAME) $(DOMAINNAME)>
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-  IncludeOptional /etc/apache2/config/extra-countries.conf
+  IncludeOptional ${CFGROOT}/config/extra-countries.conf
   Include /etc/apache2/conf-runtime/internal-env.conf
-  IncludeOptional /etc/apache2/config/geolock/$(DOMAINNAME)/$(SITENAME).conf
+  IncludeOptional ${CFGROOT}/config/geolock/$(DOMAINNAME)/$(SITENAME).conf
   RewriteEngine On
   RewriteCond %{ENV:GEOLOCK} =on
   RewriteCond %{ENV:AllowCountry} ^$

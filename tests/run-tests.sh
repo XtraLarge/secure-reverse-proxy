@@ -24,6 +24,7 @@ BASE_ARGS=(
     -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro"
     -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites:ro"
     -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro"
+    -v "$SCRIPT_DIR/conf-enabled/zz-lua-test.conf:/etc/apache2/conf-enabled/zz-lua-test.conf:ro"
     -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/realms/master/.well-known/openid-configuration
     -e OIDC_CLIENT_ID=Proxy
     -e OIDC_CLIENT_SECRET=test-secret-not-real
@@ -455,7 +456,7 @@ docker exec -u www-data "$LEAK_CID" touch /run/apache-proxy/reload-requested 2>/
 sleep 8
 REJECTED="$(docker logs "$LEAK_CID" 2>&1 | grep -c 'config guard rejected' || true)"
 MPID_L2="$(docker exec "$LEAK_CID" pgrep -o -x apache2 2>/dev/null || true)"
-if echo "$GUARD_OUT" | grep -q "Include of /etc/shadow is not allowed" \
+if echo "$GUARD_OUT" | grep -q "zz-leak.conf:1:" \
    && ! echo "$CT_OUT" | grep -q "root:" && [ "${REJECTED:-0}" -ge 1 ] \
    && [ -n "$MPID_L1" ] && [ "$MPID_L1" = "$MPID_L2" ]; then
     pass "guard rejects it, www-data configtest shows no content, reload refused, Apache keeps running"
@@ -481,6 +482,39 @@ if [ -n "$SUM_BEFORE" ] && [ "$SUM_BEFORE" = "$SUM_AFTER" ] && [ -z "$LEFT" ]; t
 else
     fail "planted symlink changed something (unchanged: $([ "$SUM_BEFORE" = "$SUM_AFTER" ] && echo yes || echo NO), left: $LEFT)"
 fi
+
+echo ""
+echo "[27h] root parses only the checked snapshot (log-rotation reload ignores later edits)"
+SN_SITES=$(mktemp -d)
+cp "$SCRIPT_DIR/sites-enabled/"*.conf "$SN_SITES/"
+chmod -R a+rwX "$SN_SITES"
+SN_CID="$(docker run -d --rm \
+    --cap-drop ALL --cap-add CHOWN --cap-add KILL --cap-add NET_BIND_SERVICE \
+    --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges:true \
+    -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" -v "$SN_SITES:/etc/apache2/sites" \
+    -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro" \
+    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
+    -e OIDC_CLIENT_SECRET=x -e OIDC_CRYPTO_PASSPHRASE=x \
+    -e OIDC_COOKIE_DOMAIN=test.example.com -e REDIS_HOST=127.0.0.1 \
+    "$IMAGE")"
+sleep 8
+docker exec -u www-data "$SN_CID" sh -c 'echo "Use VHost_Proxy snaptest test.example.com http://127.0.0.2:1/" > /etc/apache2/sites/zz-snap.conf' 2>/dev/null || true
+# log rotation: USR1 to the master = graceful restart, re-reads the configuration
+docker exec "$SN_CID" sh -c 'kill -USR1 $(pgrep -o -x apache2)' 2>/dev/null || true
+sleep 4
+SN_AFTER_USR1="$(docker exec "$SN_CID" apache2ctl -S 2>/dev/null | grep -c 'snaptest.test.example.com' || true)"
+SN_SNAP_PERM="$(docker exec "$SN_CID" stat -c '%a %U' /run/apache2/cfg 2>/dev/null || true)"
+docker exec -u www-data "$SN_CID" touch /run/apache-proxy/reload-requested 2>/dev/null || true
+sleep 12
+SN_AFTER_RELOAD="$(docker exec "$SN_CID" apache2ctl -S 2>/dev/null | grep -c 'snaptest.test.example.com' || true)"
+if [ "${SN_AFTER_USR1:-1}" = 0 ] && [ "${SN_AFTER_RELOAD:-0}" -ge 1 ] && [ "$SN_SNAP_PERM" = "700 root" ]; then
+    pass "edit invisible after USR1, active after the checked reload; snapshot root-only (700)"
+else
+    fail "snapshot semantics broken (after USR1: $SN_AFTER_USR1, after reload: $SN_AFTER_RELOAD, perms: $SN_SNAP_PERM)"
+fi
+docker rm -f "$SN_CID" >/dev/null 2>&1 || true
+docker run --rm --entrypoint sh -v "$SN_SITES:/x" "$IMAGE" -c 'rm -rf /x/* /x/.[!.]*' >/dev/null 2>&1 || true
+rm -rf "$SN_SITES" 2>/dev/null || true
 
 echo ""
 echo "[27c] Admin-GUI reload trigger reloads gracefully (no container restart)"
@@ -726,20 +760,23 @@ rm -rf "$NOCERT_DIR" 2>/dev/null || true
 
 
 echo ""
-echo "[40] config guard: every forbidden directive found, allowed ones untouched"
+echo "[40] config guard: every forbidden case found, allowed ones untouched"
 GC_DIR=$(mktemp -d)
-mkdir -p "$GC_DIR/bad" "$GC_DIR/good"
-cp "$SCRIPT_DIR/guard-cases/bad.conf" "$GC_DIR/bad/"
-cp "$SCRIPT_DIR/guard-cases/good.conf" "$GC_DIR/good/"
-ln -s /etc/shadow "$GC_DIR/bad/link.conf"
+cp -r "$SCRIPT_DIR/guard-cases/bad" "$SCRIPT_DIR/guard-cases/good" "$GC_DIR/"
+ln -s /etc/shadow "$GC_DIR/bad/sites/link.conf"
 chmod -R a+rX "$GC_DIR"
-EXPECT_BAD=$(( $(grep -cvE '^(#|$|Module evil)' "$SCRIPT_DIR/guard-cases/bad.conf") + 1 ))
-GOT_BAD="$(docker run --rm --entrypoint /usr/local/bin/proxy-config-guard.sh -v "$GC_DIR/bad:/g:ro" "$IMAGE" /g 2>&1 | grep -c 'not allowed' || true)"
-GOOD_OUT="$(docker run --rm --entrypoint /usr/local/bin/proxy-config-guard.sh -v "$GC_DIR/good:/g:ro" "$IMAGE" /g 2>&1; echo "rc=$?")"
+EXPECT_BAD="$(cat "$SCRIPT_DIR/guard-cases/EXPECTED_BAD")"
+guard_in() {   # $1 = bad|good
+    docker run --rm --entrypoint /usr/local/bin/proxy-config-guard.sh -v "$GC_DIR:/g:ro" \
+        -e GUARD_SITES=/g/$1/sites -e GUARD_ADDON=/g/$1/AddOn -e GUARD_CONFIG=/g/$1/config "$IMAGE" 2>&1
+}
+GOT_BAD="$(guard_in bad | grep -c 'not allowed\|must be\|only ' || true)"
+GOOD_OUT="$(guard_in good; echo "rc=$?")"
 if [ "$GOT_BAD" = "$EXPECT_BAD" ] && [ "$GOOD_OUT" = "rc=0" ]; then
-    pass "guard: $GOT_BAD/$EXPECT_BAD forbidden cases reported, allowed file clean"
+    pass "guard: $GOT_BAD/$EXPECT_BAD forbidden cases reported, allowed files clean"
 else
-    fail "guard: $GOT_BAD/$EXPECT_BAD forbidden cases reported; allowed file: $GOOD_OUT"
+    fail "guard: $GOT_BAD/$EXPECT_BAD forbidden cases reported; allowed files: $GOOD_OUT"
+    guard_in bad | head -50 | sed 's#^/g/##'
 fi
 rm -rf "$GC_DIR" 2>/dev/null || true
 
@@ -755,7 +792,7 @@ GS_OUT="$(timeout 60 docker run --rm \
     -e OIDC_CLIENT_SECRET=x -e OIDC_CRYPTO_PASSPHRASE=x \
     -e OIDC_COOKIE_DOMAIN=test.example.com -e REDIS_HOST=127.0.0.1 \
     "$IMAGE" apache2ctl -t 2>&1; echo "rc=$?")"
-if echo "$GS_OUT" | grep -q "piped logs are not allowed" && echo "$GS_OUT" | tail -1 | grep -qv "rc=0"; then
+if echo "$GS_OUT" | grep -q "zz-evil.conf:1:" && echo "$GS_OUT" | grep -q "config guard rejected" && echo "$GS_OUT" | tail -1 | grep -qv "rc=0"; then
     pass "container start refused with the guard's finding"
 else
     fail "container started with a forbidden directive"
