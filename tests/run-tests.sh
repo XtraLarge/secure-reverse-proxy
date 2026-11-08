@@ -404,39 +404,41 @@ else
 fi
 
 echo ""
-echo "[27d] Admin-GUI configtest as www-data works via the root listener"
-# The secret includes are root-only (0600); the admin UI runs as www-data and must
-# get its configtest from the entrypoint's root listener (regression 2026-11-07).
-docker exec -u www-data "$CAP_CID" touch /run/apache-proxy/configtest-req-ci4711 2>/dev/null || true
-CT_RES=""
-for _ in $(seq 1 20); do
-    sleep 1
-    CT_RES="$(docker exec -u www-data "$CAP_CID" cat /run/apache-proxy/configtest-res-ci4711 2>/dev/null || true)"
-    [ -n "$CT_RES" ] && break
-done
-if [ "$(echo "$CT_RES" | head -1)" = "rc=0" ] && echo "$CT_RES" | grep -q "Syntax OK" \
-   && ! echo "$CT_RES" | grep -q "oidc-passphrase"; then
-    pass "configtest via root listener: rc=0, Syntax OK, no protected paths in the output"
+echo "[27d] Admin-GUI configtest runs as www-data with -D ADMIN_CONFIGTEST"
+# The secret includes are root-only (0600). The admin UI tests the configuration as
+# www-data and skips exactly those includes (regression 2026-11-07: every admin change failed).
+if docker exec -u www-data "$CAP_CID" timeout 60 apache2ctl -t -D ADMIN_CONFIGTEST 2>&1 | grep -q "Syntax OK"; then
+    pass "configtest as www-data with -D ADMIN_CONFIGTEST: Syntax OK"
 else
-    fail "configtest via root listener failed or timed out"
-    echo "$CT_RES" | tail -5
+    fail "configtest as www-data with -D ADMIN_CONFIGTEST failed"
+    docker exec -u www-data "$CAP_CID" apache2ctl -t -D ADMIN_CONFIGTEST 2>&1 | tail -5 || true
 fi
-if docker exec -u www-data "$CAP_CID" cat /etc/apache2/conf-runtime/oidc-passphrase.conf >/dev/null 2>&1; then
-    fail "www-data can read the passphrase include"
+if docker exec -u www-data "$CAP_CID" cat /etc/apache2/conf-runtime/oidc-passphrase.conf >/dev/null 2>&1 \
+   || docker exec -u www-data "$CAP_CID" cat /etc/apache2/conf-runtime/oidc-client-default.conf >/dev/null 2>&1; then
+    fail "www-data can read a secret include"
 else
-    pass "passphrase include stays unreadable for www-data"
+    pass "secret includes stay unreadable for www-data"
 fi
 
 echo ""
-echo "[27e] configtest answer does not echo root-only files included from a site file"
-# A site file is writable by www-data. If it includes a root-only file, Apache quotes
-# that file's first line in the error; the answer to www-data must not contain it.
+echo "[27g] no secret in readable files; secrets included in the real (root) configuration"
+MACRO_SECRET="$(docker exec "$CAP_CID" sh -c "grep -ciE '^[[:space:]]*OIDCClientSecret' /etc/apache2/macro/40-secure-oidc.conf /etc/apache2/conf-runtime/iam-admin-oidc.conf | awk -F: '{s+=\$2} END {print s}'" 2>/dev/null || true)"
+PERMS="$(docker exec "$CAP_CID" stat -c '%a %U' /etc/apache2/macro/40-secure-oidc.conf /etc/apache2/conf-runtime/iam-admin-oidc.conf /etc/apache2/conf-runtime/oidc-client-default.conf 2>/dev/null | tr '\n' ' ')"
+INCL="$(docker exec "$CAP_CID" apache2ctl -t -D DUMP_INCLUDES 2>/dev/null | grep -cE 'oidc-client-default.conf|oidc-passphrase.conf|redis-auth.conf' || true)"
+if [ "${MACRO_SECRET:-1}" = 0 ] && [ "$PERMS" = "644 root 644 root 600 root " ] && [ "${INCL:-0}" -ge 3 ]; then
+    pass "macro/iam include readable without secrets (644), client secret root-only (600), secret includes active for root"
+else
+    fail "secret placement wrong (macro hits: $MACRO_SECRET, perms: $PERMS, secret includes in root config: $INCL)"
+fi
+
+echo ""
+echo "[27e] a site file including a root-only file is rejected and leaks nothing"
 LEAK_SITES=$(mktemp -d)
 cp "$SCRIPT_DIR/sites-enabled/"*.conf "$LEAK_SITES/"
 chmod -R a+rwX "$LEAK_SITES"
 LEAK_CID="$(docker run -d --rm \
     --cap-drop ALL --cap-add CHOWN --cap-add KILL --cap-add NET_BIND_SERVICE \
-    --cap-add SETGID --cap-add SETUID \
+    --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges:true \
     -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" \
     -v "$LEAK_SITES:/etc/apache2/sites" \
     -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro" \
@@ -446,19 +448,20 @@ LEAK_CID="$(docker run -d --rm \
     "$IMAGE")"
 sleep 8
 docker exec -u www-data "$LEAK_CID" sh -c 'echo "Include /etc/shadow" > /etc/apache2/sites/zz-leak.conf' 2>/dev/null || true
-docker exec -u www-data "$LEAK_CID" touch /run/apache-proxy/configtest-req-ci4712 2>/dev/null || true
-LEAK_RES=""
-for _ in $(seq 1 20); do
-    sleep 1
-    LEAK_RES="$(docker exec -u www-data "$LEAK_CID" cat /run/apache-proxy/configtest-res-ci4712 2>/dev/null || true)"
-    [ -n "$LEAK_RES" ] && break
-done
-if [ -n "$LEAK_RES" ] && [ "$(echo "$LEAK_RES" | head -1)" != "rc=0" ] \
-   && ! echo "$LEAK_RES" | grep -q "root:" && echo "$LEAK_RES" | grep -q "hidden"; then
-    pass "configtest failed as expected and the included root-only content is hidden"
+GUARD_OUT="$(docker exec -u www-data "$LEAK_CID" /usr/local/bin/proxy-config-guard.sh 2>&1 || true)"
+CT_OUT="$(docker exec -u www-data "$LEAK_CID" apache2ctl -t -D ADMIN_CONFIGTEST 2>&1 || true)"
+MPID_L1="$(docker exec "$LEAK_CID" pgrep -o -x apache2 2>/dev/null || true)"
+docker exec -u www-data "$LEAK_CID" touch /run/apache-proxy/reload-requested 2>/dev/null || true
+sleep 8
+REJECTED="$(docker logs "$LEAK_CID" 2>&1 | grep -c 'config guard rejected' || true)"
+MPID_L2="$(docker exec "$LEAK_CID" pgrep -o -x apache2 2>/dev/null || true)"
+if echo "$GUARD_OUT" | grep -q "Include of /etc/shadow is not allowed" \
+   && ! echo "$CT_OUT" | grep -q "root:" && [ "${REJECTED:-0}" -ge 1 ] \
+   && [ -n "$MPID_L1" ] && [ "$MPID_L1" = "$MPID_L2" ]; then
+    pass "guard rejects it, www-data configtest shows no content, reload refused, Apache keeps running"
 else
-    fail "configtest answer leaks content of a root-only file (or no answer)"
-    echo "$LEAK_RES" | sed 's/root:[^ ]*/root:<cut>/' | tail -5
+    fail "Include of a root-only file not handled (guard: $(echo "$GUARD_OUT" | head -1), reload rejected: $REJECTED)"
+    echo "$CT_OUT" | sed 's/root:[^ ]*/root:<cut>/g' | tail -3
 fi
 docker rm -f "$LEAK_CID" >/dev/null 2>&1 || true
 # the container chowned the dir to www-data (uid 33) — remove its content from inside a container
@@ -466,20 +469,17 @@ docker run --rm --entrypoint sh -v "$LEAK_SITES:/x" "$IMAGE" -c 'rm -rf /x/* /x/
 rm -rf "$LEAK_SITES" 2>/dev/null || true
 
 echo ""
-echo "[27f] planted symlinks / directories in the run dir do not redirect root's writes"
+echo "[27f] a planted symlink as certificate request changes nothing"
 KEY=/etc/apache2/conf-runtime/oidc-passphrase.key
 SUM_BEFORE="$(docker exec "$CAP_CID" sh -c "stat -c '%a %U %G' $KEY; md5sum < $KEY")"
-docker exec -u www-data "$CAP_CID" sh -c "ln -s $KEY /run/apache-proxy/configtest-res-ci4713; \
-  mkdir /run/apache-proxy/configtest-req-cidir; ln -s $KEY /run/apache-proxy/configtest-req-cilink; \
-  touch /run/apache-proxy/configtest-req-ci4713" 2>/dev/null || true
-sleep 6
+docker exec -u www-data "$CAP_CID" ln -s "$KEY" /run/apache-proxy/ssl-prepare-requested 2>/dev/null || true
+sleep 4
 SUM_AFTER="$(docker exec "$CAP_CID" sh -c "stat -c '%a %U %G' $KEY; md5sum < $KEY")"
-LEFT="$(docker exec "$CAP_CID" sh -c 'ls -d /run/apache-proxy/configtest-req-* 2>/dev/null' || true)"
-RES_IS_FILE="$(docker exec "$CAP_CID" sh -c '[ -f /run/apache-proxy/configtest-res-ci4713 ] && [ ! -L /run/apache-proxy/configtest-res-ci4713 ] && echo yes' || true)"
-if [ -n "$SUM_BEFORE" ] && [ "$SUM_BEFORE" = "$SUM_AFTER" ] && [ -z "$LEFT" ] && [ "$RES_IS_FILE" = yes ]; then
-    pass "protected file unchanged, symlink replaced by the answer, bogus requests removed"
+LEFT="$(docker exec "$CAP_CID" sh -c 'ls -A /run/apache-proxy/ | grep -v status.tab' || true)"
+if [ -n "$SUM_BEFORE" ] && [ "$SUM_BEFORE" = "$SUM_AFTER" ] && [ -z "$LEFT" ]; then
+    pass "protected file unchanged, symlink request removed"
 else
-    fail "planted symlink/dir changed something (key unchanged: $([ "$SUM_BEFORE" = "$SUM_AFTER" ] && echo yes || echo NO), left: $LEFT, answer is file: $RES_IS_FILE)"
+    fail "planted symlink changed something (unchanged: $([ "$SUM_BEFORE" = "$SUM_AFTER" ] && echo yes || echo NO), left: $LEFT)"
 fi
 
 echo ""
@@ -724,6 +724,44 @@ else
 fi
 rm -rf "$NOCERT_DIR" 2>/dev/null || true
 
+
+echo ""
+echo "[40] config guard: every forbidden directive found, allowed ones untouched"
+GC_DIR=$(mktemp -d)
+mkdir -p "$GC_DIR/bad" "$GC_DIR/good"
+cp "$SCRIPT_DIR/guard-cases/bad.conf" "$GC_DIR/bad/"
+cp "$SCRIPT_DIR/guard-cases/good.conf" "$GC_DIR/good/"
+ln -s /etc/shadow "$GC_DIR/bad/link.conf"
+chmod -R a+rX "$GC_DIR"
+EXPECT_BAD=$(( $(grep -cvE '^(#|$|Module evil)' "$SCRIPT_DIR/guard-cases/bad.conf") + 1 ))
+GOT_BAD="$(docker run --rm --entrypoint /usr/local/bin/proxy-config-guard.sh -v "$GC_DIR/bad:/g:ro" "$IMAGE" /g 2>&1 | grep -c 'not allowed' || true)"
+GOOD_OUT="$(docker run --rm --entrypoint /usr/local/bin/proxy-config-guard.sh -v "$GC_DIR/good:/g:ro" "$IMAGE" /g 2>&1; echo "rc=$?")"
+if [ "$GOT_BAD" = "$EXPECT_BAD" ] && [ "$GOOD_OUT" = "rc=0" ]; then
+    pass "guard: $GOT_BAD/$EXPECT_BAD forbidden cases reported, allowed file clean"
+else
+    fail "guard: $GOT_BAD/$EXPECT_BAD forbidden cases reported; allowed file: $GOOD_OUT"
+fi
+rm -rf "$GC_DIR" 2>/dev/null || true
+
+echo ""
+echo "[41] start with a forbidden directive is refused (fail closed)"
+GS_DIR=$(mktemp -d)
+cp "$SCRIPT_DIR/sites-enabled/"*.conf "$GS_DIR/"
+printf "ErrorLog \"|/bin/true\"\n" > "$GS_DIR/zz-evil.conf"
+chmod -R a+rX "$GS_DIR"
+GS_OUT="$(timeout 60 docker run --rm \
+    -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" -v "$GS_DIR:/etc/apache2/sites:ro" \
+    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
+    -e OIDC_CLIENT_SECRET=x -e OIDC_CRYPTO_PASSPHRASE=x \
+    -e OIDC_COOKIE_DOMAIN=test.example.com -e REDIS_HOST=127.0.0.1 \
+    "$IMAGE" apache2ctl -t 2>&1; echo "rc=$?")"
+if echo "$GS_OUT" | grep -q "piped logs are not allowed" && echo "$GS_OUT" | tail -1 | grep -qv "rc=0"; then
+    pass "container start refused with the guard's finding"
+else
+    fail "container started with a forbidden directive"
+    echo "$GS_OUT" | tail -3
+fi
+rm -rf "$GS_DIR" 2>/dev/null || true
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Summary

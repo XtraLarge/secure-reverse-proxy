@@ -391,6 +391,12 @@ else
     > "$REDIS_AUTH_FILE"
 fi
 
+# ── Generate the default client secret include ───────────────────────────────
+# The secret must not be rendered into the macro file: the macro stays readable for
+# the admin UI's configtest (www-data), the secret include is root-only.
+CLIENT_DEFAULT_FILE="/etc/apache2/conf-runtime/oidc-client-default.conf"
+( umask 077; printf 'OIDCClientSecret  %s\n' "${OIDC_CLIENT_SECRET}" > "$CLIENT_DEFAULT_FILE" )
+
 # ── Generate OIDC config include for iam/admin-console protection ────────────
 # Used by AddOn/DOMAIN/iam.preconfig via:
 #   Include /etc/apache2/conf-runtime/iam-admin-oidc.conf
@@ -404,11 +410,11 @@ printf 'OIDCProviderMetadataURL          %s\n'  "${OIDC_PROVIDER_METADATA_URL}"
 printf 'OIDCSSLValidateServer            Off\n'
 printf 'OIDCProviderTokenEndpointAuth    %s\n'  "${OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH}"
 printf 'OIDCClientID                     %s\n'  "${OIDC_CLIENT_ID}"
-printf 'OIDCClientSecret                 %s\n'  "${OIDC_CLIENT_SECRET}"
+printf '<IfDefine !ADMIN_CONFIGTEST>\n  Include /etc/apache2/conf-runtime/oidc-client-default.conf\n</IfDefine>\n'
 printf 'OIDCRemoteUserClaim              %s\n'  "${OIDC_REMOTE_USER_CLAIM}"
 printf 'OIDCScope                        "%s"\n' "${OIDC_SCOPE}"
 printf 'OIDCRedirectURI                  https://iam.%s%s%s\n' "${OIDC_COOKIE_DOMAIN}" "${HTTPS_PORT_SUFFIX}" "${OIDC_REDIRECT_PATH}"
-printf 'Include /etc/apache2/conf-runtime/oidc-passphrase.conf\n'
+printf '<IfDefine !ADMIN_CONFIGTEST>\n  Include /etc/apache2/conf-runtime/oidc-passphrase.conf\n</IfDefine>\n'
 printf 'OIDCDefaultLoggedOutURL          %s\n'  "${OIDC_DEFAULT_LOGOUT_URL}"
 printf 'OIDCCookieDomain                 %s\n'  "${OIDC_COOKIE_DOMAIN}"
 printf 'OIDCCookie                       %s-IAM-Admin-Session\n'  "${OIDC_COOKIE_DOMAIN}"
@@ -419,10 +425,10 @@ printf 'OIDCSessionCacheFallbackToCookie Off\n'
 printf 'OIDCCacheType                    redis\n'
 printf 'OIDCRedisCacheServer             %s:%s\n' "${REDIS_HOST}" "${REDIS_PORT}"
 printf 'OIDCRedisCacheDatabase           %s\n'  "${REDIS_DB}"
-printf 'Include /etc/apache2/conf-runtime/redis-auth.conf\n'
+printf '<IfDefine !ADMIN_CONFIGTEST>\n  Include /etc/apache2/conf-runtime/redis-auth.conf\n</IfDefine>\n'
 printf 'OIDCProviderBackChannelLogoutSupported On\n'
 } > "$IAM_ADMIN_OIDC_FILE"
-chmod 600 "$IAM_ADMIN_OIDC_FILE"
+chmod 644 "$IAM_ADMIN_OIDC_FILE"   # no secret inside — only root-only includes
 log "Generated iam-admin-oidc.conf (redirect URI: https://iam.${OIDC_COOKIE_DOMAIN}${HTTPS_PORT_SUFFIX}${OIDC_REDIRECT_PATH})"
 
 # ── Generate per-domain OIDC client credential files ─────────────────────────
@@ -508,7 +514,6 @@ printf 'ServerName %s\n' "${APACHE_SERVER_NAME}" > "$SERVERNAME_FILE"
 SUBST_VARS='${OIDC_PROVIDER_METADATA_URL}'\
 '${OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH}'\
 '${OIDC_CLIENT_ID}'\
-'${OIDC_CLIENT_SECRET}'\
 '${OIDC_REMOTE_USER_CLAIM}'\
 '${OIDC_SCOPE}'\
 '${OIDC_REDIRECT_PATH}'\
@@ -571,7 +576,8 @@ _link_ssl_all() {
     # domains = 1st argument of Domain_Init*, 2nd argument of VHost_* (only *.conf,
     # the files Apache includes); backend host names are no domains of their own
     mapfile -t _ALL_DOMAINS < <(
-        cat /etc/apache2/sites/*.conf 2>/dev/null \
+        find /etc/apache2/sites -maxdepth 1 -type f -name '*.conf' -print0 2>/dev/null \
+        | xargs -0 -r timeout 10 grep -h -D skip -iE '^[[:space:]]*use[[:space:]]' 2>/dev/null \
         | awk 'tolower($1) == "use" { m = tolower($2)
                if (m ~ /^domain_init/) print $3; else if (m ~ /^vhost_/) print $4 }' \
         | tr 'A-Z' 'a-z' \
@@ -794,6 +800,19 @@ _check_writable "/etc/apache2/config"         "config/"
 _check_writable "/etc/apache2/AddOn"          "AddOn/"
 _check_writable "/etc/apache2/sites"          "sites/"
 
+# _guard_ok — reject directives in sites/, AddOn/, config/ that would act as root when
+# Apache's root master parses them (see proxy-config-guard.sh). Findings go to the log.
+_guard_ok() {
+    local _out
+    _out="$(timeout 30 /usr/local/bin/proxy-config-guard.sh 2>&1)" && return 0
+    printf '%s\n' "$_out" | head -20 | while IFS= read -r _l; do log "config guard: $_l"; done
+    return 1
+}
+
+# ── Config guard — before root parses the configuration for the first time ────
+# (LoadModule & co. would already act during the configtest below; fail closed)
+_guard_ok || die "config guard rejected the configuration in sites/, AddOn/ or config/ (see above)"
+
 # ── Validate Apache config ────────────────────────────────────────────────────
 log "Testing Apache configuration..."
 apache2ctl configtest || die "Apache config test failed — check your site configs and env vars"
@@ -831,9 +850,9 @@ log "Starting Apache..."
 # still processing a previous reload), which would freeze Apache workers and
 # make the admin UI completely unresponsive.
 RELOAD_TRIGGER="/run/apache-proxy/reload-requested"
-# configtest for the admin UI: admin.lua (www-data) cannot read the root-only secret
-# includes, so it drops configtest-req-<id> and root answers with configtest-res-<id>.
-CT_DIR="/run/apache-proxy"
+# The admin UI asks root for certificates of a new domain via this file (it tests
+# the configuration itself, as www-data with -D ADMIN_CONFIGTEST).
+SSL_TRIGGER="/run/apache-proxy/ssl-prepare-requested"
 mkdir -p /run/apache-proxy
 # Dir is root-owned but group-writable by www-data: admin.lua (www-data worker)
 # creates the trigger via the group bit, while root (the owner) can delete it.
@@ -842,7 +861,7 @@ mkdir -p /run/apache-proxy
 # set -e, crash-loop the container on every reload.
 chown root:www-data /run/apache-proxy
 chmod 0770 /run/apache-proxy
-rm -f "$RELOAD_TRIGGER" "$CT_DIR"/configtest-req-* "$CT_DIR"/configtest-res-* 2>/dev/null || true
+rm -rf -- "$RELOAD_TRIGGER" "$SSL_TRIGGER" 2>/dev/null || true
 # _ssl_prepare — link certificates for all domains; for a new placeholder with ACME
 # configured, request the Let's Encrypt certificate in the background (acme-init.sh
 # reloads Apache itself once the certificate is there).
@@ -857,52 +876,6 @@ _ssl_prepare() {
             >> /var/log/apache2/acme-renew.log 2>&1 &
     fi
 }
-# _configtest_requests — answer pending configtest requests of the admin UI.
-# Lines from the root-only secret includes are hidden in the returned output.
-_configtest_requests() {
-    local _req _id _res _rc _n=0
-    for _req in "$CT_DIR"/configtest-req-*; do
-        [ -e "$_req" ] || [ -L "$_req" ] || continue
-        if [ -L "$_req" ] || [ ! -f "$_req" ]; then
-            rm -rf -- "$_req"; continue     # only plain files are requests
-        fi
-        _id="${_req##*/configtest-req-}"
-        rm -f -- "$_req"
-        case "$_id" in ''|*[!A-Za-z0-9]*) continue ;; esac
-        _n=$((_n + 1)); [ "$_n" -le 5 ] || continue   # rest waits for the next round
-        _link_ssl_all       # a domain added in sites/ needs its certificate for the test
-        _res="$CT_DIR/configtest-res-$_id"
-        # raw output stays root-only (private dir) until the protected lines are hidden
-        _rc=$( umask 077; apache2ctl configtest > "$PRIV_DIR/ct.tmp" 2>&1; echo $? )
-        # A line is returned only if www-data could read every file it names itself.
-        # Apache quotes the offending line of a broken file, and a site file (writable by
-        # www-data) could Include a root-only file directly, via ../ or via a symlink.
-        # test -r runs as www-data, so symlinks and .. are resolved with its rights.
-        # Apache may print the message itself on the line after "Syntax error on line N
-        # of <file>:" — lines following a hidden one stay hidden until a new message starts.
-        : > "$PRIV_DIR/ct.flt"
-        _hiding=0
-        while IFS= read -r _line || [ -n "$_line" ]; do
-            if [ "$_hiding" = 1 ] && ! printf '%s' "$_line" | grep -qE "^(AH[0-9]{5}|apache2:|Syntax OK|Action '|The Apache error log)"; then
-                echo "[message about a file the admin UI may not read hidden]" >> "$PRIV_DIR/ct.flt"
-                continue
-            fi
-            _hiding=0; _show=1
-            for _p in $(printf '%s\n' "$_line" | grep -oE '/[A-Za-z0-9._/-]+'); do
-                su -s /bin/sh www-data -c 'test -r "$1"' _ "$_p" 2>/dev/null || { _show=0; break; }
-            done
-            if [ "$_show" = 1 ]; then printf '%s\n' "$_line"
-            else _hiding=1; echo "[message about a file the admin UI may not read hidden]"; fi >> "$PRIV_DIR/ct.flt"
-        done < "$PRIV_DIR/ct.tmp"
-        mv -f "$PRIV_DIR/ct.flt" "$PRIV_DIR/ct.tmp"
-        ( umask 077; { echo "rc=$_rc"; cat "$PRIV_DIR/ct.tmp"; } > "$PRIV_DIR/ct.part" )
-        rm -f "$PRIV_DIR/ct.tmp"
-        chgrp www-data "$PRIV_DIR/ct.part"; chmod 0640 "$PRIV_DIR/ct.part"
-        mv -fT "$PRIV_DIR/ct.part" "$_res" 2>/dev/null || rm -f "$PRIV_DIR/ct.part"
-    done
-    # answers nobody collected (request timed out)
-    find "$CT_DIR" -maxdepth 1 -name 'configtest-res-*' -mmin +2 -delete 2>/dev/null
-}
 (
   set +e
   trap 'exit 0' TERM
@@ -911,7 +884,11 @@ _configtest_requests() {
   _drop_secrets KEYCLOAK_API_CLIENT_SECRET KEYCLOAK_ADMIN_PASS
   _SSL_QUIET=1
   while true; do
-    _configtest_requests
+    if [ -e "$SSL_TRIGGER" ] || [ -L "$SSL_TRIGGER" ]; then
+      _plain=0; [ -f "$SSL_TRIGGER" ] && [ ! -L "$SSL_TRIGGER" ] && _plain=1
+      rm -rf -- "$SSL_TRIGGER"
+      [ "$_plain" = 1 ] && _ssl_prepare     # only a plain file is a request
+    fi
     if [ -f "$RELOAD_TRIGGER" ]; then
       rm -f "$RELOAD_TRIGGER"
       APID=$(pgrep -o -x apache2 2>/dev/null) || { sleep 1; continue; }
@@ -920,7 +897,12 @@ _configtest_requests() {
       log "Reload requested — syncing Keycloak redirect URIs"
       _kc_register_redirect_uris || log "WARNING: Keycloak redirect URI sync failed (continuing)"
       _ssl_prepare
-      if ! apache2ctl configtest >/dev/null 2>&1; then
+      # guard right before root parses the configuration (keeps the window small)
+      if ! _guard_ok; then
+        log "ERROR: config guard rejected the configuration — reload skipped, Apache keeps running with the previous config"
+        sleep 1; continue
+      fi
+      if ! timeout 60 apache2ctl configtest >/dev/null 2>&1; then
         log "ERROR: configtest failed — reload skipped, Apache keeps running with the previous config"
         apache2ctl configtest 2>&1 | grep -v AH02800 | tail -5
         sleep 1; continue
@@ -962,8 +944,7 @@ _configtest_requests() {
 # All configs are rendered now. Files with secrets: root only; the few files
 # www-data needs at runtime: root:www-data 0640.
 for f in /etc/apache2/conf-runtime/oidc-passphrase.conf /etc/apache2/conf-runtime/oidc-passphrase.key \
-         /etc/apache2/conf-runtime/redis-auth.conf /etc/apache2/conf-runtime/iam-admin-oidc.conf \
-         /etc/apache2/conf-runtime/oidc-client-*.conf /etc/apache2/macro/40-secure-oidc.conf; do
+         /etc/apache2/conf-runtime/redis-auth.conf /etc/apache2/conf-runtime/oidc-client-*.conf; do
     [ -f "$f" ] && chown root:root "$f" && chmod 0600 "$f"
 done
 if [ -f /etc/apache2/conf-runtime/geolock-pin.hash ]; then

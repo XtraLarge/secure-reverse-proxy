@@ -321,30 +321,21 @@ local function write_file(fpath, content)
   return true, nil
 end
 
--- Run apache2ctl configtest and return (ok, output).
--- The worker (www-data) cannot read the root-only secret includes, so the test runs
--- in the root listener of the entrypoint: request file in, answer file out.
+-- Run the config guard and apache2ctl configtest as www-data, return (ok, output).
+-- The secret includes are root-only; -D ADMIN_CONFIGTEST skips exactly those, so the
+-- test only reads what www-data may read anyway (no secret can leak into the output).
 local function configtest()
-  -- unique per request (kernel random UUID, hex only)
-  local uf = io.open("/proc/sys/kernel/random/uuid", "r")
-  local id = ((uf and uf:read("*l")) or (tostring(os.time()) .. tostring(math.random(1e9)))):gsub("[^%w]", "")
-  if uf then uf:close() end
-  local dir = "/run/apache-proxy/"
-  local req, res = dir .. "configtest-req-" .. id, dir .. "configtest-res-" .. id
-  local f = io.open(req, "w")
-  if not f then return false, "Konfigurationstest konnte nicht angefordert werden" end
-  f:close()
-  for _ = 1, 120 do                       -- up to 60 s (a reload in progress delays it)
-    local rf = io.open(res, "r")
-    if rf then
-      local c = rf:read("*a") or ""; rf:close(); os.remove(res)
-      local rc = tonumber(c:match("^rc=(%d+)"))
-      return rc == 0, (c:gsub("^rc=%d+\n", ""))
-    end
-    os.execute("sleep 0.5")
+  local p = io.popen("timeout 30 /usr/local/bin/proxy-config-guard.sh 2>&1")
+  local gout = p:read("*a") or ""
+  local gok = p:close()
+  if not (gok == true or gok == 0) then
+    return false, "Nicht erlaubte Direktiven (Sicherheitspr\xC3\xBCfung):\n" .. gout
   end
-  os.remove(req)
-  return false, "Konfigurationstest: keine Antwort vom Container (Zeitüberschreitung)"
+  p = io.popen("timeout 60 /usr/sbin/apache2ctl -t -D ADMIN_CONFIGTEST 2>&1")
+  local out = p:read("*a")
+  local ok  = p:close()
+  -- apache2ctl exits 0 on success; pclose returns true on exit 0
+  return (ok == true or ok == 0), out
 end
 
 local function list_conf_files()
@@ -2795,6 +2786,20 @@ local function show_domain_form(r, pre, errmsg)
   r:puts('</div></form></div></div></body></html>')
 end
 
+-- Ask root (entrypoint listener) to link/create the certificate of a new domain and
+-- wait until it is there, so the configtest can find it.
+local function request_ssl_for(domain)
+  local f = io.open("/run/apache-proxy/ssl-prepare-requested", "w")
+  if f then f:close() end
+  local cert = "/run/apache2/active-ssl/" .. domain .. "/cert.pem"
+  for _ = 1, 30 do
+    local c = io.open(cert, "r")
+    if c then c:close(); return true end
+    os.execute("sleep 0.5")
+  end
+  return false
+end
+
 local function do_domain_create(r, p)
   local domain    = trim(p["domain"]    or ""):lower()
   local adminuser = trim(p["adminuser"] or "")
@@ -2840,8 +2845,11 @@ local function do_domain_create(r, p)
 
   os.rename(ftmp, fpath)
 
-  -- the configtest (root listener) also links/creates the certificate of the new domain
+  local ssl_ok = request_ssl_for(domain)
   local test_ok, test_out = configtest()
+  if not test_ok and not ssl_ok then
+    test_out = "Zertifikat konnte nicht bereitgestellt werden.\n" .. (test_out or "")
+  end
   if not test_ok then
     os.remove(fpath)
     return show_domain_form(r, p,

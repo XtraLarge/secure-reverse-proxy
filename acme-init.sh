@@ -137,5 +137,7 @@ for root in "${ROOT_DOMAINS[@]}"; do
     fi
 done
 
-[[ $changed -eq 1 ]] && { log "Reloading Apache..."; /usr/sbin/apache2ctl graceful 2>/dev/null || true; }
+# Reload via the entrypoint's listener: it runs the config guard and the configtest
+# before the graceful reload. set -C (O_EXCL) never follows a planted symlink.
+[[ $changed -eq 1 ]] && { log "Requesting Apache reload..."; ( set -C; : > /run/apache-proxy/reload-requested ) 2>/dev/null || true; }
 log "Done"

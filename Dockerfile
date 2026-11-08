@@ -91,6 +91,8 @@ COPY apache-watchdog.sh /usr/local/bin/apache-watchdog.sh
 RUN chmod +x /usr/local/bin/apache-watchdog.sh
 
 COPY status-probe.sh /usr/local/bin/status-probe.sh
+COPY proxy-config-guard.sh /usr/local/bin/proxy-config-guard.sh
+RUN chmod 0755 /usr/local/bin/proxy-config-guard.sh
 RUN chmod +x /usr/local/bin/status-probe.sh
 COPY cron.d/status-probe /etc/cron.d/status-probe
 RUN chmod 0644 /etc/cron.d/status-probe
