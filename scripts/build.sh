@@ -4,7 +4,7 @@
 # Usage (from repo root or scripts/):
 #   ./scripts/build.sh              # sync + build only (local test image)
 #   ./scripts/build.sh --test       # sync + build + deploy to test (10.0.0.101)
-#   ./scripts/build.sh --prod       # docker pull from DockerHub + deploy to prod
+#   ./scripts/build.sh --prod       # docker pull from ghcr.io + deploy to prod
 #   ./scripts/build.sh --test --skip-git-check
 #
 # Requires SSH access to DOCKER_HOST (default: 10.0.0.1).
@@ -85,7 +85,7 @@ if [[ -n "$MODE" ]] && ! $SKIP_GIT; then
   fi
 fi
 
-# ── Prod: pull from DockerHub + deploy ────────────────────────────────────────
+# ── Prod: pull from ghcr.io + deploy ───────────────────────────────────────────
 if [[ "$MODE" == "prod" ]]; then
   echo "==> Config-Check (prod)"
   ssh "root@${DOCKER_HOST}" "bash -s" < "${REPO_DIR}/scripts/check-env.sh" \

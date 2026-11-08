@@ -26,6 +26,7 @@ Then open:
 - `https://keycloak.127.0.0.1.nip.io:8443/` - Keycloak via the proxy
 - `https://whoami.127.0.0.1.nip.io:8443/` - OIDC-protected test backend
 - `https://toc.127.0.0.1.nip.io:8443/` - generated TOC page
+- `https://admin.127.0.0.1.nip.io:8443/` - admin UI (user `demo`)
 
 Default login:
 
@@ -42,6 +43,8 @@ Keycloak admin:
 - copies `.env.example` to `.env` if needed
 - generates a self-signed wildcard certificate for `127.0.0.1.nip.io`
 - stores it under `ssl/127.0.0.1.nip.io/`
+- creates the site configuration `sites/127.0.0.1.nip.io.conf` (Keycloak, whoami,
+  and `demo` as admin user for `admin.` and `geolock.`)
 
 ## How the OIDC loop works
 

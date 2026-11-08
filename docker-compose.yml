@@ -2,7 +2,7 @@ services:
 
   proxy:
     build: .
-    # image: xtralarge71/secure-reverse-proxy:latest
+    # image: ghcr.io/xtralarge/secure-reverse-proxy:latest
     restart: unless-stopped
     ports:
       - "80:80"

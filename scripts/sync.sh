@@ -3,7 +3,7 @@
 #   1. git push → GitHub (anonymized public repo)
 #   2. Wait for docker-build-push CI to succeed
 #   3. Create Bookstack session page with recent commits
-#   4. Pull image from DockerHub + deploy to production
+#   4. Pull image from ghcr.io + deploy to production
 #
 # Private config is sourced from .sync.env (gitignored).
 # Required env vars (or set in .sync.env):
@@ -47,7 +47,7 @@ RUN_ID=$(gh run list \
 if [[ -n "$RUN_ID" && "$RUN_ID" != "null" ]]; then
     log "CI-Run ${RUN_ID} beobachten..."
     gh run watch "$RUN_ID" --exit-status
-    log "CI erfolgreich — Image auf DockerHub veröffentlicht"
+    log "CI erfolgreich — Image auf ghcr.io veröffentlicht"
 else
     log "WARN: Kein CI-Run gefunden — überspringe Warten auf CI"
 fi

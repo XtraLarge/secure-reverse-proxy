@@ -13,7 +13,7 @@ services:
       - APACHE_SERVER_NAME=${APACHE_SERVER_NAME:-localhost}
     volumes:
       - ./ssl:/etc/apache2/ssl:ro
-      - ./sites-enabled:/etc/apache2/sites-enabled:ro
+      - ./sites:/etc/apache2/sites:rw     # created by prepare.sh
       - ./AddOn:/etc/apache2/AddOn:ro
     depends_on:
       redis:
