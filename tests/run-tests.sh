@@ -22,7 +22,7 @@ fail() { echo "  FAIL: $*"; ((FAIL++)) || true; }
 # Standard env + volume mounts used by most tests
 BASE_ARGS=(
     -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro"
-    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro"
+    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites:ro"
     -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro"
     -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/realms/master/.well-known/openid-configuration
     -e OIDC_CLIENT_ID=Proxy
@@ -71,7 +71,7 @@ echo ""
 echo "[2] Apache configtest with empty sites-enabled"
 EMPTY_DIR=$(mktemp -d)
 if docker run --rm \
-    -v "$EMPTY_DIR:/etc/apache2/sites-enabled:ro" \
+    -v "$EMPTY_DIR:/etc/apache2/sites:ro" \
     -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
     -e OIDC_CLIENT_SECRET=x \
     -e OIDC_CRYPTO_PASSPHRASE=x \
@@ -113,7 +113,7 @@ echo ""
 echo "[5] Entrypoint accepts missing OIDC_CRYPTO_PASSPHRASE (auto-generates key)"
 if docker run --rm \
     -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" \
-    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro" \
+    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites:ro" \
     -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
     -e OIDC_CLIENT_SECRET=x -e OIDC_COOKIE_DOMAIN=test.example.com \
     "$IMAGE" sh -c "grep -q 'OIDCCryptoPassphrase' /etc/apache2/conf-runtime/oidc-passphrase.conf && echo OK" \
@@ -143,7 +143,7 @@ echo ""
 echo "[7] Entrypoint rejects invalid CIDR in INTERNAL_NETWORKS"
 if docker run --rm \
     -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" \
-    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro" \
+    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites:ro" \
     -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
     -e OIDC_CLIENT_SECRET=x -e OIDC_CRYPTO_PASSPHRASE=x -e OIDC_COOKIE_DOMAIN=test.example.com \
     -e INTERNAL_NETWORKS="not-a-cidr,10.0.0.0/8" \
@@ -333,7 +333,7 @@ echo ""
 echo "[25] Container stays running with default APACHE_SERVER_NAME"
 START_CID="$(docker run -d --rm \
     -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" \
-    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro" \
+    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites:ro" \
     -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro" \
     -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
     -e OIDC_CLIENT_SECRET=x \
@@ -370,7 +370,7 @@ CAP_CID="$(docker run -d --rm \
     --cap-add SETGID \
     --cap-add SETUID \
     -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" \
-    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro" \
+    -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites:ro" \
     -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro" \
     -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
     -e OIDC_CLIENT_SECRET=x \
@@ -401,6 +401,30 @@ if [ "$GRACE_OK" = 1 ] && docker exec "$CAP_CID" curl -so /dev/null --max-time 2
     pass "Apache answers after graceful reload"
 else
     fail "Apache stopped answering after graceful reload (missing CAP_KILL?)"
+fi
+
+echo ""
+echo "[27d] Admin-GUI configtest as www-data works via the root listener"
+# The secret includes are root-only (0600); the admin UI runs as www-data and must
+# get its configtest from the entrypoint's root listener (regression 2026-11-07).
+docker exec -u www-data "$CAP_CID" touch /run/apache-proxy/configtest-req-ci4711 2>/dev/null || true
+CT_RES=""
+for _ in $(seq 1 20); do
+    sleep 1
+    CT_RES="$(docker exec -u www-data "$CAP_CID" cat /run/apache-proxy/configtest-res-ci4711 2>/dev/null || true)"
+    [ -n "$CT_RES" ] && break
+done
+if [ "$(echo "$CT_RES" | head -1)" = "rc=0" ] && echo "$CT_RES" | grep -q "Syntax OK" \
+   && ! echo "$CT_RES" | grep -q "oidc-passphrase"; then
+    pass "configtest via root listener: rc=0, Syntax OK, no protected paths in the output"
+else
+    fail "configtest via root listener failed or timed out"
+    echo "$CT_RES" | tail -5
+fi
+if docker exec -u www-data "$CAP_CID" cat /etc/apache2/conf-runtime/oidc-passphrase.conf >/dev/null 2>&1; then
+    fail "www-data can read the passphrase include"
+else
+    pass "passphrase include stays unreadable for www-data"
 fi
 
 echo ""
@@ -438,7 +462,7 @@ echo ""
 echo "[29] active-ssl symlink prefers letsencrypt over ssl/ volume"
 if docker run --rm \
         -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" \
-        -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro" \
+        -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites:ro" \
         -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro" \
         -v "$SCRIPT_DIR/letsencrypt:/etc/letsencrypt:ro" \
         -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/realms/master/.well-known/openid-configuration \
@@ -459,7 +483,7 @@ echo "[30] self-signed placeholder created when ACME_EMAIL set and no cert in ss
 EMPTY_SSL_DIR="$(mktemp -d)"
 if docker run --rm \
         -v "$EMPTY_SSL_DIR:/etc/apache2/ssl:ro" \
-        -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites-enabled:ro" \
+        -v "$SCRIPT_DIR/sites-enabled:/etc/apache2/sites:ro" \
         -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro" \
         -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/realms/master/.well-known/openid-configuration \
         -e OIDC_CLIENT_SECRET=test-secret-not-real \
@@ -496,7 +520,7 @@ echo "[32] acme-init.sh exits 0 when no domains found in conf files"
 EMPTY_SITES_DIR="$(mktemp -d)"
 if docker run --rm \
         --entrypoint /usr/local/bin/acme-init.sh \
-        -v "$EMPTY_SITES_DIR:/etc/apache2/sites-enabled:ro" \
+        -v "$EMPTY_SITES_DIR:/etc/apache2/sites:ro" \
         -v "$EMPTY_SITES_DIR:/etc/apache2/sites-admin:ro" \
         -e ACME_EMAIL=test@example.com \
         "$IMAGE" 2>&1 | grep -q "No domains found"; then
@@ -536,13 +560,13 @@ if run sh -c "lua5.4 -e \"
   if not ok then io.write('LFS_MISSING'); os.exit(1) end
   local n = 0
   pcall(function()
-    for f in lfs.dir('/etc/apache2/sites-enabled') do
+    for f in lfs.dir('/etc/apache2/sites') do
       if f:match('%.conf$') then n = n + 1 end
     end
   end)
   io.write('LFS_SCAN_OK_' .. n)
 \" && echo" 2>&1 | grep -q "LFS_SCAN_OK"; then
-    pass "lfs.dir() available and scans sites-enabled (no popen fork needed)"
+    pass "lfs.dir() available and scans sites/ (no popen fork needed)"
 else
     fail "lua-filesystem missing or lfs.dir() failed — popen fallback would be used"
 fi
@@ -579,6 +603,71 @@ else
     docker logs "$LUA_CID" 2>&1 | tail -10 || true
 fi
 docker rm -f "$LUA_CID" >/dev/null 2>&1 || true
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP: shipped example configurations
+# ══════════════════════════════════════════════════════════════════════════════
+# The documented examples must start as they are. No certificates are mounted:
+# the entrypoint has to create a temporary self-signed certificate per domain.
+
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+EX_DIR=$(mktemp -d)
+mkdir -p "$EX_DIR/example" "$EX_DIR/keycloak" "$EX_DIR/setup"
+cp "$REPO_DIR/conf/sites-available/example.conf" "$EX_DIR/example/example.com.conf"
+sed -n "/<<'SITEEOF'/,/^SITEEOF/p" "$REPO_DIR/examples/keycloak/prepare.sh" | sed '1d;$d' \
+    > "$EX_DIR/keycloak/127.0.0.1.nip.io.conf"
+sed -n '/<<SITEEOF/,/^SITEEOF/p' "$REPO_DIR/scripts/setup.sh" | sed '1d;$d' \
+    | sed 's/\${DOMAIN}/example.org/g; s/\${ADMIN_USER}/alice/g' > "$EX_DIR/setup/example.org.conf"
+chmod -R a+rX "$EX_DIR"
+
+for ex in example:example.com keycloak:127.0.0.1.nip.io setup:example.org; do
+    name="${ex%%:*}"; dom="${ex#*:}"
+    echo ""
+    echo "[38-$name] shipped example ($name) passes configtest and creates the frame vhosts"
+    if [ ! -s "$EX_DIR/$name/$dom.conf" ]; then
+        fail "example $name could not be extracted"
+        continue
+    fi
+    EX_OUT="$(docker run --rm \
+        -v "$EX_DIR/$name:/etc/apache2/sites:ro" \
+        -e OIDC_PROVIDER_METADATA_URL="https://idp.$dom/realms/master/.well-known/openid-configuration" \
+        -e OIDC_CLIENT_ID=Proxy -e OIDC_CLIENT_SECRET=test-secret-not-real \
+        -e OIDC_CRYPTO_PASSPHRASE=test-passphrase-not-real -e OIDC_COOKIE_DOMAIN="$dom" \
+        -e REDIS_HOST=127.0.0.1 \
+        "$IMAGE" sh -c 'apache2ctl -t 2>&1; apache2ctl -S 2>/dev/null' 2>&1 || true)"
+    missing=""
+    for v in toc logout admin geolock; do
+        echo "$EX_OUT" | grep -q "namevhost $v.$dom " || missing="$missing $v"
+    done
+    if echo "$EX_OUT" | grep -q "Syntax OK" && [ -z "$missing" ]; then
+        pass "example $name: Syntax OK, toc/logout/admin/geolock present"
+    else
+        fail "example $name: configtest failed or frame vhosts missing:$missing"
+        echo "$EX_OUT" | grep -vE "AH00558" | tail -5
+    fi
+done
+rm -rf "$EX_DIR"
+
+echo ""
+echo "[39] domain without certificate gets a self-signed placeholder (no failed start)"
+NOCERT_DIR=$(mktemp -d)
+printf "USE Domain_Init nocert.example.net www 'alice'\nUSE Domain_Final nocert.example.net www\n" \
+    > "$NOCERT_DIR/nocert.example.net.conf"
+chmod -R a+rX "$NOCERT_DIR"
+NC_OUT="$(docker run --rm -v "$NOCERT_DIR:/etc/apache2/sites:ro" \
+    -e OIDC_PROVIDER_METADATA_URL=https://idp.example.net/realms/master/.well-known/openid-configuration \
+    -e OIDC_CLIENT_ID=Proxy -e OIDC_CLIENT_SECRET=x -e OIDC_CRYPTO_PASSPHRASE=x \
+    -e OIDC_COOKIE_DOMAIN=nocert.example.net -e REDIS_HOST=127.0.0.1 \
+    "$IMAGE" sh -c 'apache2ctl -t 2>&1; stat -c "%a" /run/apache2/active-ssl/nocert.example.net/key.pem' 2>&1 || true)"
+if echo "$NC_OUT" | grep -q "Syntax OK" && echo "$NC_OUT" | grep -q "self-signed placeholder" \
+   && echo "$NC_OUT" | grep -qx "600"; then
+    pass "placeholder certificate created (key 0600), configtest OK"
+else
+    fail "no placeholder certificate or configtest failed"
+    echo "$NC_OUT" | tail -5
+fi
+rm -rf "$NOCERT_DIR"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

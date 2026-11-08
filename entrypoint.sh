@@ -555,42 +555,57 @@ fi
 ACTIVE_SSL_DIR="/run/apache2/active-ssl"
 mkdir -p "$ACTIVE_SSL_DIR"
 
-mapfile -t _ALL_DOMAINS < <(
-    grep -rih '^[[:space:]]*use[[:space:]]' \
-        /etc/apache2/sites/ \
-        /etc/apache2/sites-enabled/ \
-        /etc/apache2/sites-admin/ \
-        2>/dev/null \
-    | awk '{print $3; print $4}' \
-    | grep -E '^[A-Za-z0-9]([A-Za-z0-9-]*\.)+[A-Za-z]{2,}$' \
-    | sort -u
-)
+# _link_ssl_all — link every domain used in sites/ to its certificate.
+# Runs at start, before every reload and on request of the admin UI ("add domain"),
+# so a domain added at runtime gets a certificate without a container restart.
+# Order: Let's Encrypt → ssl/ volume → temporary self-signed placeholder (only if the
+# domain has none yet). Sets _SSL_NEW_PLACEHOLDER=1 if a placeholder was created.
+_link_ssl_all() {
+    local _dom _active
+    _SSL_NEW_PLACEHOLDER=0
+    mapfile -t _ALL_DOMAINS < <(
+        grep -rih '^[[:space:]]*use[[:space:]]' /etc/apache2/sites/ 2>/dev/null \
+        | awk '{print $3; print $4}' \
+        | grep -E '^[A-Za-z0-9]([A-Za-z0-9-]*\.)+[A-Za-z]{2,}$' \
+        | sort -u
+    )
+    for _dom in "${_ALL_DOMAINS[@]+"${_ALL_DOMAINS[@]}"}"; do
+        _active="${ACTIVE_SSL_DIR}/${_dom}"
+        mkdir -p "$_active"
 
-for _dom in "${_ALL_DOMAINS[@]+"${_ALL_DOMAINS[@]}"}"; do
-    _active="${ACTIVE_SSL_DIR}/${_dom}"
-    mkdir -p "$_active"
-
-    if [[ -f "/etc/letsencrypt/live/${_dom}/cert.pem" ]]; then
-        ln -sfn "/etc/letsencrypt/live/${_dom}/cert.pem"      "${_active}/cert.pem"
-        ln -sfn "/etc/letsencrypt/live/${_dom}/privkey.pem"   "${_active}/key.pem"
-        ln -sfn "/etc/letsencrypt/live/${_dom}/fullchain.pem" "${_active}/fullchain.pem"
-        log "SSL: ${_dom} → letsencrypt"
-    elif [[ -f "${APACHE_CONFDIR}/ssl/${_dom}/cert.pem" ]]; then
-        ln -sfn "${APACHE_CONFDIR}/ssl/${_dom}/cert.pem"      "${_active}/cert.pem"
-        ln -sfn "${APACHE_CONFDIR}/ssl/${_dom}/key.pem"       "${_active}/key.pem"
-        ln -sfn "${APACHE_CONFDIR}/ssl/${_dom}/fullchain.pem" "${_active}/fullchain.pem"
-        log "SSL: ${_dom} → ssl/ volume"
-    elif [[ -n "${ACME_EMAIL:-}" ]]; then
-        log "SSL: ${_dom} → self-signed placeholder (ACME cert arrives in ~10 s)"
-        openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
-            -keyout "${_active}/key.pem" \
-            -out    "${_active}/cert.pem" \
-            -subj   "/CN=${_dom}" 2>/dev/null
-        cp "${_active}/cert.pem" "${_active}/fullchain.pem"
-    else
-        log "WARNING: no cert for ${_dom} — Apache may fail to start (mount ssl/ volume or set ACME_EMAIL)"
-    fi
-done
+        if [[ -f "/etc/letsencrypt/live/${_dom}/cert.pem" ]]; then
+            ln -sfn "/etc/letsencrypt/live/${_dom}/cert.pem"      "${_active}/cert.pem"
+            ln -sfn "/etc/letsencrypt/live/${_dom}/privkey.pem"   "${_active}/key.pem"
+            ln -sfn "/etc/letsencrypt/live/${_dom}/fullchain.pem" "${_active}/fullchain.pem"
+            [ "${_SSL_QUIET:-0}" = 1 ] || log "SSL: ${_dom} → letsencrypt"
+        elif [[ -f "${APACHE_CONFDIR}/ssl/${_dom}/cert.pem" ]]; then
+            ln -sfn "${APACHE_CONFDIR}/ssl/${_dom}/cert.pem"      "${_active}/cert.pem"
+            ln -sfn "${APACHE_CONFDIR}/ssl/${_dom}/key.pem"       "${_active}/key.pem"
+            ln -sfn "${APACHE_CONFDIR}/ssl/${_dom}/fullchain.pem" "${_active}/fullchain.pem"
+            [ "${_SSL_QUIET:-0}" = 1 ] || log "SSL: ${_dom} → ssl/ volume"
+        elif [[ -e "${_active}/cert.pem" ]]; then
+            :   # placeholder from an earlier run — keep it
+        else
+            # A temporary self-signed certificate keeps Apache startable instead of failing
+            # on a missing file. With ACME the real certificate replaces it shortly.
+            if [[ -n "${ACME_EMAIL:-}" ]]; then
+                log "SSL: ${_dom} → self-signed placeholder (Let's Encrypt certificate follows)"
+            else
+                log "WARNING: SSL: no certificate for ${_dom} — using a self-signed placeholder; put a certificate into ssl/${_dom}/ or set ACME_EMAIL"
+            fi
+            ( umask 077
+              openssl req -x509 -nodes -days 30 -newkey rsa:2048 \
+                  -keyout "${_active}/key.pem" \
+                  -out    "${_active}/cert.pem" \
+                  -subj   "/CN=${_dom}" \
+                  -addext "subjectAltName=DNS:${_dom},DNS:*.${_dom}" 2>/dev/null )
+            chmod 644 "${_active}/cert.pem"
+            cp "${_active}/cert.pem" "${_active}/fullchain.pem"
+            _SSL_NEW_PLACEHOLDER=1
+        fi
+    done
+}
+_link_ssl_all
 
 # ── Secret-free environment for background daemons ───────────────────────────
 # Secrets are unset right before exec, but daemons started earlier would keep
@@ -803,6 +818,9 @@ log "Starting Apache..."
 # still processing a previous reload), which would freeze Apache workers and
 # make the admin UI completely unresponsive.
 RELOAD_TRIGGER="/run/apache-proxy/reload-requested"
+# configtest for the admin UI: admin.lua (www-data) cannot read the root-only secret
+# includes, so it drops configtest-req-<id> and root answers with configtest-res-<id>.
+CT_DIR="/run/apache-proxy"
 mkdir -p /run/apache-proxy
 # Dir is root-owned but group-writable by www-data: admin.lua (www-data worker)
 # creates the trigger via the group bit, while root (the owner) can delete it.
@@ -811,14 +829,49 @@ mkdir -p /run/apache-proxy
 # set -e, crash-loop the container on every reload.
 chown root:www-data /run/apache-proxy
 chmod 0770 /run/apache-proxy
-rm -f "$RELOAD_TRIGGER" 2>/dev/null || true
+rm -f "$RELOAD_TRIGGER" "$CT_DIR"/configtest-req-* "$CT_DIR"/configtest-res-* 2>/dev/null || true
+# _ssl_prepare — link certificates for all domains; for a new placeholder with ACME
+# configured, request the Let's Encrypt certificate in the background (acme-init.sh
+# reloads Apache itself once the certificate is there).
+_ssl_prepare() {
+    _link_ssl_all
+    if [[ "${_SSL_NEW_PLACEHOLDER:-0}" = 1 && -f /etc/apache2/conf-runtime/acme.env ]]; then
+        log "SSL: requesting Let's Encrypt certificate for new domain(s)"
+        ( . /etc/apache2/conf-runtime/acme.env && /usr/local/bin/acme-init.sh ) \
+            >> /var/log/apache2/acme-renew.log 2>&1 &
+    fi
+}
+# _configtest_requests — answer pending configtest requests of the admin UI.
+# Lines from the root-only secret includes are hidden in the returned output.
+_configtest_requests() {
+    local _req _id _res _rc
+    for _req in "$CT_DIR"/configtest-req-*; do
+        [ -e "$_req" ] || continue
+        _id="${_req##*/configtest-req-}"
+        rm -f "$_req"
+        case "$_id" in ''|*[!A-Za-z0-9]*) continue ;; esac
+        _link_ssl_all       # a domain added in sites/ needs its certificate for the test
+        _res="$CT_DIR/configtest-res-$_id"
+        # raw output stays root-only until the protected lines are hidden
+        _rc=$( umask 077; apache2ctl configtest > "$_res.tmp" 2>&1; echo $? )
+        sed -i -E 's#.*conf-runtime/(oidc-passphrase|redis-auth|iam-admin-oidc|oidc-client-|kc-token|geolock-pin).*#[line from a protected file hidden]#' "$_res.tmp"
+        ( umask 077; { echo "rc=$_rc"; cat "$_res.tmp"; } > "$_res.part" )
+        rm -f "$_res.tmp"
+        chgrp www-data "$_res.part"; chmod 0640 "$_res.part"
+        mv -f "$_res.part" "$_res"
+    done
+    # answers nobody collected (request timed out)
+    find "$CT_DIR" -maxdepth 1 -name 'configtest-res-*' -mmin +2 -delete 2>/dev/null
+}
 (
   set +e
   trap 'exit 0' TERM
   # Only the Keycloak redirect-URI sync needs a secret here (service account,
   # or the admin password as legacy fallback).
   _drop_secrets KEYCLOAK_API_CLIENT_SECRET KEYCLOAK_ADMIN_PASS
+  _SSL_QUIET=1
   while true; do
+    _configtest_requests
     if [ -f "$RELOAD_TRIGGER" ]; then
       rm -f "$RELOAD_TRIGGER"
       APID=$(pgrep -o -x apache2 2>/dev/null) || { sleep 1; continue; }
@@ -826,6 +879,7 @@ rm -f "$RELOAD_TRIGGER" 2>/dev/null || true
       sleep 2
       log "Reload requested — syncing Keycloak redirect URIs"
       _kc_register_redirect_uris || log "WARNING: Keycloak redirect URI sync failed (continuing)"
+      _ssl_prepare
       if ! apache2ctl configtest >/dev/null 2>&1; then
         log "ERROR: configtest failed — reload skipped, Apache keeps running with the previous config"
         apache2ctl configtest 2>&1 | grep -v AH02800 | tail -5

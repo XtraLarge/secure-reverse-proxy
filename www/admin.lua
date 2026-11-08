@@ -321,13 +321,27 @@ local function write_file(fpath, content)
   return true, nil
 end
 
--- Run apache2ctl configtest and return (ok, output)
+-- Run apache2ctl configtest and return (ok, output).
+-- The worker (www-data) cannot read the root-only secret includes, so the test runs
+-- in the root listener of the entrypoint: request file in, answer file out.
 local function configtest()
-  local p = io.popen("/usr/sbin/apache2ctl configtest 2>&1")
-  local out = p:read("*a")
-  local ok  = p:close()
-  -- apache2ctl exits 0 on success; pclose returns true on exit 0
-  return (ok == true or ok == 0), out
+  local id = tostring(os.time()) .. tostring(math.random(100000, 999999))
+  local dir = "/run/apache-proxy/"
+  local req, res = dir .. "configtest-req-" .. id, dir .. "configtest-res-" .. id
+  local f = io.open(req, "w")
+  if not f then return false, "Konfigurationstest konnte nicht angefordert werden" end
+  f:close()
+  for _ = 1, 120 do                       -- up to 60 s (a reload in progress delays it)
+    local rf = io.open(res, "r")
+    if rf then
+      local c = rf:read("*a") or ""; rf:close(); os.remove(res)
+      local rc = tonumber(c:match("^rc=(%d+)"))
+      return rc == 0, (c:gsub("^rc=%d+\n", ""))
+    end
+    os.execute("sleep 0.5")
+  end
+  os.remove(req)
+  return false, "Konfigurationstest: keine Antwort vom Container (Zeitüberschreitung)"
 end
 
 local function list_conf_files()
@@ -2751,8 +2765,10 @@ local function show_domain_form(r, pre, errmsg)
   r:puts('<div class="main"><div class="card">')
   r:puts('<h2>Neue Domain anlegen</h2>')
   r:puts('<p style="color:#888;font-size:.85em;margin-bottom:.8em">'
-    .. 'Legt eine neue <code>.conf</code>-Datei in <code>sites/</code> an.<br>'
-    .. 'Eine Admin-VHost-Zeile (admin.DOMAIN) wird automatisch eingefügt.<br>'
+    .. 'Legt eine neue <code>.conf</code>-Datei in <code>sites/</code> an. Der Rahmen erzeugt '
+    .. 'automatisch toc., logout., admin. und geolock. der Domain.<br>'
+    .. 'Zertifikat: Let&#39;s Encrypt, wenn ACME eingerichtet ist, sonst aus <code>ssl/&lt;domain&gt;/</code>; '
+    .. 'bis dahin ein vorl&auml;ufiges selbstsigniertes.<br>'
     .. 'Konfiguration wird vor dem Speichern automatisch getestet.'
     .. '</p>')
   if errmsg then r:puts('<div class="msg err">' .. h(errmsg) .. '</div>') end
@@ -2764,18 +2780,10 @@ local function show_domain_form(r, pre, errmsg)
     .. '<input name=domain value="' .. h(pre.domain or "") .. '" placeholder="example.com" required></div>')
 
   r:puts('<div class="form-row"><label>Admin-Benutzer:</label>'
-    .. '<input name=adminuser value="' .. h(pre.adminuser or "") .. '" placeholder="Hans.Mustermann" required></div>')
+    .. '<input name=adminuser value="' .. h(pre.adminuser or "") .. '" placeholder="alice|bob" required></div>')
 
-  local certs = {{"le","Let\'s Encrypt"},{"self","Self-signed"},{"none","Kein SSL"}}
-  r:puts('<div class="form-row"><label>Zertifikatstyp:</label><select name=certtype>')
-  for _, c in ipairs(certs) do
-    local sel = (pre.certtype == c[1]) and " selected" or ""
-    r:puts('<option value="' .. c[1] .. '"' .. sel .. '>' .. c[2] .. '</option>')
-  end
-  r:puts('</select></div>')
-
-  r:puts('<div class="form-row"><label>TOC-URL:</label>'
-    .. '<input name=tocurl value="' .. h(pre.tocurl or "") .. '" placeholder="https://toc.example.com"></div>')
+  r:puts('<div class="form-row"><label>Standard-Subdomain:</label>'
+    .. '<input name=stddomain value="' .. h(pre.stddomain or "www") .. '" placeholder="www"></div>')
 
   r:puts('<div class="form-row" style="margin-top:1.2em">')
   r:puts('<button class="btn b-save" type=submit>&#10003;&nbsp;Anlegen &amp; Testen</button>&nbsp;')
@@ -2784,22 +2792,21 @@ local function show_domain_form(r, pre, errmsg)
 end
 
 local function do_domain_create(r, p)
-  local domain    = trim(p["domain"]    or "")
+  local domain    = trim(p["domain"]    or ""):lower()
   local adminuser = trim(p["adminuser"] or "")
-  local certtype  = trim(p["certtype"]  or "le")
-  local tocurl    = trim(p["tocurl"]    or "")
+  local stddomain = trim(p["stddomain"] or ""):lower()
+  if stddomain == "" then stddomain = "www" end
 
   if not validate_domain(domain) then
     return show_domain_form(r, p, "Ungültige Domain")
   end
-  if adminuser == "" or adminuser:match("[^a-zA-Z0-9%.@_%-]") then
-    return show_domain_form(r, p, "Ungültiger Admin-Benutzer")
+  -- one or more preferred_username values, pipe-separated
+  if adminuser == "" or adminuser:match("[^a-zA-Z0-9%.@_%-|]") or adminuser:match("^|") or adminuser:match("|$")
+     or adminuser:find("||", 1, true) then
+    return show_domain_form(r, p, "Ungültiger Admin-Benutzer (mehrere mit | trennen)")
   end
-  if certtype ~= "le" and certtype ~= "self" and certtype ~= "none" then
-    certtype = "le"
-  end
-  if tocurl == "" then
-    tocurl = "https://toc." .. domain
+  if not stddomain:match("^[a-z0-9][a-z0-9%-]*$") then
+    return show_domain_form(r, p, "Ungültige Standard-Subdomain")
   end
 
   local fname = domain .. ".conf"
@@ -2809,13 +2816,16 @@ local function do_domain_create(r, p)
     return show_domain_form(r, p, "Domain existiert bereits: " .. fname)
   end
 
+  -- Domain_Init also creates toc., logout., admin. and geolock. of the domain
   local lines = {
     "# " .. domain .. " — Proxy-Konfiguration",
     "",
-    "Use Domain_Init  " .. domain .. "  " .. certtype .. "  " .. tocurl,
-    "Use Admin_VHost  " .. domain .. "  '" .. adminuser .. "'",
+    "USE Domain_Init  " .. domain .. "  " .. stddomain .. "  '" .. adminuser .. "'",
     "",
-    "Use Domain_Final " .. domain,
+    "# Eigene VHosts hier eintragen, z. B.:",
+    "# Use VHost_Proxy_OIDC_User  app  " .. domain .. "  http://10.0.0.5:8080/  '" .. adminuser .. "'",
+    "",
+    "USE Domain_Final " .. domain .. "  " .. stddomain,
   }
 
   local ftmp = fpath .. ".tmp"
@@ -2826,6 +2836,7 @@ local function do_domain_create(r, p)
 
   os.rename(ftmp, fpath)
 
+  -- the configtest (root listener) also links/creates the certificate of the new domain
   local test_ok, test_out = configtest()
   if not test_ok then
     os.remove(fpath)
@@ -2834,7 +2845,8 @@ local function do_domain_create(r, p)
   end
 
   set_pending_reload()
-  show_list(r, "OK: Domain " .. domain .. " angelegt — Konfiguration noch anwenden!")
+  show_list(r, "OK: Domain " .. domain .. " angelegt — Konfiguration noch anwenden! "
+    .. "Danach DNS f\xC3\xBCr *." .. domain .. " auf den Proxy zeigen lassen.")
 end
 
 -- ── Macro expansion (for config view) ───────────────────────────────────────

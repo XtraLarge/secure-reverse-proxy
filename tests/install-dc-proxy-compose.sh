@@ -30,7 +30,7 @@ services:
             - APACHE_SERVER_NAME=\${APACHE_SERVER_NAME:-localhost}
         volumes:
             - /Cert:/etc/apache2/ssl:ro
-            - ${PROJECT_ROOT}/sites-enabled:/etc/apache2/sites-enabled:ro
+            - ${PROJECT_ROOT}/sites-enabled:/etc/apache2/sites:ro
             - ${PROJECT_ROOT}/AddOn:/etc/apache2/AddOn:ro
         security_opt:
             - no-new-privileges:true
