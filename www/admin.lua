@@ -1112,35 +1112,15 @@ local function show_apache_config(r)
     .. h(test_out) .. '</pre>')
   r:puts('</div>')
 
+  -- VHost overview of the configuration under test (as www-data, -D ADMIN_CONFIGTEST:
+  -- secret includes skipped). mod_info is no longer loaded — it showed every directive
+  -- including the secrets to anyone who could reach it.
   r:puts('<div class="card">')
-  local p = io.popen("curl -s --max-time 30 'http://127.0.0.1:81/server-info?config' 2>&1")
-  local raw = p:read("*a")
+  local p = io.popen("timeout 30 /usr/sbin/apache2ctl -S -D ADMIN_CONFIGTEST 2>&1")
+  local clean = p:read("*a") or ""
   p:close()
-  -- Each directive is in a <dd>; insert newline at </dd> so every line is separate
-  local txt = raw:gsub('</dd>', '\n')
-                 :gsub('</dt>', '\n')
-                 :gsub('<br[^>]*>', '\n')
-  -- Strip remaining HTML tags
-  txt = txt:gsub('<[^>]+>', '')
-  -- Decode HTML entities (&amp; last to avoid double-decoding)
-  txt = txt:gsub('&nbsp;',  ' ')
-           :gsub('&quot;',  '"')
-           :gsub('&apos;',  "'")
-           :gsub('&lt;',    '<')
-           :gsub('&gt;',    '>')
-           :gsub('&amp;',   '&')
-  -- Keep only lines with a line-number prefix ("  87: " or "    : "); all other lines
-  -- are mod_info metadata headers (In file:, Configuration:, etc.)
-  local lines = {}
-  for line in txt:gmatch('[^\n]*') do
-    local directive = line:match('^%s*%d*:%s?(.*)$')
-    if directive then
-      lines[#lines+1] = directive
-    end
-  end
-  local clean = table.concat(lines, '\n')
   r:puts('<div>')
-  r:puts('<h2>Effektive Konfiguration <button class="btn b-cfg" onclick="copyPre(this)" style="font-size:.8em">Copy</button></h2>')
+  r:puts('<h2>VHost-\xC3\x9Cbersicht <button class="btn b-cfg" onclick="copyPre(this)" style="font-size:.8em">Copy</button></h2>')
   r:puts('<pre style="background:#1a1a2e;padding:1em;border-radius:4px;overflow:auto;font-size:.82em;max-height:70vh">'
     .. h(clean) .. '</pre>')
   r:puts('</div>')

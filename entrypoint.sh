@@ -810,6 +810,18 @@ SNAP_DIR="/run/apache2/cfg"
 _build_snapshot() {
     local _new="${SNAP_DIR}.new" _old="${SNAP_DIR}.old" _d _out
     rm -rf -- "$_new" "$_old"
+    # a hard link could point at a root-only file (the copy would carry its content);
+    # normally fs.protected_hardlinks prevents creating one, this also covers other hosts
+    _out="$(find /etc/apache2/sites /etc/apache2/AddOn /etc/apache2/config -type f -links +1 2>/dev/null | head -5)"
+    if [ -n "$_out" ]; then
+        printf '%s\n' "$_out" | while IFS= read -r _l; do log "config guard: $_l: hard links are not allowed here"; done
+        return 1
+    fi
+    # size limit: the copy lives in /run (memory); a huge file must not fill it
+    if [ "$(du -sk /etc/apache2/sites /etc/apache2/AddOn /etc/apache2/config 2>/dev/null | awk '{s+=$1} END {print s+0}')" -gt 20480 ]; then
+        log "config guard: sites/, AddOn/ and config/ exceed 20 MB together — not accepted"
+        return 1
+    fi
     mkdir -m 0700 "$_new" || return 1
     for _d in sites AddOn config; do
         if [ -d "/etc/apache2/$_d" ]; then
@@ -817,6 +829,20 @@ _build_snapshot() {
         else
             mkdir "$_new/$_d"
         fi
+    done
+    # only what the configuration actually includes stays in the copy: sites/*.conf
+    # (top level) and the config files the macros include — everything else would be
+    # unchecked content root could be pointed at
+    find "$_new/sites" -mindepth 1 \( -type d -o ! -name '*.conf' \) -prune -exec rm -rf -- {} + 2>/dev/null
+    find "$_new/config" -mindepth 1 ! -type d -print0 2>/dev/null | while IFS= read -r -d '' _f; do
+        case "${_f#"$_new/config/"}" in
+            extra-countries.conf) ;;
+            oidc-clients/*/*) rm -rf -- "$_f" ;;
+            oidc-clients/*.conf) ;;
+            geolock/*/*/*) rm -rf -- "$_f" ;;
+            geolock/*/*.conf) ;;
+            *) rm -rf -- "$_f" ;;
+        esac
     done
     find "$_new/AddOn" -type f -print0 2>/dev/null | xargs -0 -r sed -i -E \
         "s#^([[:space:]]*Include(Optional)?[[:space:]]+\"?)/etc/apache2/(AddOn|config)/#\\1${SNAP_DIR}/\\3/#I"

@@ -51,15 +51,26 @@ fi
 
 # ── Root domain list ──────────────────────────────────────────────────────────
 
+# Site names are read from the checked snapshot (see entrypoint.sh _build_snapshot), not
+# from the www-data-writable live files, and must be plain names before they reach
+# certbot arguments and file paths.
+SITES_SNAP=/run/apache2/cfg/sites
+NAME_RE='^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$'
 if [[ -n "${ACME_DOMAINS:-}" ]]; then
     IFS=',' read -ra ROOT_DOMAINS <<< "$ACME_DOMAINS"
 else
     mapfile -t ROOT_DOMAINS < <(
         grep -rih "^[[:space:]]*use[[:space:]]\+domain_init" \
-            /etc/apache2/sites/ 2>/dev/null \
+            "$SITES_SNAP"/ 2>/dev/null \
         | awk '{print $3}' | tr -d "'" | sort -u
     )
 fi
+_valid=()
+for _d in "${ROOT_DOMAINS[@]+"${ROOT_DOMAINS[@]}"}"; do
+    if [[ "$_d" =~ $NAME_RE && "$_d" == *.* ]]; then _valid+=("$_d")
+    else log "WARNING: skipping invalid domain name '${_d}'"; fi
+done
+ROOT_DOMAINS=("${_valid[@]+"${_valid[@]}"}")
 
 [[ ${#ROOT_DOMAINS[@]} -eq 0 ]] && { log "No domains found — skipping"; exit 0; }
 
@@ -69,13 +80,13 @@ fi
 
 get_san_list() {
     local root="$1"
-    local -a subs=("$root" "toc.${root}" "logout.${root}" "admin.${root}")
+    local -a subs=("$root" "toc.${root}" "logout.${root}" "admin.${root}" "geolock.${root}")
 
     while IFS= read -r name; do
-        [[ -n "$name" ]] && subs+=("${name}.${root}")
+        [[ -n "$name" && "$name" =~ $NAME_RE ]] && subs+=("${name}.${root}")
     done < <(
         grep -rih "^[[:space:]]*use[[:space:]]\+vhost_" \
-            /etc/apache2/sites/ 2>/dev/null \
+            "$SITES_SNAP"/ 2>/dev/null \
         | awk -v dom="${root}" 'tolower($4) == tolower(dom) {print $3}' \
         | sort -u
     )

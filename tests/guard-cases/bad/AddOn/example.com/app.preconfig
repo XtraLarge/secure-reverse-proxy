@@ -24,5 +24,7 @@ Include /etc/apache2/sites/evil.conf
 Include relative/path.conf
 ServerName ${OIDC_CLIENT_SECRET}
 Use OIDCBASE evil ../../../tmp
+SetHandler server-info
+AddHandler server-status .st
 Load\
 Module evil_module /x.so

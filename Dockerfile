@@ -42,7 +42,6 @@ RUN a2enmod \
     remoteip \
     socache_shmcb \
     substitute \
-    info \
     && a2dissite 000-default default-ssl 2>/dev/null || true
 
 # Macro definitions — static base macros (LOGGING, SSL, PROXY, etc.)
@@ -56,7 +55,9 @@ COPY conf/sites-available/ /etc/apache2/sites-available/
 
 COPY conf/ports.conf /etc/apache2/ports.conf
 
-RUN a2enconf server-security cfgroot macro cgid-runtime sites acme-webroot logging apacheinfo-internal tuning geoip
+RUN a2enconf server-security cfgroot macro cgid-runtime sites acme-webroot logging tuning geoip \
+ && a2dismod -f info status 2>/dev/null || true
+# mod_info would show every directive incl. the secret includes; mod_status the request lines
 
 COPY conf/rsyslog/  /etc/rsyslog.d/
 COPY conf/logrotate/ /etc/logrotate.d/

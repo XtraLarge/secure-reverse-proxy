@@ -800,6 +800,17 @@ else
 fi
 rm -rf "$GS_DIR" 2>/dev/null || true
 
+echo ""
+echo "[42] no mod_info / mod_status, no internal server-info listener"
+# The entrypoint logs to stdout before running the command, so only the
+# marked result line is evaluated.
+MODS="$(docker run --rm "${BASE_ARGS[@]}" "$IMAGE" sh -c 'echo "GUARD42 $(apache2ctl -M 2>/dev/null | grep -cE "info_module|status_module") $(grep -c "127.0.0.1:81" /etc/apache2/ports.conf)"' 2>/dev/null | grep '^GUARD42 ' | tail -1)"
+if [ "$MODS" = "GUARD42 0 0" ]; then
+    pass "mod_info and mod_status not loaded, port 81 not configured"
+else
+    fail "server-info/status still possible (modules, listen: $MODS)"
+fi
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════════════════════

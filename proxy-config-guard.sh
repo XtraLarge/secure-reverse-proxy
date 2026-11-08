@@ -83,6 +83,8 @@ check_addon_line() {
         fi
     elif [[ "$l" =~ ^(User|Group|ServerRoot|PidFile|Mutex|ScriptSock|CoreDumpDirectory|DefaultRuntimeDir|ScoreBoardFile|SSLPassPhraseDialog|SSLCryptoDevice|SSLOpenSSLConfCmd|SSLSessionCache|SSLStaplingCache|LuaPackagePath|LuaPackageCPath|DavLockDB|BalancerPersist)([[:space:]]|$) ]]; then
         report "$where: ${BASH_REMATCH[1]} is not allowed here"
+    elif [[ "$l" =~ ^(SetHandler|AddHandler)[[:space:]].*(server-info|server-status|balancer-manager|ldap-status) ]]; then
+        report "$where: ${BASH_REMATCH[2]} is not allowed here"
     elif [[ "$l" =~ ^SSLRandomSeed[[:space:]].*exec: ]]; then
         report "$where: SSLRandomSeed exec: is not allowed here"
     elif [[ "$l" =~ ^RewriteMap[[:space:]].*(prg|dbd|fastdbd): ]]; then
@@ -115,6 +117,11 @@ scan_file() {   # $1 file, $2 checker, $3 extra arg
         buf+="$line"
         l="${buf#"${buf%%[![:space:]]*}"}"; buf=""
         case "$l" in ''|'#'*) continue ;; esac
+        # Apache splits words at every whitespace incl. VT/FF; the checks here don't —
+        # control characters (except tab) are therefore rejected outright
+        if [[ "$l" == *[$'\x01'-$'\x08'$'\x0a'-$'\x1f'$'\x7f']* ]]; then
+            report "$f:$start: control characters are not allowed here"; continue
+        fi
         "$checker" "$f:$start" "$l" "$extra"
     done < "$f"
     if [ -n "$buf" ]; then
