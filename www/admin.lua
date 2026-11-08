@@ -325,7 +325,10 @@ end
 -- The worker (www-data) cannot read the root-only secret includes, so the test runs
 -- in the root listener of the entrypoint: request file in, answer file out.
 local function configtest()
-  local id = tostring(os.time()) .. tostring(math.random(100000, 999999))
+  -- unique per request (kernel random UUID, hex only)
+  local uf = io.open("/proc/sys/kernel/random/uuid", "r")
+  local id = ((uf and uf:read("*l")) or (tostring(os.time()) .. tostring(math.random(1e9)))):gsub("[^%w]", "")
+  if uf then uf:close() end
   local dir = "/run/apache-proxy/"
   local req, res = dir .. "configtest-req-" .. id, dir .. "configtest-res-" .. id
   local f = io.open(req, "w")
@@ -353,7 +356,8 @@ local function validate_name(s)
 end
 
 local function validate_domain(s)
-  return trim(s):match("^[a-zA-Z0-9][a-zA-Z0-9%.%-]+%.[a-zA-Z]+$") ~= nil
+  -- top-level domain of at least two letters (same rule as the certificate handling)
+  return trim(s):match("^[a-zA-Z0-9][a-zA-Z0-9%.%-]+%.[a-zA-Z][a-zA-Z]+$") ~= nil
 end
 
 local function validate_dest(s)

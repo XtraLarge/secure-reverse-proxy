@@ -553,6 +553,11 @@ fi
 # Keeping this separate from the ssl/ volume means ssl/ can be mounted :ro.
 # acme-init.sh updates the symlinks after obtaining a real cert, then reloads.
 ACTIVE_SSL_DIR="/run/apache2/active-ssl"
+# Root-only scratch dir: root never creates or edits files inside the www-data-writable
+# /run/apache-proxy (a planted symlink there would redirect root's writes). Results are
+# built here and moved into place with mv -T, which replaces a symlink instead of following it.
+PRIV_DIR="/run/apache-proxy-private"
+mkdir -p "$PRIV_DIR"; chmod 0700 "$PRIV_DIR"
 mkdir -p "$ACTIVE_SSL_DIR"
 
 # _link_ssl_all — link every domain used in sites/ to its certificate.
@@ -563,10 +568,14 @@ mkdir -p "$ACTIVE_SSL_DIR"
 _link_ssl_all() {
     local _dom _active
     _SSL_NEW_PLACEHOLDER=0
+    # domains = 1st argument of Domain_Init*, 2nd argument of VHost_* (only *.conf,
+    # the files Apache includes); backend host names are no domains of their own
     mapfile -t _ALL_DOMAINS < <(
-        grep -rih '^[[:space:]]*use[[:space:]]' /etc/apache2/sites/ 2>/dev/null \
-        | awk '{print $3; print $4}' \
-        | grep -E '^[A-Za-z0-9]([A-Za-z0-9-]*\.)+[A-Za-z]{2,}$' \
+        cat /etc/apache2/sites/*.conf 2>/dev/null \
+        | awk 'tolower($1) == "use" { m = tolower($2)
+               if (m ~ /^domain_init/) print $3; else if (m ~ /^vhost_/) print $4 }' \
+        | tr 'A-Z' 'a-z' \
+        | grep -E '^[a-z0-9]([a-z0-9-]*\.)+[a-z]{2,}$' \
         | sort -u
     )
     for _dom in "${_ALL_DOMAINS[@]+"${_ALL_DOMAINS[@]}"}"; do
@@ -583,9 +592,11 @@ _link_ssl_all() {
             ln -sfn "${APACHE_CONFDIR}/ssl/${_dom}/key.pem"       "${_active}/key.pem"
             ln -sfn "${APACHE_CONFDIR}/ssl/${_dom}/fullchain.pem" "${_active}/fullchain.pem"
             [ "${_SSL_QUIET:-0}" = 1 ] || log "SSL: ${_dom} → ssl/ volume"
-        elif [[ -e "${_active}/cert.pem" ]]; then
-            :   # placeholder from an earlier run — keep it
+        elif [[ -f "${_active}/cert.pem" && ! -L "${_active}/cert.pem" ]] \
+             && openssl x509 -checkend 86400 -noout -in "${_active}/cert.pem" >/dev/null 2>&1; then
+            :   # placeholder from an earlier run, still valid for > 1 day — keep it
         else
+            rm -f "${_active}/cert.pem" "${_active}/key.pem" "${_active}/fullchain.pem"
             # A temporary self-signed certificate keeps Apache startable instead of failing
             # on a missing file. With ACME the real certificate replaces it shortly.
             if [[ -n "${ACME_EMAIL:-}" ]]; then
@@ -602,10 +613,12 @@ _link_ssl_all() {
             chmod 644 "${_active}/cert.pem"
             cp "${_active}/cert.pem" "${_active}/fullchain.pem"
             _SSL_NEW_PLACEHOLDER=1
+            : > "$PRIV_DIR/acme-pending"   # the next reload requests the real certificate
         fi
     done
 }
 _link_ssl_all
+rm -f "$PRIV_DIR/acme-pending"   # at start acme-init runs anyway (see below)
 
 # ── Secret-free environment for background daemons ───────────────────────────
 # Secrets are unset right before exec, but daemons started earlier would keep
@@ -821,11 +834,6 @@ RELOAD_TRIGGER="/run/apache-proxy/reload-requested"
 # configtest for the admin UI: admin.lua (www-data) cannot read the root-only secret
 # includes, so it drops configtest-req-<id> and root answers with configtest-res-<id>.
 CT_DIR="/run/apache-proxy"
-# Root-only scratch dir: root never creates or edits files inside the www-data-writable
-# /run/apache-proxy (a planted symlink there would redirect root's writes). Results are
-# built here and moved into place with mv -T, which replaces a symlink instead of following it.
-PRIV_DIR="/run/apache-proxy-private"
-mkdir -p "$PRIV_DIR"; chmod 0700 "$PRIV_DIR"
 mkdir -p /run/apache-proxy
 # Dir is root-owned but group-writable by www-data: admin.lua (www-data worker)
 # creates the trigger via the group bit, while root (the owner) can delete it.
@@ -840,7 +848,10 @@ rm -f "$RELOAD_TRIGGER" "$CT_DIR"/configtest-req-* "$CT_DIR"/configtest-res-* 2>
 # reloads Apache itself once the certificate is there).
 _ssl_prepare() {
     _link_ssl_all
-    if [[ "${_SSL_NEW_PLACEHOLDER:-0}" = 1 && -f /etc/apache2/conf-runtime/acme.env ]]; then
+    # placeholder created now or by an earlier configtest of the admin UI
+    if [[ -f "$PRIV_DIR/acme-pending" ]]; then
+        rm -f "$PRIV_DIR/acme-pending"
+        [[ -f /etc/apache2/conf-runtime/acme.env ]] || return 0   # no ACME configured
         log "SSL: requesting Let's Encrypt certificate for new domain(s)"
         ( . /etc/apache2/conf-runtime/acme.env && /usr/local/bin/acme-init.sh ) \
             >> /var/log/apache2/acme-renew.log 2>&1 &
@@ -849,29 +860,41 @@ _ssl_prepare() {
 # _configtest_requests — answer pending configtest requests of the admin UI.
 # Lines from the root-only secret includes are hidden in the returned output.
 _configtest_requests() {
-    local _req _id _res _rc
+    local _req _id _res _rc _n=0
     for _req in "$CT_DIR"/configtest-req-*; do
-        [ -e "$_req" ] || continue
+        [ -e "$_req" ] || [ -L "$_req" ] || continue
+        if [ -L "$_req" ] || [ ! -f "$_req" ]; then
+            rm -rf -- "$_req"; continue     # only plain files are requests
+        fi
         _id="${_req##*/configtest-req-}"
-        rm -f "$_req"
+        rm -f -- "$_req"
         case "$_id" in ''|*[!A-Za-z0-9]*) continue ;; esac
+        _n=$((_n + 1)); [ "$_n" -le 5 ] || continue   # rest waits for the next round
         _link_ssl_all       # a domain added in sites/ needs its certificate for the test
         _res="$CT_DIR/configtest-res-$_id"
         # raw output stays root-only (private dir) until the protected lines are hidden
         _rc=$( umask 077; apache2ctl configtest > "$PRIV_DIR/ct.tmp" 2>&1; echo $? )
-        # Only lines whose every file path is one www-data may read anyway are returned.
-        # Apache quotes the offending line of a broken file; a site file (writable by
-        # www-data) could Include a root-only file and get its content echoed back.
-        awk '{
-            line = $0; ok = 1; rest = $0
-            while (match(rest, /\/[A-Za-z0-9._\/-]+/)) {
-                p = substr(rest, RSTART, RLENGTH); rest = substr(rest, RSTART + RLENGTH)
-                if (p !~ /^\/etc\/apache2\/(sites|AddOn|macro|config|conf-enabled|conf-available|mods-enabled|mods-available)\// \
-                    && p !~ /^\/etc\/apache2\/(apache2|ports)\.conf$/ \
-                    && p !~ /^\/(var\/www|var\/log\/apache2)\//) { ok = 0; break }
-            }
-            print (ok ? line : "[message about a file outside the admin scope hidden]")
-        }' "$PRIV_DIR/ct.tmp" > "$PRIV_DIR/ct.flt" && mv -f "$PRIV_DIR/ct.flt" "$PRIV_DIR/ct.tmp"
+        # A line is returned only if www-data could read every file it names itself.
+        # Apache quotes the offending line of a broken file, and a site file (writable by
+        # www-data) could Include a root-only file directly, via ../ or via a symlink.
+        # test -r runs as www-data, so symlinks and .. are resolved with its rights.
+        # Apache may print the message itself on the line after "Syntax error on line N
+        # of <file>:" — lines following a hidden one stay hidden until a new message starts.
+        : > "$PRIV_DIR/ct.flt"
+        _hiding=0
+        while IFS= read -r _line || [ -n "$_line" ]; do
+            if [ "$_hiding" = 1 ] && ! printf '%s' "$_line" | grep -qE "^(AH[0-9]{5}|apache2:|Syntax OK|Action '|The Apache error log)"; then
+                echo "[message about a file the admin UI may not read hidden]" >> "$PRIV_DIR/ct.flt"
+                continue
+            fi
+            _hiding=0; _show=1
+            for _p in $(printf '%s\n' "$_line" | grep -oE '/[A-Za-z0-9._/-]+'); do
+                su -s /bin/sh www-data -c 'test -r "$1"' _ "$_p" 2>/dev/null || { _show=0; break; }
+            done
+            if [ "$_show" = 1 ]; then printf '%s\n' "$_line"
+            else _hiding=1; echo "[message about a file the admin UI may not read hidden]"; fi >> "$PRIV_DIR/ct.flt"
+        done < "$PRIV_DIR/ct.tmp"
+        mv -f "$PRIV_DIR/ct.flt" "$PRIV_DIR/ct.tmp"
         ( umask 077; { echo "rc=$_rc"; cat "$PRIV_DIR/ct.tmp"; } > "$PRIV_DIR/ct.part" )
         rm -f "$PRIV_DIR/ct.tmp"
         chgrp www-data "$PRIV_DIR/ct.part"; chmod 0640 "$PRIV_DIR/ct.part"

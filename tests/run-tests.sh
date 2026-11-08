@@ -464,6 +464,23 @@ docker rm -f "$LEAK_CID" >/dev/null 2>&1 || true
 rm -rf "$LEAK_SITES"
 
 echo ""
+echo "[27f] planted symlinks / directories in the run dir do not redirect root's writes"
+KEY=/etc/apache2/conf-runtime/oidc-passphrase.key
+SUM_BEFORE="$(docker exec "$CAP_CID" sh -c "stat -c '%a %U %G' $KEY; md5sum < $KEY")"
+docker exec -u www-data "$CAP_CID" sh -c "ln -s $KEY /run/apache-proxy/configtest-res-ci4713; \
+  mkdir /run/apache-proxy/configtest-req-cidir; ln -s $KEY /run/apache-proxy/configtest-req-cilink; \
+  touch /run/apache-proxy/configtest-req-ci4713" 2>/dev/null || true
+sleep 6
+SUM_AFTER="$(docker exec "$CAP_CID" sh -c "stat -c '%a %U %G' $KEY; md5sum < $KEY")"
+LEFT="$(docker exec "$CAP_CID" sh -c 'ls -d /run/apache-proxy/configtest-req-* 2>/dev/null' || true)"
+RES_IS_FILE="$(docker exec "$CAP_CID" sh -c '[ -f /run/apache-proxy/configtest-res-ci4713 ] && [ ! -L /run/apache-proxy/configtest-res-ci4713 ] && echo yes' || true)"
+if [ -n "$SUM_BEFORE" ] && [ "$SUM_BEFORE" = "$SUM_AFTER" ] && [ -z "$LEFT" ] && [ "$RES_IS_FILE" = yes ]; then
+    pass "protected file unchanged, symlink replaced by the answer, bogus requests removed"
+else
+    fail "planted symlink/dir changed something (key unchanged: $([ "$SUM_BEFORE" = "$SUM_AFTER" ] && echo yes || echo NO), left: $LEFT, answer is file: $RES_IS_FILE)"
+fi
+
+echo ""
 echo "[27c] Admin-GUI reload trigger reloads gracefully (no container restart)"
 MPID_BEFORE="$(docker exec "$CAP_CID" pgrep -o -x apache2 2>/dev/null || true)"
 docker exec "$CAP_CID" touch /run/apache-proxy/reload-requested 2>/dev/null || true
