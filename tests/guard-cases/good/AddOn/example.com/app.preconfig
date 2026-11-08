@@ -1,0 +1,17 @@
+# vhost directives an admin may need
+Include /etc/apache2/conf-runtime/internal-networks.conf
+Include /etc/apache2/conf-runtime/iam-admin-oidc.conf
+IncludeOptional /etc/apache2/AddOn/.oidc/example.com.conf
+Use OIDCBASE iam example.com
+Use REWRITE2URL "https://www.example.com/"
+ErrorLog /var/log/apache2/app-error.log
+CustomLog /var/log/apache2/app.log combined
+ErrorLog syslog:local1
+RewriteMap lc int:tolower
+<Location /admin>
+  Require valid-user
+</Location>
+SSLProxyVerify none
+RequestHeader unset OIDC_access_token
+ProxyPassMatch ^/api/websocket ws://10.0.0.7:8123/api/websocket
+# LoadModule in a comment is fine
