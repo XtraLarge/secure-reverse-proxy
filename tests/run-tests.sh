@@ -428,6 +428,42 @@ else
 fi
 
 echo ""
+echo "[27e] configtest answer does not echo root-only files included from a site file"
+# A site file is writable by www-data. If it includes a root-only file, Apache quotes
+# that file's first line in the error; the answer to www-data must not contain it.
+LEAK_SITES=$(mktemp -d)
+cp "$SCRIPT_DIR/sites-enabled/"*.conf "$LEAK_SITES/"
+chmod -R a+rwX "$LEAK_SITES"
+LEAK_CID="$(docker run -d --rm \
+    --cap-drop ALL --cap-add CHOWN --cap-add KILL --cap-add NET_BIND_SERVICE \
+    --cap-add SETGID --cap-add SETUID \
+    -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" \
+    -v "$LEAK_SITES:/etc/apache2/sites" \
+    -v "$SCRIPT_DIR/AddOn:/etc/apache2/AddOn:ro" \
+    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
+    -e OIDC_CLIENT_SECRET=x -e OIDC_CRYPTO_PASSPHRASE=x \
+    -e OIDC_COOKIE_DOMAIN=test.example.com -e REDIS_HOST=127.0.0.1 \
+    "$IMAGE")"
+sleep 8
+docker exec -u www-data "$LEAK_CID" sh -c 'echo "Include /etc/shadow" > /etc/apache2/sites/zz-leak.conf' 2>/dev/null || true
+docker exec -u www-data "$LEAK_CID" touch /run/apache-proxy/configtest-req-ci4712 2>/dev/null || true
+LEAK_RES=""
+for _ in $(seq 1 20); do
+    sleep 1
+    LEAK_RES="$(docker exec -u www-data "$LEAK_CID" cat /run/apache-proxy/configtest-res-ci4712 2>/dev/null || true)"
+    [ -n "$LEAK_RES" ] && break
+done
+if [ -n "$LEAK_RES" ] && [ "$(echo "$LEAK_RES" | head -1)" != "rc=0" ] \
+   && ! echo "$LEAK_RES" | grep -q "root:" && echo "$LEAK_RES" | grep -q "hidden"; then
+    pass "configtest failed as expected and the included root-only content is hidden"
+else
+    fail "configtest answer leaks content of a root-only file (or no answer)"
+    echo "$LEAK_RES" | sed 's/root:[^ ]*/root:<cut>/' | tail -5
+fi
+docker rm -f "$LEAK_CID" >/dev/null 2>&1 || true
+rm -rf "$LEAK_SITES"
+
+echo ""
 echo "[27c] Admin-GUI reload trigger reloads gracefully (no container restart)"
 MPID_BEFORE="$(docker exec "$CAP_CID" pgrep -o -x apache2 2>/dev/null || true)"
 docker exec "$CAP_CID" touch /run/apache-proxy/reload-requested 2>/dev/null || true

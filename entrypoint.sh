@@ -821,6 +821,11 @@ RELOAD_TRIGGER="/run/apache-proxy/reload-requested"
 # configtest for the admin UI: admin.lua (www-data) cannot read the root-only secret
 # includes, so it drops configtest-req-<id> and root answers with configtest-res-<id>.
 CT_DIR="/run/apache-proxy"
+# Root-only scratch dir: root never creates or edits files inside the www-data-writable
+# /run/apache-proxy (a planted symlink there would redirect root's writes). Results are
+# built here and moved into place with mv -T, which replaces a symlink instead of following it.
+PRIV_DIR="/run/apache-proxy-private"
+mkdir -p "$PRIV_DIR"; chmod 0700 "$PRIV_DIR"
 mkdir -p /run/apache-proxy
 # Dir is root-owned but group-writable by www-data: admin.lua (www-data worker)
 # creates the trigger via the group bit, while root (the owner) can delete it.
@@ -852,13 +857,25 @@ _configtest_requests() {
         case "$_id" in ''|*[!A-Za-z0-9]*) continue ;; esac
         _link_ssl_all       # a domain added in sites/ needs its certificate for the test
         _res="$CT_DIR/configtest-res-$_id"
-        # raw output stays root-only until the protected lines are hidden
-        _rc=$( umask 077; apache2ctl configtest > "$_res.tmp" 2>&1; echo $? )
-        sed -i -E 's#.*conf-runtime/(oidc-passphrase|redis-auth|iam-admin-oidc|oidc-client-|kc-token|geolock-pin).*#[line from a protected file hidden]#' "$_res.tmp"
-        ( umask 077; { echo "rc=$_rc"; cat "$_res.tmp"; } > "$_res.part" )
-        rm -f "$_res.tmp"
-        chgrp www-data "$_res.part"; chmod 0640 "$_res.part"
-        mv -f "$_res.part" "$_res"
+        # raw output stays root-only (private dir) until the protected lines are hidden
+        _rc=$( umask 077; apache2ctl configtest > "$PRIV_DIR/ct.tmp" 2>&1; echo $? )
+        # Only lines whose every file path is one www-data may read anyway are returned.
+        # Apache quotes the offending line of a broken file; a site file (writable by
+        # www-data) could Include a root-only file and get its content echoed back.
+        awk '{
+            line = $0; ok = 1; rest = $0
+            while (match(rest, /\/[A-Za-z0-9._\/-]+/)) {
+                p = substr(rest, RSTART, RLENGTH); rest = substr(rest, RSTART + RLENGTH)
+                if (p !~ /^\/etc\/apache2\/(sites|AddOn|macro|config|conf-enabled|conf-available|mods-enabled|mods-available)\// \
+                    && p !~ /^\/etc\/apache2\/(apache2|ports)\.conf$/ \
+                    && p !~ /^\/(var\/www|var\/log\/apache2)\//) { ok = 0; break }
+            }
+            print (ok ? line : "[message about a file outside the admin scope hidden]")
+        }' "$PRIV_DIR/ct.tmp" > "$PRIV_DIR/ct.flt" && mv -f "$PRIV_DIR/ct.flt" "$PRIV_DIR/ct.tmp"
+        ( umask 077; { echo "rc=$_rc"; cat "$PRIV_DIR/ct.tmp"; } > "$PRIV_DIR/ct.part" )
+        rm -f "$PRIV_DIR/ct.tmp"
+        chgrp www-data "$PRIV_DIR/ct.part"; chmod 0640 "$PRIV_DIR/ct.part"
+        mv -fT "$PRIV_DIR/ct.part" "$_res" 2>/dev/null || rm -f "$PRIV_DIR/ct.part"
     done
     # answers nobody collected (request timed out)
     find "$CT_DIR" -maxdepth 1 -name 'configtest-res-*' -mmin +2 -delete 2>/dev/null
