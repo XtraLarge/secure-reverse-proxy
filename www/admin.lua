@@ -321,9 +321,17 @@ local function write_file(fpath, content)
   return true, nil
 end
 
--- Run apache2ctl configtest and return (ok, output)
+-- Run the config guard and apache2ctl configtest as www-data, return (ok, output).
+-- The secret includes are root-only; -D ADMIN_CONFIGTEST skips exactly those, so the
+-- test only reads what www-data may read anyway (no secret can leak into the output).
 local function configtest()
-  local p = io.popen("/usr/sbin/apache2ctl configtest 2>&1")
+  local p = io.popen("timeout 30 /usr/local/bin/proxy-config-guard.sh 2>&1")
+  local gout = p:read("*a") or ""
+  local gok = p:close()
+  if not (gok == true or gok == 0) then
+    return false, "Nicht erlaubte Direktiven (Sicherheitspr\xC3\xBCfung):\n" .. gout
+  end
+  p = io.popen("timeout 60 /usr/sbin/apache2ctl -t -D ADMIN_CONFIGTEST 2>&1")
   local out = p:read("*a")
   local ok  = p:close()
   -- apache2ctl exits 0 on success; pclose returns true on exit 0
@@ -339,7 +347,8 @@ local function validate_name(s)
 end
 
 local function validate_domain(s)
-  return trim(s):match("^[a-zA-Z0-9][a-zA-Z0-9%.%-]+%.[a-zA-Z]+$") ~= nil
+  -- top-level domain of at least two letters (same rule as the certificate handling)
+  return trim(s):match("^[a-zA-Z0-9][a-zA-Z0-9%.%-]+%.[a-zA-Z][a-zA-Z]+$") ~= nil
 end
 
 local function validate_dest(s)
@@ -1103,35 +1112,15 @@ local function show_apache_config(r)
     .. h(test_out) .. '</pre>')
   r:puts('</div>')
 
+  -- VHost overview of the configuration under test (as www-data, -D ADMIN_CONFIGTEST:
+  -- secret includes skipped). mod_info is no longer loaded — it showed every directive
+  -- including the secrets to anyone who could reach it.
   r:puts('<div class="card">')
-  local p = io.popen("curl -s --max-time 30 'http://127.0.0.1:81/server-info?config' 2>&1")
-  local raw = p:read("*a")
+  local p = io.popen("timeout 30 /usr/sbin/apache2ctl -S -D ADMIN_CONFIGTEST 2>&1")
+  local clean = p:read("*a") or ""
   p:close()
-  -- Each directive is in a <dd>; insert newline at </dd> so every line is separate
-  local txt = raw:gsub('</dd>', '\n')
-                 :gsub('</dt>', '\n')
-                 :gsub('<br[^>]*>', '\n')
-  -- Strip remaining HTML tags
-  txt = txt:gsub('<[^>]+>', '')
-  -- Decode HTML entities (&amp; last to avoid double-decoding)
-  txt = txt:gsub('&nbsp;',  ' ')
-           :gsub('&quot;',  '"')
-           :gsub('&apos;',  "'")
-           :gsub('&lt;',    '<')
-           :gsub('&gt;',    '>')
-           :gsub('&amp;',   '&')
-  -- Keep only lines with a line-number prefix ("  87: " or "    : "); all other lines
-  -- are mod_info metadata headers (In file:, Configuration:, etc.)
-  local lines = {}
-  for line in txt:gmatch('[^\n]*') do
-    local directive = line:match('^%s*%d*:%s?(.*)$')
-    if directive then
-      lines[#lines+1] = directive
-    end
-  end
-  local clean = table.concat(lines, '\n')
   r:puts('<div>')
-  r:puts('<h2>Effektive Konfiguration <button class="btn b-cfg" onclick="copyPre(this)" style="font-size:.8em">Copy</button></h2>')
+  r:puts('<h2>VHost-\xC3\x9Cbersicht <button class="btn b-cfg" onclick="copyPre(this)" style="font-size:.8em">Copy</button></h2>')
   r:puts('<pre style="background:#1a1a2e;padding:1em;border-radius:4px;overflow:auto;font-size:.82em;max-height:70vh">'
     .. h(clean) .. '</pre>')
   r:puts('</div>')
@@ -2751,8 +2740,10 @@ local function show_domain_form(r, pre, errmsg)
   r:puts('<div class="main"><div class="card">')
   r:puts('<h2>Neue Domain anlegen</h2>')
   r:puts('<p style="color:#888;font-size:.85em;margin-bottom:.8em">'
-    .. 'Legt eine neue <code>.conf</code>-Datei in <code>sites/</code> an.<br>'
-    .. 'Eine Admin-VHost-Zeile (admin.DOMAIN) wird automatisch eingefügt.<br>'
+    .. 'Legt eine neue <code>.conf</code>-Datei in <code>sites/</code> an. Der Rahmen erzeugt '
+    .. 'automatisch toc., logout., admin. und geolock. der Domain.<br>'
+    .. 'Zertifikat: Let&#39;s Encrypt, wenn ACME eingerichtet ist, sonst aus <code>ssl/&lt;domain&gt;/</code>; '
+    .. 'bis dahin ein vorl&auml;ufiges selbstsigniertes.<br>'
     .. 'Konfiguration wird vor dem Speichern automatisch getestet.'
     .. '</p>')
   if errmsg then r:puts('<div class="msg err">' .. h(errmsg) .. '</div>') end
@@ -2764,18 +2755,10 @@ local function show_domain_form(r, pre, errmsg)
     .. '<input name=domain value="' .. h(pre.domain or "") .. '" placeholder="example.com" required></div>')
 
   r:puts('<div class="form-row"><label>Admin-Benutzer:</label>'
-    .. '<input name=adminuser value="' .. h(pre.adminuser or "") .. '" placeholder="Hans.Mustermann" required></div>')
+    .. '<input name=adminuser value="' .. h(pre.adminuser or "") .. '" placeholder="alice|bob" required></div>')
 
-  local certs = {{"le","Let\'s Encrypt"},{"self","Self-signed"},{"none","Kein SSL"}}
-  r:puts('<div class="form-row"><label>Zertifikatstyp:</label><select name=certtype>')
-  for _, c in ipairs(certs) do
-    local sel = (pre.certtype == c[1]) and " selected" or ""
-    r:puts('<option value="' .. c[1] .. '"' .. sel .. '>' .. c[2] .. '</option>')
-  end
-  r:puts('</select></div>')
-
-  r:puts('<div class="form-row"><label>TOC-URL:</label>'
-    .. '<input name=tocurl value="' .. h(pre.tocurl or "") .. '" placeholder="https://toc.example.com"></div>')
+  r:puts('<div class="form-row"><label>Standard-Subdomain:</label>'
+    .. '<input name=stddomain value="' .. h(pre.stddomain or "www") .. '" placeholder="www"></div>')
 
   r:puts('<div class="form-row" style="margin-top:1.2em">')
   r:puts('<button class="btn b-save" type=submit>&#10003;&nbsp;Anlegen &amp; Testen</button>&nbsp;')
@@ -2783,23 +2766,36 @@ local function show_domain_form(r, pre, errmsg)
   r:puts('</div></form></div></div></body></html>')
 end
 
+-- Ask root (entrypoint listener) to link/create the certificate of a new domain and
+-- wait until it is there, so the configtest can find it.
+local function request_ssl_for(domain)
+  local f = io.open("/run/apache-proxy/ssl-prepare-requested", "w")
+  if f then f:close() end
+  local cert = "/run/apache2/active-ssl/" .. domain .. "/cert.pem"
+  for _ = 1, 30 do
+    local c = io.open(cert, "r")
+    if c then c:close(); return true end
+    os.execute("sleep 0.5")
+  end
+  return false
+end
+
 local function do_domain_create(r, p)
-  local domain    = trim(p["domain"]    or "")
+  local domain    = trim(p["domain"]    or ""):lower()
   local adminuser = trim(p["adminuser"] or "")
-  local certtype  = trim(p["certtype"]  or "le")
-  local tocurl    = trim(p["tocurl"]    or "")
+  local stddomain = trim(p["stddomain"] or ""):lower()
+  if stddomain == "" then stddomain = "www" end
 
   if not validate_domain(domain) then
     return show_domain_form(r, p, "Ungültige Domain")
   end
-  if adminuser == "" or adminuser:match("[^a-zA-Z0-9%.@_%-]") then
-    return show_domain_form(r, p, "Ungültiger Admin-Benutzer")
+  -- one or more preferred_username values, pipe-separated
+  if adminuser == "" or adminuser:match("[^a-zA-Z0-9%.@_%-|]") or adminuser:match("^|") or adminuser:match("|$")
+     or adminuser:find("||", 1, true) then
+    return show_domain_form(r, p, "Ungültiger Admin-Benutzer (mehrere mit | trennen)")
   end
-  if certtype ~= "le" and certtype ~= "self" and certtype ~= "none" then
-    certtype = "le"
-  end
-  if tocurl == "" then
-    tocurl = "https://toc." .. domain
+  if not stddomain:match("^[a-z0-9][a-z0-9%-]*$") then
+    return show_domain_form(r, p, "Ungültige Standard-Subdomain")
   end
 
   local fname = domain .. ".conf"
@@ -2809,13 +2805,16 @@ local function do_domain_create(r, p)
     return show_domain_form(r, p, "Domain existiert bereits: " .. fname)
   end
 
+  -- Domain_Init also creates toc., logout., admin. and geolock. of the domain
   local lines = {
     "# " .. domain .. " — Proxy-Konfiguration",
     "",
-    "Use Domain_Init  " .. domain .. "  " .. certtype .. "  " .. tocurl,
-    "Use Admin_VHost  " .. domain .. "  '" .. adminuser .. "'",
+    "USE Domain_Init  " .. domain .. "  " .. stddomain .. "  '" .. adminuser .. "'",
     "",
-    "Use Domain_Final " .. domain,
+    "# Eigene VHosts hier eintragen, z. B.:",
+    "# Use VHost_Proxy_OIDC_User  app  " .. domain .. "  http://10.0.0.5:8080/  '" .. adminuser .. "'",
+    "",
+    "USE Domain_Final " .. domain .. "  " .. stddomain,
   }
 
   local ftmp = fpath .. ".tmp"
@@ -2826,7 +2825,11 @@ local function do_domain_create(r, p)
 
   os.rename(ftmp, fpath)
 
+  local ssl_ok = request_ssl_for(domain)
   local test_ok, test_out = configtest()
+  if not test_ok and not ssl_ok then
+    test_out = "Zertifikat konnte nicht bereitgestellt werden.\n" .. (test_out or "")
+  end
   if not test_ok then
     os.remove(fpath)
     return show_domain_form(r, p,
@@ -2834,7 +2837,8 @@ local function do_domain_create(r, p)
   end
 
   set_pending_reload()
-  show_list(r, "OK: Domain " .. domain .. " angelegt — Konfiguration noch anwenden!")
+  show_list(r, "OK: Domain " .. domain .. " angelegt — Konfiguration noch anwenden! "
+    .. "Danach DNS f\xC3\xBCr *." .. domain .. " auf den Proxy zeigen lassen.")
 end
 
 -- ── Macro expansion (for config view) ───────────────────────────────────────

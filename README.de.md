@@ -377,6 +377,28 @@ von Preconfigs gelten muss, ausdrücklich auf *an* stellen.
 
 Interne Netze sind nie gesperrt. Ein Preconfig kann die Sperre weiterhin für einzelne Pfade aufheben, z. B. `SetEnvIf Request_URI "^/api/" AllowCountry=1`.
 
+### Was sites/, AddOn/ und config/ enthalten dürfen
+
+Diese Verzeichnisse beschreibt die Admin-Oberfläche (www-data), Apaches Master läuft
+aber als root. Deshalb liest Apache sie nie direkt: Vor jedem Start und Reload kopiert
+der Container sie in einen nur für root lesbaren Schnappschuss (`/run/apache2/cfg`),
+prüft die Kopie mit `proxy-config-guard.sh` und liest erst dann diese Kopie. Eine
+abgewiesene Konfiguration verhindert den Start (fail closed) bzw. den Reload — Apache
+behält dann die bisherige Konfiguration —, die Befunde stehen im Log; die
+Admin-Oberfläche zeigt sie schon vor dem Speichern.
+
+- `sites/*.conf`: nur `Use <makro> …`-Zeilen (und `LogLevel`). Die ersten beiden
+  Makro-Parameter müssen einfache Site-/Domainnamen sein (keine Pfade, kein `..`).
+- `AddOn/`: VHost-Direktiven, aber kein `LoadModule`/`LoadFile`, Logs nur nach
+  `/var/log/apache2/` oder an syslog (keine Pipes), keine `RewriteMap`-Programme, keine
+  SSL-Programmaufrufe, keine Server-Direktiven (`User`, `PidFile`, `Mutex`, …),
+  `Include` nur von anderen AddOn-Dateien und den öffentlichen Runtime-Dateien
+  (`internal-networks.conf`, `internal-env.conf`, `iam-admin-oidc.conf`).
+- `config/`: `oidc-clients/<domain>.conf` nur `OIDC*`-Direktiven,
+  `extra-countries.conf` und `geolock/…` nur `SetEnvIf`.
+- überall: kein `${…}`, kein `Define`/`UnDefine`, keine eigenen `<Macro>`, keine
+  Symlinks oder Sonderdateien.
+
 ### AddOn-Snippets pro VHost
 
 Für Apache-Direktiven pro VHost (SSL-Proxy-Einstellungen, eigene Header,

@@ -391,6 +391,12 @@ else
     > "$REDIS_AUTH_FILE"
 fi
 
+# ── Generate the default client secret include ───────────────────────────────
+# The secret must not be rendered into the macro file: the macro stays readable for
+# the admin UI's configtest (www-data), the secret include is root-only.
+CLIENT_DEFAULT_FILE="/etc/apache2/conf-runtime/oidc-client-default.conf"
+( umask 077; printf 'OIDCClientSecret  %s\n' "${OIDC_CLIENT_SECRET}" > "$CLIENT_DEFAULT_FILE" )
+
 # ── Generate OIDC config include for iam/admin-console protection ────────────
 # Used by AddOn/DOMAIN/iam.preconfig via:
 #   Include /etc/apache2/conf-runtime/iam-admin-oidc.conf
@@ -404,11 +410,11 @@ printf 'OIDCProviderMetadataURL          %s\n'  "${OIDC_PROVIDER_METADATA_URL}"
 printf 'OIDCSSLValidateServer            Off\n'
 printf 'OIDCProviderTokenEndpointAuth    %s\n'  "${OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH}"
 printf 'OIDCClientID                     %s\n'  "${OIDC_CLIENT_ID}"
-printf 'OIDCClientSecret                 %s\n'  "${OIDC_CLIENT_SECRET}"
+printf '<IfDefine !ADMIN_CONFIGTEST>\n  Include /etc/apache2/conf-runtime/oidc-client-default.conf\n</IfDefine>\n'
 printf 'OIDCRemoteUserClaim              %s\n'  "${OIDC_REMOTE_USER_CLAIM}"
 printf 'OIDCScope                        "%s"\n' "${OIDC_SCOPE}"
 printf 'OIDCRedirectURI                  https://iam.%s%s%s\n' "${OIDC_COOKIE_DOMAIN}" "${HTTPS_PORT_SUFFIX}" "${OIDC_REDIRECT_PATH}"
-printf 'Include /etc/apache2/conf-runtime/oidc-passphrase.conf\n'
+printf '<IfDefine !ADMIN_CONFIGTEST>\n  Include /etc/apache2/conf-runtime/oidc-passphrase.conf\n</IfDefine>\n'
 printf 'OIDCDefaultLoggedOutURL          %s\n'  "${OIDC_DEFAULT_LOGOUT_URL}"
 printf 'OIDCCookieDomain                 %s\n'  "${OIDC_COOKIE_DOMAIN}"
 printf 'OIDCCookie                       %s-IAM-Admin-Session\n'  "${OIDC_COOKIE_DOMAIN}"
@@ -419,10 +425,10 @@ printf 'OIDCSessionCacheFallbackToCookie Off\n'
 printf 'OIDCCacheType                    redis\n'
 printf 'OIDCRedisCacheServer             %s:%s\n' "${REDIS_HOST}" "${REDIS_PORT}"
 printf 'OIDCRedisCacheDatabase           %s\n'  "${REDIS_DB}"
-printf 'Include /etc/apache2/conf-runtime/redis-auth.conf\n'
+printf '<IfDefine !ADMIN_CONFIGTEST>\n  Include /etc/apache2/conf-runtime/redis-auth.conf\n</IfDefine>\n'
 printf 'OIDCProviderBackChannelLogoutSupported On\n'
 } > "$IAM_ADMIN_OIDC_FILE"
-chmod 600 "$IAM_ADMIN_OIDC_FILE"
+chmod 644 "$IAM_ADMIN_OIDC_FILE"   # no secret inside — only root-only includes
 log "Generated iam-admin-oidc.conf (redirect URI: https://iam.${OIDC_COOKIE_DOMAIN}${HTTPS_PORT_SUFFIX}${OIDC_REDIRECT_PATH})"
 
 # ── Generate per-domain OIDC client credential files ─────────────────────────
@@ -462,6 +468,10 @@ _gen_oidc_client_conf() {
 # Scan sites/ for domain names and generate conf files
 while IFS= read -r conf_file; do
     domain=$(basename "$conf_file" .conf)
+    if ! [[ "$domain" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || [[ "$domain" == *..* ]]; then
+        log "WARNING: sites/ file name '${domain//[^A-Za-z0-9._-]/?}' is no domain name — skipped"
+        continue
+    fi
     _gen_oidc_client_conf "$domain"
 done < <(find /etc/apache2/sites \
     -maxdepth 1 -name '*.conf' 2>/dev/null)
@@ -508,7 +518,6 @@ printf 'ServerName %s\n' "${APACHE_SERVER_NAME}" > "$SERVERNAME_FILE"
 SUBST_VARS='${OIDC_PROVIDER_METADATA_URL}'\
 '${OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH}'\
 '${OIDC_CLIENT_ID}'\
-'${OIDC_CLIENT_SECRET}'\
 '${OIDC_REMOTE_USER_CLAIM}'\
 '${OIDC_SCOPE}'\
 '${OIDC_REDIRECT_PATH}'\
@@ -553,44 +562,73 @@ fi
 # Keeping this separate from the ssl/ volume means ssl/ can be mounted :ro.
 # acme-init.sh updates the symlinks after obtaining a real cert, then reloads.
 ACTIVE_SSL_DIR="/run/apache2/active-ssl"
+# Root-only scratch dir: root never creates or edits files inside the www-data-writable
+# /run/apache-proxy (a planted symlink there would redirect root's writes). Results are
+# built here and moved into place with mv -T, which replaces a symlink instead of following it.
+PRIV_DIR="/run/apache-proxy-private"
+mkdir -p "$PRIV_DIR"; chmod 0700 "$PRIV_DIR"
 mkdir -p "$ACTIVE_SSL_DIR"
 
-mapfile -t _ALL_DOMAINS < <(
-    grep -rih '^[[:space:]]*use[[:space:]]' \
-        /etc/apache2/sites/ \
-        /etc/apache2/sites-enabled/ \
-        /etc/apache2/sites-admin/ \
-        2>/dev/null \
-    | awk '{print $3; print $4}' \
-    | grep -E '^[A-Za-z0-9]([A-Za-z0-9-]*\.)+[A-Za-z]{2,}$' \
-    | sort -u
-)
+# _link_ssl_all — link every domain used in sites/ to its certificate.
+# Runs at start, before every reload and on request of the admin UI ("add domain"),
+# so a domain added at runtime gets a certificate without a container restart.
+# Order: Let's Encrypt → ssl/ volume → temporary self-signed placeholder (only if the
+# domain has none yet). Sets _SSL_NEW_PLACEHOLDER=1 if a placeholder was created.
+_link_ssl_all() {
+    local _dom _active
+    _SSL_NEW_PLACEHOLDER=0
+    # domains = 1st argument of Domain_Init*, 2nd argument of VHost_* (only *.conf,
+    # the files Apache includes); backend host names are no domains of their own
+    mapfile -t _ALL_DOMAINS < <(
+        find /etc/apache2/sites -maxdepth 1 -type f -name '*.conf' -print0 2>/dev/null \
+        | xargs -0 -r timeout 10 grep -h -D skip -iE '^[[:space:]]*use[[:space:]]' 2>/dev/null \
+        | awk 'tolower($1) == "use" { m = tolower($2)
+               if (m ~ /^domain_init/) print $3; else if (m ~ /^vhost_/) print $4 }' \
+        | tr 'A-Z' 'a-z' \
+        | grep -E '^[a-z0-9]([a-z0-9-]*\.)+[a-z]{2,}$' \
+        | sort -u
+    )
+    for _dom in "${_ALL_DOMAINS[@]+"${_ALL_DOMAINS[@]}"}"; do
+        _active="${ACTIVE_SSL_DIR}/${_dom}"
+        mkdir -p "$_active"
 
-for _dom in "${_ALL_DOMAINS[@]+"${_ALL_DOMAINS[@]}"}"; do
-    _active="${ACTIVE_SSL_DIR}/${_dom}"
-    mkdir -p "$_active"
-
-    if [[ -f "/etc/letsencrypt/live/${_dom}/cert.pem" ]]; then
-        ln -sfn "/etc/letsencrypt/live/${_dom}/cert.pem"      "${_active}/cert.pem"
-        ln -sfn "/etc/letsencrypt/live/${_dom}/privkey.pem"   "${_active}/key.pem"
-        ln -sfn "/etc/letsencrypt/live/${_dom}/fullchain.pem" "${_active}/fullchain.pem"
-        log "SSL: ${_dom} → letsencrypt"
-    elif [[ -f "${APACHE_CONFDIR}/ssl/${_dom}/cert.pem" ]]; then
-        ln -sfn "${APACHE_CONFDIR}/ssl/${_dom}/cert.pem"      "${_active}/cert.pem"
-        ln -sfn "${APACHE_CONFDIR}/ssl/${_dom}/key.pem"       "${_active}/key.pem"
-        ln -sfn "${APACHE_CONFDIR}/ssl/${_dom}/fullchain.pem" "${_active}/fullchain.pem"
-        log "SSL: ${_dom} → ssl/ volume"
-    elif [[ -n "${ACME_EMAIL:-}" ]]; then
-        log "SSL: ${_dom} → self-signed placeholder (ACME cert arrives in ~10 s)"
-        openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
-            -keyout "${_active}/key.pem" \
-            -out    "${_active}/cert.pem" \
-            -subj   "/CN=${_dom}" 2>/dev/null
-        cp "${_active}/cert.pem" "${_active}/fullchain.pem"
-    else
-        log "WARNING: no cert for ${_dom} — Apache may fail to start (mount ssl/ volume or set ACME_EMAIL)"
-    fi
-done
+        if [[ -f "/etc/letsencrypt/live/${_dom}/cert.pem" ]]; then
+            ln -sfn "/etc/letsencrypt/live/${_dom}/cert.pem"      "${_active}/cert.pem"
+            ln -sfn "/etc/letsencrypt/live/${_dom}/privkey.pem"   "${_active}/key.pem"
+            ln -sfn "/etc/letsencrypt/live/${_dom}/fullchain.pem" "${_active}/fullchain.pem"
+            [ "${_SSL_QUIET:-0}" = 1 ] || log "SSL: ${_dom} → letsencrypt"
+        elif [[ -f "${APACHE_CONFDIR}/ssl/${_dom}/cert.pem" ]]; then
+            ln -sfn "${APACHE_CONFDIR}/ssl/${_dom}/cert.pem"      "${_active}/cert.pem"
+            ln -sfn "${APACHE_CONFDIR}/ssl/${_dom}/key.pem"       "${_active}/key.pem"
+            ln -sfn "${APACHE_CONFDIR}/ssl/${_dom}/fullchain.pem" "${_active}/fullchain.pem"
+            [ "${_SSL_QUIET:-0}" = 1 ] || log "SSL: ${_dom} → ssl/ volume"
+        elif [[ -f "${_active}/cert.pem" && ! -L "${_active}/cert.pem" ]] \
+             && openssl x509 -checkend 86400 -noout -in "${_active}/cert.pem" >/dev/null 2>&1; then
+            :   # placeholder from an earlier run, still valid for > 1 day — keep it
+        else
+            rm -f "${_active}/cert.pem" "${_active}/key.pem" "${_active}/fullchain.pem"
+            # A temporary self-signed certificate keeps Apache startable instead of failing
+            # on a missing file. With ACME the real certificate replaces it shortly.
+            if [[ -n "${ACME_EMAIL:-}" ]]; then
+                log "SSL: ${_dom} → self-signed placeholder (Let's Encrypt certificate follows)"
+            else
+                log "WARNING: SSL: no certificate for ${_dom} — using a self-signed placeholder; put a certificate into ssl/${_dom}/ or set ACME_EMAIL"
+            fi
+            ( umask 077
+              openssl req -x509 -nodes -days 30 -newkey rsa:2048 \
+                  -keyout "${_active}/key.pem" \
+                  -out    "${_active}/cert.pem" \
+                  -subj   "/CN=${_dom}" \
+                  -addext "subjectAltName=DNS:${_dom},DNS:*.${_dom}" 2>/dev/null )
+            chmod 644 "${_active}/cert.pem"
+            cp "${_active}/cert.pem" "${_active}/fullchain.pem"
+            _SSL_NEW_PLACEHOLDER=1
+            : > "$PRIV_DIR/acme-pending"   # the next reload requests the real certificate
+        fi
+    done
+}
+_link_ssl_all
+rm -f "$PRIV_DIR/acme-pending"   # at start acme-init runs anyway (see below)
 
 # ── Secret-free environment for background daemons ───────────────────────────
 # Secrets are unset right before exec, but daemons started earlier would keep
@@ -766,6 +804,67 @@ _check_writable "/etc/apache2/config"         "config/"
 _check_writable "/etc/apache2/AddOn"          "AddOn/"
 _check_writable "/etc/apache2/sites"          "sites/"
 
+# _build_snapshot — the only configuration root ever parses (see conf-available/cfgroot.conf).
+# sites/, AddOn/, config/ are writable by www-data; they are copied into a fresh root-only
+# directory (cp -P copies symlinks as symlinks, special files as such — nothing is followed),
+# Include paths to the live AddOn/config dirs are pointed at the copy, the config guard
+# checks the copy, and only a clean copy replaces /run/apache2/cfg. Changes www-data makes
+# afterwards have no effect until the next snapshot — no window between check and parse.
+SNAP_DIR="/run/apache2/cfg"
+_build_snapshot() {
+    local _new="${SNAP_DIR}.new" _old="${SNAP_DIR}.old" _d _out
+    rm -rf -- "$_new" "$_old"
+    # a hard link could point at a root-only file (the copy would carry its content);
+    # normally fs.protected_hardlinks prevents creating one, this also covers other hosts
+    _out="$(find /etc/apache2/sites /etc/apache2/AddOn /etc/apache2/config -type f -links +1 2>/dev/null | head -5)"
+    if [ -n "$_out" ]; then
+        printf '%s\n' "$_out" | while IFS= read -r _l; do log "config guard: $_l: hard links are not allowed here"; done
+        return 1
+    fi
+    # size limit: the copy lives in /run (memory); a huge file must not fill it
+    if [ "$(du -sk /etc/apache2/sites /etc/apache2/AddOn /etc/apache2/config 2>/dev/null | awk '{s+=$1} END {print s+0}')" -gt 20480 ]; then
+        log "config guard: sites/, AddOn/ and config/ exceed 20 MB together — not accepted"
+        return 1
+    fi
+    mkdir -m 0700 "$_new" || return 1
+    for _d in sites AddOn config; do
+        if [ -d "/etc/apache2/$_d" ]; then
+            cp -RP --preserve=mode "/etc/apache2/$_d" "$_new/$_d" 2>/dev/null || { rm -rf -- "$_new"; return 1; }
+        else
+            mkdir "$_new/$_d"
+        fi
+    done
+    # only what the configuration actually includes stays in the copy: sites/*.conf
+    # (top level) and the config files the macros include — everything else would be
+    # unchecked content root could be pointed at
+    find "$_new/sites" -mindepth 1 \( -type d -o ! -name '*.conf' \) -prune -exec rm -rf -- {} + 2>/dev/null
+    find "$_new/config" -mindepth 1 ! -type d -print0 2>/dev/null | while IFS= read -r -d '' _f; do
+        case "${_f#"$_new/config/"}" in
+            extra-countries.conf) ;;
+            oidc-clients/*/*) rm -rf -- "$_f" ;;
+            oidc-clients/*.conf) ;;
+            geolock/*/*/*) rm -rf -- "$_f" ;;
+            geolock/*/*.conf) ;;
+            *) rm -rf -- "$_f" ;;
+        esac
+    done
+    find "$_new/AddOn" -type f -print0 2>/dev/null | xargs -0 -r sed -i -E \
+        "s#^([[:space:]]*Include(Optional)?[[:space:]]+\"?)/etc/apache2/(AddOn|config)/#\\1${SNAP_DIR}/\\3/#I"
+    if ! _out="$(GUARD_SITES="$_new/sites" GUARD_ADDON="$_new/AddOn" GUARD_CONFIG="$_new/config" \
+                 GUARD_INCLUDE_ROOT="$SNAP_DIR" timeout 30 /usr/local/bin/proxy-config-guard.sh 2>&1)"; then
+        printf '%s\n' "$_out" | head -20 | sed "s#${_new}#/etc/apache2#" \
+            | while IFS= read -r _l; do log "config guard: $_l"; done
+        rm -rf -- "$_new"
+        return 1
+    fi
+    [ -d "$SNAP_DIR" ] && mv -T "$SNAP_DIR" "$_old"
+    mv -T "$_new" "$SNAP_DIR" && rm -rf -- "$_old"
+}
+
+# ── Config guard — before root parses the configuration for the first time ────
+# (LoadModule & co. would already act during the configtest below; fail closed)
+_build_snapshot || die "config guard rejected the configuration in sites/, AddOn/ or config/ (see above)"
+
 # ── Validate Apache config ────────────────────────────────────────────────────
 log "Testing Apache configuration..."
 apache2ctl configtest || die "Apache config test failed — check your site configs and env vars"
@@ -803,6 +902,9 @@ log "Starting Apache..."
 # still processing a previous reload), which would freeze Apache workers and
 # make the admin UI completely unresponsive.
 RELOAD_TRIGGER="/run/apache-proxy/reload-requested"
+# The admin UI asks root for certificates of a new domain via this file (it tests
+# the configuration itself, as www-data with -D ADMIN_CONFIGTEST).
+SSL_TRIGGER="/run/apache-proxy/ssl-prepare-requested"
 mkdir -p /run/apache-proxy
 # Dir is root-owned but group-writable by www-data: admin.lua (www-data worker)
 # creates the trigger via the group bit, while root (the owner) can delete it.
@@ -811,14 +913,34 @@ mkdir -p /run/apache-proxy
 # set -e, crash-loop the container on every reload.
 chown root:www-data /run/apache-proxy
 chmod 0770 /run/apache-proxy
-rm -f "$RELOAD_TRIGGER" 2>/dev/null || true
+rm -rf -- "$RELOAD_TRIGGER" "$SSL_TRIGGER" 2>/dev/null || true
+# _ssl_prepare — link certificates for all domains; for a new placeholder with ACME
+# configured, request the Let's Encrypt certificate in the background (acme-init.sh
+# reloads Apache itself once the certificate is there).
+_ssl_prepare() {
+    _link_ssl_all
+    # placeholder created now or by an earlier configtest of the admin UI
+    if [[ -f "$PRIV_DIR/acme-pending" ]]; then
+        rm -f "$PRIV_DIR/acme-pending"
+        [[ -f /etc/apache2/conf-runtime/acme.env ]] || return 0   # no ACME configured
+        log "SSL: requesting Let's Encrypt certificate for new domain(s)"
+        ( . /etc/apache2/conf-runtime/acme.env && /usr/local/bin/acme-init.sh ) \
+            >> /var/log/apache2/acme-renew.log 2>&1 &
+    fi
+}
 (
   set +e
   trap 'exit 0' TERM
   # Only the Keycloak redirect-URI sync needs a secret here (service account,
   # or the admin password as legacy fallback).
   _drop_secrets KEYCLOAK_API_CLIENT_SECRET KEYCLOAK_ADMIN_PASS
+  _SSL_QUIET=1
   while true; do
+    if [ -e "$SSL_TRIGGER" ] || [ -L "$SSL_TRIGGER" ]; then
+      _plain=0; [ -f "$SSL_TRIGGER" ] && [ ! -L "$SSL_TRIGGER" ] && _plain=1
+      rm -rf -- "$SSL_TRIGGER"
+      [ "$_plain" = 1 ] && _ssl_prepare     # only a plain file is a request
+    fi
     if [ -f "$RELOAD_TRIGGER" ]; then
       rm -f "$RELOAD_TRIGGER"
       APID=$(pgrep -o -x apache2 2>/dev/null) || { sleep 1; continue; }
@@ -826,7 +948,13 @@ rm -f "$RELOAD_TRIGGER" 2>/dev/null || true
       sleep 2
       log "Reload requested — syncing Keycloak redirect URIs"
       _kc_register_redirect_uris || log "WARNING: Keycloak redirect URI sync failed (continuing)"
-      if ! apache2ctl configtest >/dev/null 2>&1; then
+      _ssl_prepare
+      # fresh checked snapshot — the only thing configtest and graceful will parse
+      if ! _build_snapshot; then
+        log "ERROR: config guard rejected the configuration — reload skipped, Apache keeps running with the previous config"
+        sleep 1; continue
+      fi
+      if ! timeout 60 apache2ctl configtest >/dev/null 2>&1; then
         log "ERROR: configtest failed — reload skipped, Apache keeps running with the previous config"
         apache2ctl configtest 2>&1 | grep -v AH02800 | tail -5
         sleep 1; continue
@@ -868,8 +996,7 @@ rm -f "$RELOAD_TRIGGER" 2>/dev/null || true
 # All configs are rendered now. Files with secrets: root only; the few files
 # www-data needs at runtime: root:www-data 0640.
 for f in /etc/apache2/conf-runtime/oidc-passphrase.conf /etc/apache2/conf-runtime/oidc-passphrase.key \
-         /etc/apache2/conf-runtime/redis-auth.conf /etc/apache2/conf-runtime/iam-admin-oidc.conf \
-         /etc/apache2/conf-runtime/oidc-client-*.conf /etc/apache2/macro/40-secure-oidc.conf; do
+         /etc/apache2/conf-runtime/redis-auth.conf /etc/apache2/conf-runtime/oidc-client-*.conf; do
     [ -f "$f" ] && chown root:root "$f" && chmod 0600 "$f"
 done
 if [ -f /etc/apache2/conf-runtime/geolock-pin.hash ]; then

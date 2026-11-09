@@ -1,0 +1,30 @@
+# AddOn/: vhost directives without root-acting ones
+LoadModule evil_module /etc/apache2/config/evil.so
+  loadfile /tmp/x.so
+ErrorLog "|/bin/sh -c id"
+CustomLog |/usr/bin/logger combined
+CustomLog /etc/cron.d/evil geo
+ErrorLog /var/log/apache2/../../../etc/evil
+TransferLog /tmp/x.log
+Define ADMIN_CONFIGTEST
+UnDefine FOO
+<Macro Evil $x>
+User root
+PidFile /tmp/x.pid
+SSLPassPhraseDialog exec:/bin/sh
+SSLRandomSeed startup exec:/bin/sh
+SSLSessionCache shmcb:/etc/x(512000)
+RewriteMap m prg:/bin/sh
+Include /etc/shadow
+IncludeOptional /etc/apache2/conf-runtime/oidc-passphrase.conf
+Include /etc/apache2/AddOn/../conf-runtime/redis-auth.conf
+Include /etc/apache2/AddOn/*.conf
+Include /etc/apache2/config/evil.conf
+Include /etc/apache2/sites/evil.conf
+Include relative/path.conf
+ServerName ${OIDC_CLIENT_SECRET}
+Use OIDCBASE evil ../../../tmp
+SetHandler server-info
+AddHandler server-status .st
+Load\
+Module evil_module /x.so

@@ -13,7 +13,7 @@
 # $(AUTHORENTRY) : Allowed user(s)/group(s), e.g. 'alice bob'
 <Macro CLIENTBASIC $(AUTHORTYPE) $(AUTHORENTRY)>
   SetEnvIf GEOIP_COUNTRY_CODE "^(${GEOIP_ALLOW_COUNTRIES})$" AllowCountry
-  IncludeOptional /etc/apache2/config/extra-countries.conf
+  IncludeOptional ${CFGROOT}/config/extra-countries.conf
 
   <Location />
     AuthType Basic
@@ -53,9 +53,9 @@
     USE SSL $(DOMAINNAME)
     USE CLIENTBASIC $(AUTHORTYPE) '$(AUTHORENTRY)'
     USE GEOLOCK_LAYER $(SITENAME) $(DOMAINNAME)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
   </VirtualHost>
 </Macro>
 
@@ -80,8 +80,8 @@
     USE SSL $(DOMAINNAME)
     USE CLIENTBASIC $(AUTHORTYPE) '$(AUTHORENTRY)'
     USE GEOLOCK_LAYER $(SITENAME) $(DOMAINNAME)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/$(SITENAME).preconfig
     USE PROXY $(DESTINATION)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/$(SITENAME).postconfig
   </VirtualHost>
 </Macro>

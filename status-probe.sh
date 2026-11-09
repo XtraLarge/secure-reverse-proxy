@@ -24,8 +24,11 @@ set -uo pipefail
 
 OUTDIR=/run/apache-proxy
 OUT="$OUTDIR/status.tab"
-TMP="$OUTDIR/.status.tab.$$"
-LOCK="$OUTDIR/.status.lock"
+# Temp file in a root-only dir: /run/apache-proxy is writable by www-data, and a
+# planted symlink there would redirect root's chown/chmod/write (see entrypoint.sh).
+PRIV_DIR=/run/apache-proxy-private
+mkdir -p -m 0700 "$PRIV_DIR" 2>/dev/null || true
+LOCK="$PRIV_DIR/status.lock"
 SITES_DIR=/etc/apache2/sites
 PORT=443
 MAXTIME=5
@@ -33,9 +36,11 @@ PARALLEL=10
 
 mkdir -p "$OUTDIR" 2>/dev/null || true
 
-# Nur ein Lauf gleichzeitig
+# Nur ein Lauf gleichzeitig (Lock und Temp-Datei im root-only Verzeichnis)
 exec 9>"$LOCK" || exit 0
 flock -n 9 || exit 0
+TMP="$(mktemp "$PRIV_DIR/status.tab.XXXXXX")" || exit 1
+trap 'rm -f "$TMP"' EXIT
 
 # Eigene interne IP (macvlan, in 10.10/20/21.0.0/16) für den Intern-Bypass
 SELF_IP="$(hostname -i 2>/dev/null | tr ' ' '\n' | grep -E '^10\.(10|20|21)\.' | head -1)"
@@ -168,4 +173,4 @@ done
 # status.tab muss von Apache (www-data) gelesen werden -> Gruppe www-data + 640
 chown root:www-data "$TMP" 2>/dev/null || chgrp www-data "$TMP" 2>/dev/null || true
 chmod 640 "$TMP" 2>/dev/null || true
-mv -f "$TMP" "$OUT" 2>/dev/null || rm -f "$TMP"
+mv -fT "$TMP" "$OUT" 2>/dev/null || rm -f "$TMP"

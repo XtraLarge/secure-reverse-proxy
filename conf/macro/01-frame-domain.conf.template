@@ -32,9 +32,9 @@ MacroIgnoreEmptyArgs
     USE LOGGING https-default $(DOMAINNAME)
     USE DEFAULTS
     USE SSL $(DOMAINNAME)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/.preconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/.preconfig
     USE REWRITE2URL "https://$(STDDOMAIN).$(DOMAINNAME)${HTTPS_PORT_SUFFIX}"
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/.postconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/.postconfig
   </VirtualHost>
 
   # TOC (table of contents) — OIDC-protected overview page
@@ -162,9 +162,9 @@ MacroIgnoreEmptyArgs
     USE LOGGING https-default $(DOMAINNAME)
     USE DEFAULTS
     USE SSL $(DOMAINNAME)
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/.preconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/.preconfig
     USE REWRITE2URL "https://$(STDDOMAIN).$(DOMAINNAME)${HTTPS_PORT_SUFFIX}"
-    IncludeOptional /etc/apache2/AddOn/$(DOMAINNAME)/.postconfig
+    IncludeOptional ${CFGROOT}/AddOn/$(DOMAINNAME)/.postconfig
   </VirtualHost>
 
 </Macro>
@@ -176,7 +176,6 @@ MacroIgnoreEmptyArgs
 # Only users whose preferred_username claim matches $(ADMINUSER) are allowed.
 # $(ADMINUSER) may be a pipe-separated list, e.g. 'alice|bob'.
 #
-# Also exposes the internal Apache server-info endpoint at /server-info.
 #
 # Included by Domain_Init (third parameter = admin users) — do not use it
 # directly in your sites/ config, that would define admin.<domain> twice.
@@ -211,12 +210,6 @@ MacroIgnoreEmptyArgs
     </Directory>
     # admin-kc.lua needs a real OIDC session (access_token for the Keycloak Admin
     # REST API); CLIENTOIDC_CLAIM_STRICT on <Location /> already enforces that.
-    # Apache server-info — proxied from the internal-only endpoint on 127.0.0.1:81.
-    # Protected by the same OIDC session as the rest of the admin vhost.
-    <Location /server-info>
-      ProxyPass        http://127.0.0.1:81/
-      ProxyPassReverse http://127.0.0.1:81/
-    </Location>
   </VirtualHost>
 
 </Macro>
