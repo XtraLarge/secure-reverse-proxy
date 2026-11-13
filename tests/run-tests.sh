@@ -693,8 +693,8 @@ else
 fi
 echo ""
 echo "[36b] TOC top bar links to the Keycloak account page (derived from OIDC_PROVIDER_METADATA_URL)"
-if [ -n "$LUA_PORT" ] && [ "$_lua_up" -eq 1 ] \
-   && curl -s --max-time 5 "http://localhost:${LUA_PORT}/" -H "Host: lua-test.test.example.com" 2>/dev/null \
+# Render the page directly: output() builds the full HTML from the environment.
+if run sh -c "cd /tmp && lua5.4 -e \"dofile([[/var/www/html/toc.lua]]); io.write(output([[test.example.com]], [[T]]))\"" 2>&1 \
       | grep -q 'class="topbar-account" href="https://iam.example.com/realms/master/account/"'; then
     pass "TOC shows the account/password link"
 else
