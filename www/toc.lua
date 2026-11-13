@@ -8,6 +8,14 @@ TITLE       = os.getenv("TOC_TITLE") or "Inhaltsverzeichnis der Server"
 REMOTE_USER = os.getenv("TOC_REMOTE_USER_DEFAULT") or ""
 PORT_SUFFIX = os.getenv("HTTPS_PORT_SUFFIX") or ""
 PROBE_USER  = os.getenv("TOC_PROBE_USER") or ""
+-- Link to the IdP account page (change password); TOC_ACCOUNT_URL wins, else derived from a
+-- Keycloak metadata URL; only plain URL characters are accepted (no quotes/markup)
+ACCOUNT_URL = os.getenv("TOC_ACCOUNT_URL") or ""
+if ACCOUNT_URL == "" then
+  local kc = (os.getenv("OIDC_PROVIDER_METADATA_URL") or ""):match("^(https://[^/]+/realms/[^/]+)/%.well%-known/openid%-configuration$")
+  ACCOUNT_URL = kc and (kc .. "/account/") or ""
+end
+if not ACCOUNT_URL:match("^https://[%w%.%-:/_~%%]+$") then ACCOUNT_URL = "" end
 T           = {"STATUS", "EXTST", "NAME", "DOMAIN", "TYP",  "DEST",        "IPROT",       "IIP",     "IPORT",     "SECURE",  "GEO",   "USERS"}
 TT          = {"Status", "Ext",   "Name", "Domain", "Type", "Destination", "Int. Proto.", "Int. IP", "Int. Port", "Secured", "GeoIP", "Users"}
 A           = {};
@@ -810,6 +818,8 @@ body{font-family:Arial,sans-serif;background:#0d0d1a;color:#ddd;min-height:100vh
 .topbar-user{color:#aaa;font-size:.85em;font-family:Arial,sans-serif;white-space:nowrap}
 .topbar-logout{color:#666;font-size:.75em;text-decoration:none;white-space:nowrap}
 .topbar-logout:hover{color:#ff9999}
+.topbar-account{color:#666;font-size:.75em;text-decoration:none;white-space:nowrap}
+.topbar-account:hover{color:#7ecfff}
 .main{padding:1em 1.2em}
 h1{color:#00d4ff;font-size:1.15em;margin-bottom:.8em}
 #XLTab{border-collapse:collapse;width:100%;font-size:.85em}
@@ -878,6 +888,7 @@ window.onload = function() {
     "    </div>\n" ..
     "    <div class=\"topbar-user-block\">\n" ..
     "      <span class=\"topbar-user\">" .. REMOTE_USER .. "</span>\n" ..
+    (ACCOUNT_URL ~= "" and ("      <a class=\"topbar-account\" href=\"" .. ACCOUNT_URL .. "\" target=\"_blank\" rel=\"noopener\" title=\"Passwort &auml;ndern / Konto\">&#128273; Passwort</a>\n") or "") ..
     "      <a class=\"topbar-logout\" href=\"https://logout." .. (DOMAIN or "") .. PORT_SUFFIX .. "\">&#x2715; Logout</a>\n" ..
     "    </div>\n" ..
     "  </div>\n" ..

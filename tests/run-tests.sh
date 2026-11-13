@@ -691,6 +691,15 @@ else
     fail "Container or Apache did not start within 10s for Lua zombie test"
     docker logs "$LUA_CID" 2>&1 | tail -10 || true
 fi
+echo ""
+echo "[36b] TOC top bar links to the Keycloak account page (derived from OIDC_PROVIDER_METADATA_URL)"
+if [ -n "$LUA_PORT" ] && [ "$_lua_up" -eq 1 ] \
+   && curl -s --max-time 5 "http://localhost:${LUA_PORT}/" -H "Host: lua-test.test.example.com" 2>/dev/null \
+      | grep -q 'class="topbar-account" href="https://iam.example.com/realms/master/account/"'; then
+    pass "TOC shows the account/password link"
+else
+    fail "TOC account/password link missing or wrong"
+fi
 docker rm -f "$LUA_CID" >/dev/null 2>&1 || true
 
 

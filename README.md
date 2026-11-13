@@ -224,6 +224,7 @@ Every secret can be passed as a file instead: set `<VAR>_FILE=/run/secrets/<name
 |---|---|---|---|
 | `APACHE_SERVER_NAME` | — | `localhost` | Global Apache `ServerName` (suppresses `AH00558`) |
 | `TOC_TITLE` | — | domain name | Title shown on the TOC page |
+| `TOC_ACCOUNT_URL` | — | auto-derived | Link to the user's IdP account page (change password) in the TOC top bar. Derived from a Keycloak `OIDC_PROVIDER_METADATA_URL` (`…/realms/REALM/account/`); without either, no link is shown. |
 | `HTTPS_PORT` | — | `443` | External HTTPS port; only change it if the proxy is exposed on a non-standard port |
 
 ---
