@@ -226,6 +226,7 @@ Jedes Secret kann stattdessen als Datei übergeben werden: `<VAR>_FILE=/run/secr
 |---|---|---|---|
 | `APACHE_SERVER_NAME` | — | `localhost` | Globaler Apache-`ServerName` (unterdrückt `AH00558`) |
 | `TOC_TITLE` | — | Domainname | Titel der TOC-Seite |
+| `TOC_ACCOUNT_URL` | — | automatisch | Link zur Kontoseite beim IdP (Passwort ändern) in der Kopfzeile der TOC-Seite. Ohne Angabe aus einer Keycloak-`OIDC_PROVIDER_METADATA_URL` abgeleitet (`…/realms/REALM/account/`); fehlt beides, gibt es keinen Link. |
 | `HTTPS_PORT` | — | `443` | Externer HTTPS-Port; nur ändern, wenn der Proxy auf einem anderen Port erreichbar ist |
 
 ---
