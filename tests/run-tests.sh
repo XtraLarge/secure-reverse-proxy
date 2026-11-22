@@ -825,6 +825,111 @@ fi
 # ══════════════════════════════════════════════════════════════════════════════
 
 echo ""
+echo "[43] Robust start: reload rejects what a restart would reject, start falls back to the last known good config"
+# Reproduces the outage pattern: a root-only directory under config/ is accepted by a
+# reload without ownership fix but breaks the next start (chown -R www-data + root
+# without CAP_DAC_OVERRIDE cannot copy it into the snapshot).
+RB_DIR=$(mktemp -d)
+mkdir -p "$RB_DIR/sites" "$RB_DIR/AddOn" "$RB_DIR/config"
+cp "$SCRIPT_DIR/sites-enabled/"*.conf "$RB_DIR/sites/"
+cp -R "$SCRIPT_DIR/AddOn/." "$RB_DIR/AddOn/"
+chmod -R a+rwX "$RB_DIR"
+RB_NAME="srp-robust-$$"
+docker run -d --name "$RB_NAME" \
+    --cap-drop ALL --cap-add CHOWN --cap-add KILL --cap-add NET_BIND_SERVICE \
+    --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges:true \
+    -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" -v "$RB_DIR/sites:/etc/apache2/sites" \
+    -v "$RB_DIR/AddOn:/etc/apache2/AddOn" -v "$RB_DIR/config:/etc/apache2/config" \
+    -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
+    -e OIDC_CLIENT_SECRET=x -e OIDC_CRYPTO_PASSPHRASE=x \
+    -e OIDC_COOKIE_DOMAIN=test.example.com -e REDIS_HOST=127.0.0.1 \
+    "$IMAGE" >/dev/null
+sleep 10
+rb_up() { docker exec "$RB_NAME" curl -so /dev/null --max-time 3 http://localhost/ 2>/dev/null; }
+rb_state() { docker exec "$RB_NAME" sh -c 'curl -sI --max-time 3 http://localhost/ | grep -ci "^X-Proxy-Config-State: last-known-good"' 2>/dev/null || true; }
+
+# [43a] stale pid files of a previous run must not stop the next start
+docker exec "$RB_NAME" sh -c 'echo 1 > /run/rsyslogd.pid; echo 1 > /run/crond.pid' 2>/dev/null || true
+RB_T0="$(date -u +%FT%TZ)"
+docker restart -t 10 "$RB_NAME" >/dev/null 2>&1 || true
+sleep 10
+if [ "$(docker inspect -f '{{.State.Running}}' "$RB_NAME" 2>/dev/null)" = "true" ] && rb_up \
+   && ! docker logs --since "$RB_T0" "$RB_NAME" 2>&1 | grep -q "already exist"; then
+    pass "[43a] restart with stale rsyslogd/crond pid files: Apache up"
+else
+    fail "[43a] restart with stale pid files failed"
+    docker logs --since "$RB_T0" "$RB_NAME" 2>&1 | tail -15 || true
+fi
+
+# root-only entry under config/ (created by root with all capabilities, like on a host)
+docker run --rm --entrypoint sh -v "$RB_DIR/config:/x" "$IMAGE" -c \
+    'mkdir -m 0700 /x/rootonly && echo key > /x/rootonly/key.pem && chmod 0600 /x/rootonly/key.pem' >/dev/null 2>&1 || true
+
+# [43b] reload: same preparation as a start -> rejected, running config stays
+RB_PID1="$(docker exec "$RB_NAME" pgrep -o -x apache2 2>/dev/null || true)"
+RB_T1="$(date -u +%FT%TZ)"
+docker exec -u www-data "$RB_NAME" touch /run/apache-proxy/reload-requested 2>/dev/null || true
+sleep 12
+RB_PID2="$(docker exec "$RB_NAME" pgrep -o -x apache2 2>/dev/null || true)"
+if [ -n "$RB_PID1" ] && [ "$RB_PID1" = "$RB_PID2" ] && rb_up \
+   && docker logs --since "$RB_T1" "$RB_NAME" 2>&1 | grep -q "could not be copied" \
+   && docker logs --since "$RB_T1" "$RB_NAME" 2>&1 | grep -q "reload skipped"; then
+    pass "[43b] reload rejects the unreadable config/ entry, Apache keeps running (PID ${RB_PID2})"
+else
+    fail "[43b] reload did not reject the entry as a restart would (pid ${RB_PID1} -> ${RB_PID2})"
+    docker logs --since "$RB_T1" "$RB_NAME" 2>&1 | tail -15 || true
+fi
+
+# [43c] restart with the broken config: last known good instead of a crash loop
+RB_T2="$(date -u +%FT%TZ)"
+docker restart -t 10 "$RB_NAME" >/dev/null 2>&1 || true
+sleep 12
+if [ "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' "$RB_NAME" 2>/dev/null)" = "true 0" ] && rb_up \
+   && [ "$(rb_state)" = 1 ] \
+   && docker logs --since "$RB_T2" "$RB_NAME" 2>&1 | grep -q "LAST KNOWN GOOD" \
+   && docker exec "$RB_NAME" test -s /run/apache2/proxy-degraded; then
+    pass "[43c] start with rejected config runs the last known good config (header + marker + log)"
+else
+    fail "[43c] no fallback to the last known good config"
+    docker logs --since "$RB_T2" "$RB_NAME" 2>&1 | tail -20 || true
+fi
+
+# [43d] fixed config + reload: back to the current configuration, marker and header gone
+docker run --rm --entrypoint sh -v "$RB_DIR/config:/x" "$IMAGE" -c 'rm -rf /x/rootonly' >/dev/null 2>&1 || true
+RB_T3="$(date -u +%FT%TZ)"
+docker exec -u www-data "$RB_NAME" touch /run/apache-proxy/reload-requested 2>/dev/null || true
+sleep 12
+if rb_up && [ "$(rb_state)" = 0 ] && ! docker exec "$RB_NAME" test -e /run/apache2/proxy-degraded \
+   && docker logs --since "$RB_T3" "$RB_NAME" 2>&1 | grep -q "Graceful reload OK"; then
+    pass "[43d] after the fix a reload leaves the degraded state"
+else
+    fail "[43d] degraded state not cleared by the reload"
+    docker logs --since "$RB_T3" "$RB_NAME" 2>&1 | tail -15 || true
+fi
+
+# [43e] key rotation reloads gracefully instead of restarting the container
+RB_START="$(docker inspect -f '{{.State.StartedAt}}' "$RB_NAME" 2>/dev/null)"
+RB_PID3="$(docker exec "$RB_NAME" pgrep -o -x apache2 2>/dev/null || true)"
+RB_KEY1="$(docker exec "$RB_NAME" md5sum /etc/apache2/conf-runtime/oidc-passphrase.conf 2>/dev/null | cut -c1-32)"
+RB_T4="$(date -u +%FT%TZ)"
+docker exec "$RB_NAME" /usr/local/bin/rotate-oidc-key.sh >/dev/null 2>&1 || true
+sleep 14
+RB_KEY2="$(docker exec "$RB_NAME" md5sum /etc/apache2/conf-runtime/oidc-passphrase.conf 2>/dev/null | cut -c1-32)"
+if [ "$(docker inspect -f '{{.State.StartedAt}}' "$RB_NAME" 2>/dev/null)" = "$RB_START" ] \
+   && [ "$(docker exec "$RB_NAME" pgrep -o -x apache2 2>/dev/null || true)" = "$RB_PID3" ] \
+   && [ -n "$RB_KEY1" ] && [ "$RB_KEY1" != "$RB_KEY2" ] && rb_up \
+   && docker logs --since "$RB_T4" "$RB_NAME" 2>&1 | grep -q "Graceful reload OK"; then
+    pass "[43e] OIDC key rotation applied by graceful reload (no container restart)"
+else
+    fail "[43e] key rotation still restarts the container or did not reload"
+    docker logs --since "$RB_T4" "$RB_NAME" 2>&1 | tail -15 || true
+fi
+
+docker rm -f "$RB_NAME" >/dev/null 2>&1 || true
+docker run --rm --entrypoint sh -v "$RB_DIR:/x" "$IMAGE" -c 'rm -rf /x/* /x/.[!.]*' >/dev/null 2>&1 || true
+rm -rf "$RB_DIR" 2>/dev/null || true
+
+echo ""
 echo "============================================"
 echo "Results: $PASS passed, $FAIL failed"
 echo "============================================"
