@@ -55,7 +55,7 @@ COPY conf/sites-available/ /etc/apache2/sites-available/
 
 COPY conf/ports.conf /etc/apache2/ports.conf
 
-RUN a2enconf server-security cfgroot macro cgid-runtime sites acme-webroot logging tuning geoip \
+RUN a2enconf server-security cfgroot macro cgid-runtime sites acme-webroot logging tuning geoip config-state \
  && a2dismod -f info status 2>/dev/null || true
 # mod_info would show every directive incl. the secret includes; mod_status the request lines
 

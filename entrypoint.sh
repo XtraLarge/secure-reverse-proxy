@@ -659,6 +659,9 @@ _drop_secrets() {
 }
 
 # ── Start cron for daily key rotation + logrotate ────────────────────────────
+# a container restart keeps /run: a pid file of the previous run may name a pid that
+# exists again in the new namespace — the daemon then refuses to start (set -e: exit)
+rm -f /run/crond.pid
 _scrub /usr/sbin/cron -f &
 log "cron daemon started (rotate-oidc-key.sh runs at 03:00 daily)"
 
@@ -768,6 +771,8 @@ else
 fi
 
 # Start rsyslog — creates /dev/log (Unix socket) that Apache writes to
+# (stale pid file of the previous run, see cron above)
+rm -f /run/rsyslogd.pid
 _scrub /usr/sbin/rsyslogd
 sleep 0.3   # give rsyslog time to create /dev/log before Apache starts
 log "rsyslog started"
@@ -777,10 +782,10 @@ log "rsyslog started"
 # specific paths. We fix ownership here at startup so admin.lua can write
 # without manual intervention on the host.
 _fix_owner() {
-    local path="$1" desc="$2"
+    local path="$1" desc="$2" quiet="${3:-}"
     [[ -e "$path" ]] || return 0
     if chown -R www-data:www-data "$path" 2>/dev/null; then
-        log "Permissions OK: ${desc} → www-data"
+        [ -n "$quiet" ] || log "Permissions OK: ${desc} → www-data"
     else
         log "WARNING: could not set ownership for ${desc} (${path}) — admin writes may fail"
     fi
@@ -829,7 +834,9 @@ _build_snapshot() {
     mkdir -m 0700 "$_new" || return 1
     for _d in sites AddOn config; do
         if [ -d "/etc/apache2/$_d" ]; then
-            cp -RP --preserve=mode "/etc/apache2/$_d" "$_new/$_d" 2>/dev/null || { rm -rf -- "$_new"; return 1; }
+            cp -RP --preserve=mode "/etc/apache2/$_d" "$_new/$_d" 2>/dev/null || {
+                log "config guard: $_d/ could not be copied — an entry there is not readable for root after the ownership fix (every file in sites/, AddOn/, config/ must work as www-data-owned; keys belong in /run/secrets)"
+                rm -rf -- "$_new"; return 1; }
         else
             mkdir "$_new/$_d"
         fi
@@ -863,11 +870,53 @@ _build_snapshot() {
 
 # ── Config guard — before root parses the configuration for the first time ────
 # (LoadModule & co. would already act during the configtest below; fail closed)
-_build_snapshot || die "config guard rejected the configuration in sites/, AddOn/ or config/ (see above)"
+# ── Last known good configuration ─────────────────────────────────────────────
+# Every snapshot that passed guard + configtest at start or reload is kept root-only
+# in the container. If the current configuration is rejected at a later start
+# (nightly restart, crash), Apache starts with that copy instead of crash-looping —
+# a broken edit must never take every site down. The state is signalled loudly:
+# log, $DEGRADED_FLAG and the response header X-Proxy-Config-State (config-state.conf).
+# The next successful reload returns to the current configuration.
+LASTGOOD_DIR="/var/lib/apache-proxy/lastgood"
+DEGRADED_FLAG="/run/apache2/proxy-degraded"
+_save_lastgood() {
+    mkdir -p /var/lib/apache-proxy && chmod 0700 /var/lib/apache-proxy
+    rm -rf -- "${LASTGOOD_DIR}.new"
+    if cp -a "$SNAP_DIR" "${LASTGOOD_DIR}.new" 2>/dev/null; then
+        date -u +%FT%TZ > "${LASTGOOD_DIR}.new/.saved-at"
+        rm -rf -- "$LASTGOOD_DIR"; mv -T "${LASTGOOD_DIR}.new" "$LASTGOOD_DIR"
+    else
+        rm -rf -- "${LASTGOOD_DIR}.new"
+        log "WARNING: could not save the last known good configuration"
+    fi
+}
+_restore_lastgood() {
+    [ -d "$LASTGOOD_DIR" ] || return 1
+    rm -rf -- "$SNAP_DIR" && cp -a "$LASTGOOD_DIR" "$SNAP_DIR"
+}
 
-# ── Validate Apache config ────────────────────────────────────────────────────
+# ── Config guard + configtest — before root parses the configuration ──────────
+# (LoadModule & co. would already act during the configtest; fail closed)
+rm -f -- "$DEGRADED_FLAG"
 log "Testing Apache configuration..."
-apache2ctl configtest || die "Apache config test failed — check your site configs and env vars"
+_start_reject=""
+if ! _build_snapshot; then
+    _start_reject="config guard rejected the configuration in sites/, AddOn/ or config/ (see above)"
+elif ! apache2ctl configtest; then
+    _start_reject="Apache config test failed — check your site configs and env vars"
+fi
+if [ -z "$_start_reject" ]; then
+    _save_lastgood
+elif _restore_lastgood && apache2ctl configtest >/dev/null 2>&1; then
+    _lg_saved="$(cat "$LASTGOOD_DIR/.saved-at" 2>/dev/null || echo unknown)"
+    printf 'current configuration rejected at start %s; running last known good configuration saved %s\n' \
+        "$(date -u +%FT%TZ)" "$_lg_saved" > "$DEGRADED_FLAG"
+    chmod 0644 "$DEGRADED_FLAG"
+    log "ERROR: ${_start_reject}"
+    log "ERROR: STARTING WITH THE LAST KNOWN GOOD CONFIGURATION (saved ${_lg_saved}) — fix the configuration, then request a reload."
+else
+    die "${_start_reject} — no usable last known good configuration"
+fi
 
 # ── ACME: obtain real cert after Apache starts ────────────────────────────────
 # The self-signed placeholder above lets Apache start; now request the real
@@ -949,6 +998,11 @@ _ssl_prepare() {
       log "Reload requested — syncing Keycloak redirect URIs"
       _kc_register_redirect_uris || log "WARNING: Keycloak redirect URI sync failed (continuing)"
       _ssl_prepare
+      # same preparation as at container start (ownership of the volumes): a reload
+      # must reject what a restart would reject — the running config stays active
+      _fix_owner "/etc/apache2/config" "config/" quiet
+      _fix_owner "/etc/apache2/AddOn"  "AddOn/"  quiet
+      _fix_owner "/etc/apache2/sites"  "sites/"  quiet
       # fresh checked snapshot — the only thing configtest and graceful will parse
       if ! _build_snapshot; then
         log "ERROR: config guard rejected the configuration — reload skipped, Apache keeps running with the previous config"
@@ -959,6 +1013,9 @@ _ssl_prepare() {
         apache2ctl configtest 2>&1 | grep -v AH02800 | tail -5
         sleep 1; continue
       fi
+      # the reload parses the current configuration: the degraded marker goes now
+      # (config-state.conf drops the header with this very graceful)
+      rm -f -- "$DEGRADED_FLAG"
       if apache2ctl -k graceful >/dev/null 2>&1; then
         # Old children may still answer for a moment: wait, then require 3 consecutive OKs
         sleep 3
@@ -973,6 +1030,7 @@ _ssl_prepare() {
         done
         if [ "$_ok" -ge 3 ] && kill -0 "$APID" 2>/dev/null; then
           log "Graceful reload OK (master PID ${APID} unchanged)"
+          _save_lastgood
           sleep 1; continue
         fi
         log "WARNING: Apache not answering after graceful reload — falling back to full restart"

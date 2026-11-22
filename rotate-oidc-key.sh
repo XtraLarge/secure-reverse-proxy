@@ -27,9 +27,10 @@ echo "${NEW_KEY}" > "$PASSPHRASE_FILE"
 # Sessions encrypted with the old key will require re-authentication after rotation.
 printf 'OIDCCryptoPassphrase  "%s"\n' "${NEW_KEY}" > "$PASSPHRASE_CONF"
 
-# Restart the container cleanly: SIGTERM to PID 1 (Apache, via exec in entrypoint).
-# Docker's restart policy brings the container back up with a fresh entrypoint run.
-# A full restart is kept on purpose here (fresh entrypoint run incl. passphrase include);
-# graceful reloads work since cap_add KILL (see docker-compose.yml).
-echo "[rotate-oidc-key] Passphrase rotated — restarting container ($(date -u +%FT%TZ))"
-kill -TERM 1
+# Apply with a graceful reload through the entrypoint's reload listener (config guard
+# and configtest first; Apache re-reads the passphrase include). No container restart:
+# a nightly restart is the moment a broken configuration could take the proxy down,
+# and graceful reloads work since cap_add KILL (see docker-compose.yml).
+# set -C (O_EXCL) never follows a planted symlink.
+echo "[rotate-oidc-key] Passphrase rotated — requesting graceful reload ($(date -u +%FT%TZ))"
+( set -C; : > /run/apache-proxy/reload-requested ) 2>/dev/null || true
