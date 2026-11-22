@@ -930,6 +930,72 @@ docker run --rm --entrypoint sh -v "$RB_DIR:/x" "$IMAGE" -c 'rm -rf /x/* /x/.[!.
 rm -rf "$RB_DIR" 2>/dev/null || true
 
 echo ""
+echo "[44] last known good survives a container recreate (volume) and is re-checked by the guard"
+LG_DIR=$(mktemp -d)
+mkdir -p "$LG_DIR/sites" "$LG_DIR/AddOn" "$LG_DIR/config"
+cp "$SCRIPT_DIR/sites-enabled/"*.conf "$LG_DIR/sites/"
+cp -R "$SCRIPT_DIR/AddOn/." "$LG_DIR/AddOn/"
+chmod -R a+rwX "$LG_DIR"
+LG_NAME="srp-lg-$$"
+LG_VOL="srp-lg-$$"
+docker volume create "$LG_VOL" >/dev/null
+lg_run() {
+    docker rm -f "$LG_NAME" >/dev/null 2>&1 || true
+    docker run -d --name "$LG_NAME" \
+        --cap-drop ALL --cap-add CHOWN --cap-add KILL --cap-add NET_BIND_SERVICE \
+        --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges:true \
+        -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" -v "$LG_DIR/sites:/etc/apache2/sites" \
+        -v "$LG_DIR/AddOn:/etc/apache2/AddOn" -v "$LG_DIR/config:/etc/apache2/config" \
+        -v "$LG_VOL:/var/lib/apache-proxy" \
+        -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
+        -e OIDC_CLIENT_SECRET=x -e OIDC_CRYPTO_PASSPHRASE=x \
+        -e OIDC_COOKIE_DOMAIN=test.example.com -e REDIS_HOST=127.0.0.1 \
+        "$IMAGE" >/dev/null
+    sleep 12
+}
+lg_state() { docker exec "$LG_NAME" sh -c 'curl -sI --max-time 3 http://localhost/ | grep -ci "^X-Proxy-Config-State: last-known-good"' 2>/dev/null || true; }
+
+# [44a] the image declares the state directory as a volume
+if docker image inspect -f '{{json .Config.Volumes}}' "$IMAGE" 2>/dev/null | grep -q '"/var/lib/apache-proxy"'; then
+    pass "[44a] /var/lib/apache-proxy is a volume of the image"
+else
+    fail "[44a] /var/lib/apache-proxy is not declared as a volume"
+fi
+
+# [44b] good start saves the config; a NEW container with a rejected config uses it
+lg_run
+docker rm -f "$LG_NAME" >/dev/null 2>&1 || true
+docker run --rm --entrypoint sh -v "$LG_DIR/sites:/x" "$IMAGE" -c \
+    'printf "ErrorLog \"|/bin/true\"\n" > /x/zz-evil.conf && chmod 0666 /x/zz-evil.conf' >/dev/null 2>&1 || true
+lg_run
+if [ "$(docker inspect -f '{{.State.Running}}' "$LG_NAME" 2>/dev/null)" = "true" ] && [ "$(lg_state)" = 1 ] \
+   && docker logs "$LG_NAME" 2>&1 | grep -q "LAST KNOWN GOOD"; then
+    pass "[44b] recreated container with a rejected config starts with the saved config"
+else
+    fail "[44b] recreated container did not use the saved config"
+    docker logs "$LG_NAME" 2>&1 | tail -15 || true
+fi
+
+# [44c] a saved config that this image's guard rejects is not used (fail closed)
+docker rm -f "$LG_NAME" >/dev/null 2>&1 || true
+docker run --rm --entrypoint sh -v "$LG_VOL:/x" "$IMAGE" -c \
+    'f=$(ls /x/lastgood/sites/*.conf | head -1) && printf "ErrorLog \"|/bin/true\"\n" >> "$f"' >/dev/null 2>&1 || true
+lg_run
+if [ "$(docker inspect -f '{{.State.Running}}' "$LG_NAME" 2>/dev/null)" = "false" ] \
+   && docker logs "$LG_NAME" 2>&1 | grep -q "config guard (last known good)" \
+   && docker logs "$LG_NAME" 2>&1 | grep -q "no usable last known good"; then
+    pass "[44c] saved config rejected by the current guard is not used, start refused"
+else
+    fail "[44c] a saved config the guard rejects was used or the start did not fail"
+    docker logs "$LG_NAME" 2>&1 | tail -15 || true
+fi
+
+docker rm -f "$LG_NAME" >/dev/null 2>&1 || true
+docker volume rm "$LG_VOL" >/dev/null 2>&1 || true
+docker run --rm --entrypoint sh -v "$LG_DIR:/x" "$IMAGE" -c 'rm -rf /x/* /x/.[!.]*' >/dev/null 2>&1 || true
+rm -rf "$LG_DIR" 2>/dev/null || true
+
+echo ""
 echo "============================================"
 echo "Results: $PASS passed, $FAIL failed"
 echo "============================================"
