@@ -386,17 +386,21 @@ reload — Apache keeps the previous configuration — and the findings are logg
 UI shows them before saving. Start and reload run the same preparation, so a reload rejects
 what the next start would reject.
 
-**Last known good.** After every successful start and reload the checked snapshot is saved
-in `/var/lib/apache-proxy` (root only, declared as a volume). If the configuration is
-rejected at start, the container starts with that saved configuration instead of failing,
-logs `STARTING WITH THE LAST KNOWN GOOD CONFIGURATION`, creates
-`/run/apache2/proxy-degraded` and sends the response header
-`X-Proxy-Config-State: last-known-good` — monitor this header. The saved configuration is
-checked by the guard of the running image before it is used. Without a saved
-configuration (or if it is rejected too) the start fails closed. `docker compose up`
-keeps the anonymous volume when it recreates the container; `docker compose down`
-removes the container and with it the link to that volume, so mount a named volume
-(`proxy-state:/var/lib/apache-proxy`) if the state must survive that as well.
+**Last known good.** After every successful start and reload the checked configuration
+is archived in `/var/lib/apache-proxy` (root only, declared as a volume) as
+`config-<UTC time>-<hash>.tar.gz` — in source form (`sites/`, `AddOn/`, `config/`, only
+the files Apache includes, no `basic.htpasswd`, no keys) and only when it changed. The
+newest `LASTGOOD_KEEP` archives are kept (default 30). If the configuration is rejected
+at start, the container unpacks the newest archive, runs it through the same guard and
+configtest and starts with it instead of failing: it logs
+`STARTING WITH THE LAST KNOWN GOOD CONFIGURATION`, creates `/run/apache2/proxy-degraded`
+and sends the response header `X-Proxy-Config-State: last-known-good` — monitor this
+header. Older archives are never used automatically; for a manual rollback unpack one
+into the directory that holds `sites/ AddOn/ config/` and request a reload. Without a
+usable archive the start fails closed. `docker compose up` keeps the anonymous volume
+when it recreates the container; mount a host directory or a named volume
+(e.g. `./lastgood:/var/lib/apache-proxy`) so the archives also survive
+`docker compose down` and are part of your backup.
 
 - `sites/*.conf`: only `Use <macro> …` lines (and `LogLevel`). The first two macro
   parameters must be plain site/domain names (no paths, no `..`).

@@ -816,26 +816,29 @@ _check_writable "/etc/apache2/sites"          "sites/"
 # checks the copy, and only a clean copy replaces /run/apache2/cfg. Changes www-data makes
 # afterwards have no effect until the next snapshot — no window between check and parse.
 SNAP_DIR="/run/apache2/cfg"
+SNAP_SRC="/run/apache2/cfg-src"   # same content in source form (archived)
 _build_snapshot() {
+    local _src="${1:-/etc/apache2}" _gl="${2:-config guard}"
     local _new="${SNAP_DIR}.new" _old="${SNAP_DIR}.old" _d _out
-    rm -rf -- "$_new" "$_old"
+    local _snew="${SNAP_SRC}.new" _sold="${SNAP_SRC}.old"
+    rm -rf -- "$_new" "$_old" "$_snew" "$_sold"
     # a hard link could point at a root-only file (the copy would carry its content);
     # normally fs.protected_hardlinks prevents creating one, this also covers other hosts
-    _out="$(find /etc/apache2/sites /etc/apache2/AddOn /etc/apache2/config -type f -links +1 2>/dev/null | head -5)"
+    _out="$(find "$_src/sites" "$_src/AddOn" "$_src/config" -type f -links +1 2>/dev/null | head -5)"
     if [ -n "$_out" ]; then
-        printf '%s\n' "$_out" | while IFS= read -r _l; do log "config guard: $_l: hard links are not allowed here"; done
+        printf '%s\n' "$_out" | while IFS= read -r _l; do log "${_gl}: $_l: hard links are not allowed here"; done
         return 1
     fi
     # size limit: the copy lives in /run (memory); a huge file must not fill it
-    if [ "$(du -sk /etc/apache2/sites /etc/apache2/AddOn /etc/apache2/config 2>/dev/null | awk '{s+=$1} END {print s+0}')" -gt 20480 ]; then
-        log "config guard: sites/, AddOn/ and config/ exceed 20 MB together — not accepted"
+    if [ "$(du -sk "$_src/sites" "$_src/AddOn" "$_src/config" 2>/dev/null | awk '{s+=$1} END {print s+0}')" -gt 20480 ]; then
+        log "${_gl}: sites/, AddOn/ and config/ exceed 20 MB together — not accepted"
         return 1
     fi
     mkdir -m 0700 "$_new" || return 1
     for _d in sites AddOn config; do
-        if [ -d "/etc/apache2/$_d" ]; then
-            cp -RP --preserve=mode "/etc/apache2/$_d" "$_new/$_d" 2>/dev/null || {
-                log "config guard: $_d/ could not be copied — an entry there is not readable for root after the ownership fix (every file in sites/, AddOn/, config/ must work as www-data-owned; keys belong in /run/secrets)"
+        if [ -d "$_src/$_d" ]; then
+            cp -RP --preserve=mode "$_src/$_d" "$_new/$_d" 2>/dev/null || {
+                log "${_gl}: $_d/ could not be copied — an entry there is not readable for root after the ownership fix (every file in sites/, AddOn/, config/ must work as www-data-owned; keys belong in /run/secrets)"
                 rm -rf -- "$_new"; return 1; }
         else
             mkdir "$_new/$_d"
@@ -855,53 +858,81 @@ _build_snapshot() {
             *) rm -rf -- "$_f" ;;
         esac
     done
+    # source form (before the Include rewrite) — what gets archived as last known good
+    cp -a "$_new" "$_snew" 2>/dev/null || { rm -rf -- "$_new" "$_snew"; return 1; }
     find "$_new/AddOn" -type f -print0 2>/dev/null | xargs -0 -r sed -i -E \
         "s#^([[:space:]]*Include(Optional)?[[:space:]]+\"?)/etc/apache2/(AddOn|config)/#\\1${SNAP_DIR}/\\3/#I"
     if ! _out="$(GUARD_SITES="$_new/sites" GUARD_ADDON="$_new/AddOn" GUARD_CONFIG="$_new/config" \
                  GUARD_INCLUDE_ROOT="$SNAP_DIR" timeout 30 /usr/local/bin/proxy-config-guard.sh 2>&1)"; then
         printf '%s\n' "$_out" | head -20 | sed "s#${_new}#/etc/apache2#" \
-            | while IFS= read -r _l; do log "config guard: $_l"; done
-        rm -rf -- "$_new"
+            | while IFS= read -r _l; do log "${_gl}: $_l"; done
+        rm -rf -- "$_new" "$_snew"
         return 1
     fi
     [ -d "$SNAP_DIR" ] && mv -T "$SNAP_DIR" "$_old"
     mv -T "$_new" "$SNAP_DIR" && rm -rf -- "$_old"
+    [ -d "$SNAP_SRC" ] && mv -T "$SNAP_SRC" "$_sold"
+    mv -T "$_snew" "$SNAP_SRC" && rm -rf -- "$_sold"
 }
 
 # ── Config guard — before root parses the configuration for the first time ────
 # (LoadModule & co. would already act during the configtest below; fail closed)
 # ── Last known good configuration ─────────────────────────────────────────────
-# Every snapshot that passed guard + configtest at start or reload is kept root-only
-# in the container. If the current configuration is rejected at a later start
-# (nightly restart, crash), Apache starts with that copy instead of crash-looping —
-# a broken edit must never take every site down. The state is signalled loudly:
-# log, $DEGRADED_FLAG and the response header X-Proxy-Config-State (config-state.conf).
-# The next successful reload returns to the current configuration.
-LASTGOOD_DIR="/var/lib/apache-proxy/lastgood"
+# Every configuration that passed guard + configtest at start or reload is archived
+# root-only in $LASTGOOD_DIR (config-<UTC time>-<content hash>.tar.gz, source form:
+# sites/ AddOn/ config/ as Apache includes them) — only when it changed, the newest
+# $LASTGOOD_KEEP are kept. If the current configuration is rejected at a later start
+# (nightly restart, crash, recreate), the newest archive is unpacked and goes through
+# the same guard + configtest instead of a crash loop — a broken edit must never take
+# every site down. The state is signalled loudly: log, $DEGRADED_FLAG and the response
+# header X-Proxy-Config-State (config-state.conf). The next successful reload returns
+# to the current configuration. Older archives are for a manual rollback:
+#   tar -xzf config-….tar.gz -C <directory that holds sites/ AddOn/ config/>
+LASTGOOD_DIR="/var/lib/apache-proxy"
+LASTGOOD_KEEP="${LASTGOOD_KEEP:-30}"
+case "$LASTGOOD_KEEP" in
+    ''|*[!0-9]*|0) log "WARNING: LASTGOOD_KEEP must be a positive number — using 30"; LASTGOOD_KEEP=30 ;;
+esac
+LASTGOOD_USED=""
 DEGRADED_FLAG="/run/apache2/proxy-degraded"
+_lastgood_list() { ls -1 "$LASTGOOD_DIR"/config-*.tar.gz 2>/dev/null | LC_ALL=C sort || true; }
 _save_lastgood() {
-    mkdir -p /var/lib/apache-proxy && chmod 0700 /var/lib/apache-proxy
-    rm -rf -- "${LASTGOOD_DIR}.new"
-    if cp -a "$SNAP_DIR" "${LASTGOOD_DIR}.new" 2>/dev/null; then
-        date -u +%FT%TZ > "${LASTGOOD_DIR}.new/.saved-at"
-        rm -rf -- "$LASTGOOD_DIR"; mv -T "${LASTGOOD_DIR}.new" "$LASTGOOD_DIR"
-    else
-        rm -rf -- "${LASTGOOD_DIR}.new"
-        log "WARNING: could not save the last known good configuration"
+    local _sum _last _tmp _name
+    [ -d "$SNAP_SRC" ] || return 0
+    if ! { mkdir -p "$LASTGOOD_DIR" && chmod 0700 "$LASTGOOD_DIR"; }; then
+        log "WARNING: could not archive the configuration ($LASTGOOD_DIR not writable)"; return 0
     fi
+    rm -f -- "$LASTGOOD_DIR"/.tmp-*.tar.gz
+    _sum="$(cd "$SNAP_SRC" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum | sha256sum | cut -c1-12)" || true
+    _last="$(_lastgood_list | tail -n 1)"
+    # unchanged since the newest archive (restart, key rotation): nothing to keep
+    case "$_last" in *"-${_sum}.tar.gz") return 0 ;; esac
+    _name="config-$(date -u +%Y-%m-%dT%H-%M-%SZ)-${_sum}.tar.gz"
+    _tmp="$LASTGOOD_DIR/.tmp-$$.tar.gz"
+    if tar -C "$SNAP_SRC" -czf "$_tmp" sites AddOn config 2>/dev/null && chmod 0600 "$_tmp" \
+       && sync "$_tmp" && mv -f -- "$_tmp" "$LASTGOOD_DIR/$_name"; then
+        log "Configuration archived as last known good: $_name"
+        _lastgood_list | head -n -"$LASTGOOD_KEEP" | while IFS= read -r _f; do rm -f -- "$_f"; done || true
+    else
+        rm -f -- "$_tmp"
+        log "WARNING: could not archive the configuration"
+    fi
+    return 0
 }
 _restore_lastgood() {
-    local _out
-    [ -d "$LASTGOOD_DIR" ] || return 1
-    rm -rf -- "$SNAP_DIR" && cp -a "$LASTGOOD_DIR" "$SNAP_DIR" || return 1
-    # the saved copy lives on a volume and may come from an older image: it is only
-    # used if the guard of THIS image accepts it
-    if ! _out="$(GUARD_SITES="$SNAP_DIR/sites" GUARD_ADDON="$SNAP_DIR/AddOn" GUARD_CONFIG="$SNAP_DIR/config" \
-                 GUARD_INCLUDE_ROOT="$SNAP_DIR" timeout 30 /usr/local/bin/proxy-config-guard.sh 2>&1)"; then
-        printf '%s\n' "$_out" | head -20 | while IFS= read -r _l; do log "config guard (last known good): $_l"; done
-        rm -rf -- "$SNAP_DIR"
-        return 1
+    local _last _x="/run/apache2/lastgood-src" _rc=0
+    _last="$(_lastgood_list | tail -n 1)"
+    [ -n "$_last" ] || return 1
+    LASTGOOD_USED="$(basename "$_last")"
+    rm -rf -- "$_x" && mkdir -m 0700 "$_x" || return 1
+    if tar -C "$_x" -xzf "$_last" 2>/dev/null; then
+        _build_snapshot "$_x" "config guard (last known good)" || _rc=1
+    else
+        log "config guard (last known good): ${LASTGOOD_USED} could not be unpacked"
+        _rc=1
     fi
+    rm -rf -- "$_x"
+    return "$_rc"
 }
 
 # ── Config guard + configtest — before root parses the configuration ──────────
@@ -917,12 +948,12 @@ fi
 if [ -z "$_start_reject" ]; then
     _save_lastgood
 elif _restore_lastgood && apache2ctl configtest >/dev/null 2>&1; then
-    _lg_saved="$(cat "$LASTGOOD_DIR/.saved-at" 2>/dev/null || echo unknown)"
-    printf 'current configuration rejected at start %s; running last known good configuration saved %s\n' \
+    _lg_saved="${LASTGOOD_USED:-unknown}"
+    printf 'current configuration rejected at start %s; running last known good configuration %s\n' \
         "$(date -u +%FT%TZ)" "$_lg_saved" > "$DEGRADED_FLAG"
     chmod 0644 "$DEGRADED_FLAG"
     log "ERROR: ${_start_reject}"
-    log "ERROR: STARTING WITH THE LAST KNOWN GOOD CONFIGURATION (saved ${_lg_saved}) — fix the configuration, then request a reload."
+    log "ERROR: STARTING WITH THE LAST KNOWN GOOD CONFIGURATION (${_lg_saved}) — fix the configuration, then request a reload."
 else
     die "${_start_reject} — no usable last known good configuration"
 fi
