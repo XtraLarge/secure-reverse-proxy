@@ -930,7 +930,7 @@ docker run --rm --entrypoint sh -v "$RB_DIR:/x" "$IMAGE" -c 'rm -rf /x/* /x/.[!.
 rm -rf "$RB_DIR" 2>/dev/null || true
 
 echo ""
-echo "[44] last known good survives a container recreate (volume) and is re-checked by the guard"
+echo "[44] last known good archives: volume, only on change, retention, recreate, guard"
 LG_DIR=$(mktemp -d)
 mkdir -p "$LG_DIR/sites" "$LG_DIR/AddOn" "$LG_DIR/config"
 cp "$SCRIPT_DIR/sites-enabled/"*.conf "$LG_DIR/sites/"
@@ -938,6 +938,7 @@ cp -R "$SCRIPT_DIR/AddOn/." "$LG_DIR/AddOn/"
 chmod -R a+rwX "$LG_DIR"
 LG_NAME="srp-lg-$$"
 LG_VOL="srp-lg-$$"
+LG_ENV="LG_UNUSED=1"
 docker volume create "$LG_VOL" >/dev/null
 lg_run() {
     docker rm -f "$LG_NAME" >/dev/null 2>&1 || true
@@ -946,13 +947,16 @@ lg_run() {
         --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges:true \
         -v "$SCRIPT_DIR/ssl:/etc/apache2/ssl:ro" -v "$LG_DIR/sites:/etc/apache2/sites" \
         -v "$LG_DIR/AddOn:/etc/apache2/AddOn" -v "$LG_DIR/config:/etc/apache2/config" \
-        -v "$LG_VOL:/var/lib/apache-proxy" \
+        -v "$LG_VOL:/var/lib/apache-proxy" -e "$LG_ENV" \
         -e OIDC_PROVIDER_METADATA_URL=https://iam.example.com/.well-known/openid-configuration \
         -e OIDC_CLIENT_SECRET=x -e OIDC_CRYPTO_PASSPHRASE=x \
         -e OIDC_COOKIE_DOMAIN=test.example.com -e REDIS_HOST=127.0.0.1 \
         "$IMAGE" >/dev/null
     sleep 12
 }
+# helper container on the volume (as root, like the host)
+lg_vol() { docker run --rm --entrypoint sh -v "$LG_VOL:/x" -v "$LG_DIR:/src" "$IMAGE" -c "$1" 2>/dev/null; }
+lg_count() { lg_vol 'ls /x/config-*.tar.gz 2>/dev/null | wc -l' | tr -d ' '; }
 lg_state() { docker exec "$LG_NAME" sh -c 'curl -sI --max-time 3 http://localhost/ | grep -ci "^X-Proxy-Config-State: last-known-good"' 2>/dev/null || true; }
 
 # [44a] the image declares the state directory as a volume
@@ -962,32 +966,85 @@ else
     fail "[44a] /var/lib/apache-proxy is not declared as a volume"
 fi
 
-# [44b] good start saves the config; a NEW container with a rejected config uses it
+# [44b] first good start: one archive, flat in the volume, root-only, source form
 lg_run
+LG_B="$(lg_vol 'cd /x && f=$(ls config-*.tar.gz) && set -- $f && [ $# = 1 ] && case "$1" in config-????-??-??T??-??-??Z-????????????.tar.gz) ;; *) exit 1;; esac && [ "$(stat -c %a "$1")" = 600 ] && [ "$(stat -c %a /x)" = 700 ] && tar -tzf "$1" | grep -q "^sites/" && tar -tzf "$1" | grep -q "^AddOn/" && tar -tzf "$1" | grep -q "^config/" && ! tar -xzOf "$1" | grep -q "/run/apache2/cfg" && echo OK')"
+if [ "$LG_B" = OK ]; then
+    pass "[44b] one archive config-<time>-<hash>.tar.gz (0600, dir 0700) with sites/ AddOn/ config/ in source form"
+else
+    fail "[44b] archive missing or wrong format"
+    lg_vol 'ls -la /x' || true
+fi
+
+# [44c] unchanged config (restart) -> no new archive; changed config (reload) -> new archive
+docker restart -t 10 "$LG_NAME" >/dev/null 2>&1 || true
+sleep 12
+LG_C1="$(lg_count)"
+docker run --rm --entrypoint sh -v "$LG_DIR/AddOn:/x" "$IMAGE" -c \
+    'd=$(ls -d /x/*/ | head -1) && echo "# archive test" > "${d}zz-archive-test.preconfig" && chmod 0666 "${d}zz-archive-test.preconfig"' >/dev/null 2>&1 || true
+LG_T="$(date -u +%FT%TZ)"
+docker exec -u www-data "$LG_NAME" touch /run/apache-proxy/reload-requested 2>/dev/null || true
+sleep 14
+LG_C2="$(lg_count)"
+if [ "$LG_C1" = 1 ] && [ "$LG_C2" = 2 ] && docker logs --since "$LG_T" "$LG_NAME" 2>&1 | grep -q "Configuration archived"; then
+    pass "[44c] restart without change keeps 1 archive, reload with change adds one"
+else
+    fail "[44c] archive count after restart/reload: ${LG_C1}/${LG_C2} (expected 1/2)"
+    docker logs --since "$LG_T" "$LG_NAME" 2>&1 | tail -10 || true
+fi
+
+# [44d] retention: only the newest LASTGOOD_KEEP archives stay
+lg_vol 'for d in 01 02 03; do : > /x/config-2000-01-${d}T00-00-00Z-000000000000.tar.gz; done' >/dev/null || true
+docker run --rm --entrypoint sh -v "$LG_DIR/AddOn:/x" "$IMAGE" -c \
+    'f=$(ls /x/*/zz-archive-test.preconfig | head -1) && echo "# archive test 2" > "$f"' >/dev/null 2>&1 || true
+LG_ENV="LASTGOOD_KEEP=2"
+lg_run
+LG_ENV="LG_UNUSED=1"
+LG_D="$(lg_count)"
+if [ "$LG_D" = 2 ] && [ -z "$(lg_vol 'ls /x | grep 2000-01')" ]; then
+    pass "[44d] LASTGOOD_KEEP=2 keeps the 2 newest archives, older ones removed"
+else
+    fail "[44d] retention: ${LG_D} archives (expected 2)"
+    lg_vol 'ls -la /x' || true
+fi
+
+# [44e] NEW container (recreate) with a rejected config starts with the newest archive
 docker rm -f "$LG_NAME" >/dev/null 2>&1 || true
 docker run --rm --entrypoint sh -v "$LG_DIR/sites:/x" "$IMAGE" -c \
     'printf "ErrorLog \"|/bin/true\"\n" > /x/zz-evil.conf && chmod 0666 /x/zz-evil.conf' >/dev/null 2>&1 || true
 lg_run
 if [ "$(docker inspect -f '{{.State.Running}}' "$LG_NAME" 2>/dev/null)" = "true" ] && [ "$(lg_state)" = 1 ] \
-   && docker logs "$LG_NAME" 2>&1 | grep -q "LAST KNOWN GOOD"; then
-    pass "[44b] recreated container with a rejected config starts with the saved config"
+   && docker logs "$LG_NAME" 2>&1 | grep -q "LAST KNOWN GOOD CONFIGURATION (config-" \
+   && [ "$(lg_count)" = 2 ]; then
+    pass "[44e] recreated container with a rejected config runs the newest archive (no new archive)"
 else
-    fail "[44b] recreated container did not use the saved config"
+    fail "[44e] recreated container did not use the newest archive"
     docker logs "$LG_NAME" 2>&1 | tail -15 || true
 fi
 
-# [44c] a saved config that this image's guard rejects is not used (fail closed)
+# [44f] newest archive rejected by this image's guard -> not used, no fallback to older ones
 docker rm -f "$LG_NAME" >/dev/null 2>&1 || true
-docker run --rm --entrypoint sh -v "$LG_VOL:/x" "$IMAGE" -c \
-    'f=$(ls /x/lastgood/sites/*.conf | head -1) && printf "ErrorLog \"|/bin/true\"\n" >> "$f"' >/dev/null 2>&1 || true
+lg_vol 'cd /x && f=$(ls config-*.tar.gz | sort | tail -1) && mkdir /tmp/u && tar -C /tmp/u -xzf "$f" && s=$(ls /tmp/u/sites/*.conf | head -1) && printf "ErrorLog \"|/bin/true\"\n" >> "$s" && tar -C /tmp/u -czf "$f" sites AddOn config' >/dev/null || true
 lg_run
 if [ "$(docker inspect -f '{{.State.Running}}' "$LG_NAME" 2>/dev/null)" = "false" ] \
    && docker logs "$LG_NAME" 2>&1 | grep -q "config guard (last known good)" \
    && docker logs "$LG_NAME" 2>&1 | grep -q "no usable last known good"; then
-    pass "[44c] saved config rejected by the current guard is not used, start refused"
+    pass "[44f] newest archive rejected by the current guard is not used, start refused"
 else
-    fail "[44c] a saved config the guard rejects was used or the start did not fail"
+    fail "[44f] an archive the guard rejects was used or the start did not fail"
     docker logs "$LG_NAME" 2>&1 | tail -15 || true
+fi
+
+# [44g] unreadable (truncated) archive -> start refused
+docker rm -f "$LG_NAME" >/dev/null 2>&1 || true
+lg_vol 'cd /x && f=$(ls config-*.tar.gz | sort | tail -1) && : > "$f"' >/dev/null || true
+lg_run
+if [ "$(docker inspect -f '{{.State.Running}}' "$LG_NAME" 2>/dev/null)" = "false" ] \
+   && docker logs "$LG_NAME" 2>&1 | grep -q "could not be unpacked"; then
+    pass "[44g] truncated archive is not used, start refused"
+else
+    fail "[44g] truncated archive not handled"
+    docker logs "$LG_NAME" 2>&1 | tail -10 || true
 fi
 
 docker rm -f "$LG_NAME" >/dev/null 2>&1 || true
