@@ -891,8 +891,17 @@ _save_lastgood() {
     fi
 }
 _restore_lastgood() {
+    local _out
     [ -d "$LASTGOOD_DIR" ] || return 1
-    rm -rf -- "$SNAP_DIR" && cp -a "$LASTGOOD_DIR" "$SNAP_DIR"
+    rm -rf -- "$SNAP_DIR" && cp -a "$LASTGOOD_DIR" "$SNAP_DIR" || return 1
+    # the saved copy lives on a volume and may come from an older image: it is only
+    # used if the guard of THIS image accepts it
+    if ! _out="$(GUARD_SITES="$SNAP_DIR/sites" GUARD_ADDON="$SNAP_DIR/AddOn" GUARD_CONFIG="$SNAP_DIR/config" \
+                 GUARD_INCLUDE_ROOT="$SNAP_DIR" timeout 30 /usr/local/bin/proxy-config-guard.sh 2>&1)"; then
+        printf '%s\n' "$_out" | head -20 | while IFS= read -r _l; do log "config guard (last known good): $_l"; done
+        rm -rf -- "$SNAP_DIR"
+        return 1
+    fi
 }
 
 # ── Config guard + configtest — before root parses the configuration ──────────

@@ -381,9 +381,22 @@ Internal networks are never country-locked. A preconfig can still lift the lock 
 These directories are writable by the admin UI (www-data), while Apache's master runs
 as root. So Apache never parses them directly: before every start and reload the
 container copies them into a root-only snapshot (`/run/apache2/cfg`), checks the copy
-with `proxy-config-guard.sh` and only then reads it. A rejected configuration stops the
-start (fail closed) or skips the reload — Apache keeps the previous configuration — and
-the findings are logged; the admin UI shows them before saving.
+with `proxy-config-guard.sh` and only then reads it. A rejected configuration skips the
+reload — Apache keeps the previous configuration — and the findings are logged; the admin
+UI shows them before saving. Start and reload run the same preparation, so a reload rejects
+what the next start would reject.
+
+**Last known good.** After every successful start and reload the checked snapshot is saved
+in `/var/lib/apache-proxy` (root only, declared as a volume). If the configuration is
+rejected at start, the container starts with that saved configuration instead of failing,
+logs `STARTING WITH THE LAST KNOWN GOOD CONFIGURATION`, creates
+`/run/apache2/proxy-degraded` and sends the response header
+`X-Proxy-Config-State: last-known-good` — monitor this header. The saved configuration is
+checked by the guard of the running image before it is used. Without a saved
+configuration (or if it is rejected too) the start fails closed. `docker compose up`
+keeps the anonymous volume when it recreates the container; `docker compose down`
+removes the container and with it the link to that volume, so mount a named volume
+(`proxy-state:/var/lib/apache-proxy`) if the state must survive that as well.
 
 - `sites/*.conf`: only `Use <macro> …` lines (and `LogLevel`). The first two macro
   parameters must be plain site/domain names (no paths, no `..`).

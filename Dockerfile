@@ -122,7 +122,10 @@ RUN mkdir -p /etc/apache2/conf-runtime /etc/apache2/www /etc/apache2/sites /etc/
 #                   - oidc-clients/         Per-domain Keycloak credentials
 #                   - realm-oidcproxy.json  Keycloak realm import (optional)
 #
-VOLUME ["/etc/apache2/ssl", "/etc/letsencrypt", "/etc/apache2/sites", "/etc/apache2/AddOn", "/etc/apache2/config"]
+# /var/lib/apache-proxy: last known good configuration (root only); a volume so that it
+# survives a container recreate (docker compose keeps anonymous volumes on "up")
+RUN install -d -m 0700 /var/lib/apache-proxy
+VOLUME ["/etc/apache2/ssl", "/etc/letsencrypt", "/etc/apache2/sites", "/etc/apache2/AddOn", "/etc/apache2/config", "/var/lib/apache-proxy"]
 
 EXPOSE 80 443
 
