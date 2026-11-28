@@ -2583,6 +2583,29 @@ local function kc_create_client(domain, token)
     return nil, "Client angelegt, aber UUID nicht lesbar"
   end
 
+  -- Scopes only the admin session requests (OIDC_ADMIN_SCOPE minus OIDC_SCOPE, e.g.
+  -- "kc-admin-api") must be optional client scopes, otherwise Keycloak rejects the admin
+  -- login with invalid_scope. Attached after creation: passing optionalClientScopes on
+  -- create would replace the realm's default optional scopes.
+  do
+    local base_sc = {}
+    for w in (os.getenv("OIDC_SCOPE") or ""):gmatch("%S+") do base_sc[w] = true end
+    local extra = {}
+    for w in (os.getenv("OIDC_ADMIN_SCOPE") or ""):gmatch("%S+") do
+      if not base_sc[w] then extra[w] = true end
+    end
+    if next(extra) then
+      local st, sbody = kc_api_write("GET", "/client-scopes", nil, token)
+      for obj in (st == 200 and sbody or ""):gmatch("%b{}") do
+        local sname = obj:match('"name"%s*:%s*"([^"]+)"')
+        local sid   = obj:match('"id"%s*:%s*"([^"]+)"')
+        if sname and sid and extra[sname] then
+          kc_api_write("PUT", "/clients/" .. cuuid .. "/optional-client-scopes/" .. sid, nil, token)
+        end
+      end
+    end
+  end
+
   -- Groups claim mapper
   local mapper = json_enc({
     name           = "groups",

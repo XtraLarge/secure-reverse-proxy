@@ -152,6 +152,7 @@ Copy `.env.example` to `.env` and fill in your values.
 | `OIDC_CLIENT_SECRET` | ✓ | — | Client secret |
 | `OIDC_COOKIE_DOMAIN` | ✓ | — | Base domain for session cookies, e.g. `example.com` |
 | `OIDC_SCOPE` | — | `openid email` | OAuth2 scopes (must include `openid`) |
+| `OIDC_ADMIN_SCOPE` | — | `OIDC_SCOPE` | Scopes of the `admin.<domain>` session only, e.g. `openid email profile kc-admin-api`. See [Keycloak changes by the admin](#keycloak-changes-by-the-admin) |
 | `OIDC_REMOTE_USER_CLAIM` | — | `email` | Claim mapped to `REMOTE_USER` |
 | `OIDC_REDIRECT_PATH` | — | `/protected` | OIDC callback path |
 | `OIDC_CALLBACK_HOST` | — | — | Central OIDC callback host per domain, e.g. `auth` → `https://auth.<domain>/protected`. Empty: one redirect URI per vhost. See [Central OIDC callback](#central-oidc-callback) |
@@ -205,6 +206,7 @@ Copy `.env.example` to `.env` and fill in your values.
 | `KEYCLOAK_ROLE_PREFIX` | — | — | Only show/manage roles with this name prefix (e.g. `proxy-`). Empty = all roles. |
 | `KEYCLOAK_API_CLIENT_ID` | — | — | Confidential client with a service account (client credentials) used by the admin UI and the redirect-URI sync. Give it only the needed `realm-management` roles (in realm `master`: client `master-realm`): `view-users`, `query-users`, `manage-users`, `query-groups`, `view-clients`, `query-clients`, `manage-clients`, `view-realm`. |
 | `KEYCLOAK_API_CLIENT_SECRET` | — | — | Secret of that client (or `KEYCLOAK_API_CLIENT_SECRET_FILE`) |
+| `KEYCLOAK_REDIRECT_SYNC` | — | `write` | `write`: the entrypoint registers missing redirect URIs with the service account. `check`: it only checks them (no credentials); missing ones are shown in the admin UI and added there with the admin's own login |
 | `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASS` | — | — | Legacy: admin password grant via `admin-cli`. Only used if no service account is configured — prefer the service account. |
 
 ### Secrets as files
@@ -587,6 +589,27 @@ admin-console protection does the same). New vhosts need no IdP change.
   `https://auth.<domain>/protected` and `https://admin.<domain>/protected`, once. The admin UI
   ("create Keycloak client") creates the client with exactly these entries; without a dedicated
   client the entrypoint adds them to the default client. New vhosts of the domain need nothing.
+
+### Keycloak changes by the admin
+
+The admin UI calls the Keycloak Admin REST API with the **logged-in admin's own token**
+(the admin vhost always requires a login). Keycloak checks the admin's own roles and its
+admin events show who changed what; the proxy needs no stored Keycloak credentials.
+The service account (`KEYCLOAK_API_CLIENT_*`) is only a fallback.
+
+Keycloak 26.x accepts a token for the Admin REST API only with the matching audience:
+
+1. In Keycloak, add the client scope `kc-admin-api` (with the admin-API audience mapper)
+   as **optional** client scope to the domain clients (`proxy-<domain>`).
+2. Set `OIDC_ADMIN_SCOPE="openid email profile kc-admin-api"` (only the admin session asks
+   for it; normal logins are unchanged). Clients created by the admin UI get the extra
+   scopes of `OIDC_ADMIN_SCOPE` attached as optional scopes automatically.
+
+With `KEYCLOAK_REDIRECT_SYNC=check` the entrypoint does not write to Keycloak at all: on
+start/reload it checks every needed redirect URI through the public auth endpoint and
+lists missing ones in the log and on the admin UI's overview page. The button
+"In Keycloak eintragen (mit meinem Login)" adds them with the admin's token and re-checks
+them. The service account can then be disabled.
 
 ---
 
