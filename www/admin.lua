@@ -2319,9 +2319,25 @@ kc_token = function(r)
   -- Admin REST API only with its audience: request scope "kc-admin-api" for the admin
   -- session (OIDC_ADMIN_SCOPE) and assign it to the client as optional scope.
   local own = r and r.subprocess_env and r.subprocess_env["OIDC_access_token"] or ""
-  if own ~= "" then return own, nil end
+  local own_status
+  if own ~= "" then
+    -- Cheap probe: is the admin's token accepted for the Admin REST API (audience, roles,
+    -- not expired)? A Domain_Init admin is not necessarily a Keycloak admin.
+    own_status = kc_api_write("GET", "/clients?max=1&clientId="
+      .. (KC_CLIENT_ID ~= "" and KC_CLIENT_ID or "x") .. "&search=false", nil, own)
+    if own_status == 200 then return own, nil end
+  end
   -- Fallback (legacy): service account prepared by entrypoint.sh
   local f = io.open(KC_TOKEN_REQ, "r")
+  if not f and own_status then
+    if own_status == 401 then
+      return nil, "Keycloak lehnt die Admin-Sitzung ab (HTTP 401: Token abgelaufen oder ohne "
+        .. "Audience – OIDC_ADMIN_SCOPE mit kc-admin-api?). Bitte neu anmelden."
+    end
+    return nil, "Keycloak lehnt dein Konto ab (HTTP " .. tostring(own_status)
+      .. "): ihm fehlen Keycloak-Admin-Rollen (Realm master: Client master-realm, "
+      .. "z. B. view-clients, manage-clients, manage-users)."
+  end
   if not f then
     return nil, "Kein Keycloak-Zugang konfiguriert (KEYCLOAK_API_CLIENT_ID/_SECRET)"
   end

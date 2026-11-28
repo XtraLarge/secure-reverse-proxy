@@ -429,7 +429,13 @@ local function show_user_list(r, token, msg)
     r:puts('</div></body></html>')
     return apache2.OK
   elseif status ~= 200 and status ~= 0 then
-    r:puts('<div class="msg err">Keycloak-API-Fehler (HTTP ' .. tostring(status) .. ')</div>')
+    local hint = ""
+    if status == 401 then
+      hint = " – Token abgelaufen oder ohne Audience (OIDC_ADMIN_SCOPE mit kc-admin-api?); bitte neu anmelden"
+    elseif status == 403 then
+      hint = " – deinem Keycloak-Konto fehlen Admin-Rollen (z. B. view-users, manage-users)"
+    end
+    r:puts('<div class="msg err">Keycloak-API-Fehler (HTTP ' .. tostring(status) .. ')' .. hint .. '</div>')
     r:puts('</div></body></html>')
     return apache2.OK
   elseif status == 0 then

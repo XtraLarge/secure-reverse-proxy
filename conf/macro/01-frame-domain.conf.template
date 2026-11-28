@@ -234,6 +234,9 @@ MacroIgnoreEmptyArgs
     # Scope of the admin session (OIDC_ADMIN_SCOPE, default = OIDC_SCOPE). With "kc-admin-api"
     # (optional client scope in Keycloak) the admin's own token works for the Admin REST API.
     OIDCScope             "${OIDC_ADMIN_SCOPE}"
+    # The admin UI calls Keycloak with this session's access token, so keep it fresh.
+    # Safe here (unlike the site vhosts, see 40-secure-oidc): no SPA with parallel requests.
+    OIDCRefreshAccessTokenBeforeExpiry 60
     OIDCDefaultLoggedOutURL https://toc.$(DOMAINNAME)${HTTPS_PORT_SUFFIX}/
     DocumentRoot /var/www/html
     AddHandler lua-script .lua
