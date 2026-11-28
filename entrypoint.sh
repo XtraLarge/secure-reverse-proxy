@@ -53,6 +53,17 @@ export OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH="${OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH:-c
 export OIDC_REMOTE_USER_CLAIM="${OIDC_REMOTE_USER_CLAIM:-email}"
 export OIDC_SCOPE="${OIDC_SCOPE:-openid email}"
 export OIDC_REDIRECT_PATH="${OIDC_REDIRECT_PATH:-/protected}"
+# Optional central OIDC callback host per domain (e.g. "auth" -> https://auth.<domain>/protected).
+# Empty = one redirect URI per vhost (previous behaviour). See 40-secure-oidc.conf OIDCBASE.
+export OIDC_CALLBACK_HOST="${OIDC_CALLBACK_HOST:-}"
+if [[ -n "${OIDC_CALLBACK_HOST}" ]]; then
+    [[ "${OIDC_CALLBACK_HOST}" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] \
+        || die "OIDC_CALLBACK_HOST='${OIDC_CALLBACK_HOST}' is not a valid host label (a-z, 0-9, -)"
+    case "${OIDC_CALLBACK_HOST}" in
+        toc|logout|admin|geolock|iam|www)
+            die "OIDC_CALLBACK_HOST='${OIDC_CALLBACK_HOST}' collides with a built-in vhost (toc/logout/admin/geolock/iam/www)";;
+    esac
+fi
 export HTTPS_PORT="${HTTPS_PORT:-443}"
 [[ "${HTTPS_PORT}" == "443" ]] && export HTTPS_PORT_SUFFIX="" || export HTTPS_PORT_SUFFIX=":${HTTPS_PORT}"
 export OIDC_DEFAULT_LOGOUT_URL="${OIDC_DEFAULT_LOGOUT_URL:-https://logout.${OIDC_COOKIE_DOMAIN}${HTTPS_PORT_SUFFIX}/help?text=Logout%20successful!}"
@@ -148,6 +159,8 @@ _kc_register_redirect_uris() {
     _KC_REDIRECT_PATH="${OIDC_REDIRECT_PATH}" \
     _KC_HTTPS_PORT_SUFFIX="${HTTPS_PORT_SUFFIX}" \
     _KC_DEFAULT_CLIENT="${OIDC_CLIENT_ID}" \
+    _KC_CALLBACK_HOST="${OIDC_CALLBACK_HOST}" \
+    _KC_COOKIE_DOMAIN="${OIDC_COOKIE_DOMAIN}" \
     _KC_ADMIN_USER="${KEYCLOAK_ADMIN_USER}" \
     _KC_ADMIN_PASS="${KEYCLOAK_ADMIN_PASS:-}" \
     _KC_API_CLIENT_ID="${KEYCLOAK_API_CLIENT_ID:-}" \
@@ -218,6 +231,19 @@ if not servernames:
     print("[entrypoint] Keycloak: no vhosts found in site configs — skipping redirect URI sync",
           flush=True)
     raise SystemExit(0)
+
+# Central callback: per domain only <callback-host>.<domain> plus the hosts that keep
+# their own callback because they use separate session cookies (admin.<domain>, iam).
+cb_host = os.environ.get('_KC_CALLBACK_HOST', '')
+if cb_host:
+    domains = {sn.split('.', 1)[1] for sn in servernames if '.' in sn}
+    keep = {sn for sn in servernames if sn.split('.', 1)[0] == 'admin'}
+    ck_dom = os.environ.get('_KC_COOKIE_DOMAIN', '')
+    if ck_dom and DOMAIN_VALID.match(ck_dom):
+        keep.add(f"iam.{ck_dom}")
+    servernames = {f"{cb_host}.{d}" for d in domains} | keep
+    print(f"[entrypoint] Keycloak: central callback — {len(servernames)} redirect URI(s) "
+          f"for {len(domains)} domain(s)", flush=True)
 
 # ── Keycloak API helpers ──────────────────────────────────────────────────────
 m = re.match(r'(https?://[^/]+)(?:/admin)?(/realms/[^/?#]+)', kc_raw)
@@ -511,6 +537,17 @@ fi
 SERVERNAME_FILE="/etc/apache2/conf-runtime/servername.conf"
 log "Configuring Apache ServerName: ${APACHE_SERVER_NAME}"
 printf 'ServerName %s\n' "${APACHE_SERVER_NAME}" > "$SERVERNAME_FILE"
+
+# ── Central OIDC callback (Defines read by cfgroot.conf before macros/sites) ──
+CALLBACK_FILE="/etc/apache2/conf-runtime/oidc-callback.conf"
+if [[ -n "${OIDC_CALLBACK_HOST}" ]]; then
+    printf 'Define OIDC_CALLBACK_HOST %s\nDefine OIDC_CENTRAL_CALLBACK\n' "${OIDC_CALLBACK_HOST}" > "$CALLBACK_FILE"
+    log "OIDC: central callback https://${OIDC_CALLBACK_HOST}.<domain>${HTTPS_PORT_SUFFIX}${OIDC_REDIRECT_PATH} (admin.<domain> and iam keep their own)"
+else
+    # Placeholder only, keeps \${OIDC_CALLBACK_HOST} defined; OIDC_CENTRAL_CALLBACK stays undefined.
+    printf 'Define OIDC_CALLBACK_HOST auth\n' > "$CALLBACK_FILE"
+fi
+chmod 644 "$CALLBACK_FILE"
 
 # ── Process config templates ──────────────────────────────────────────────────
 # envsubst receives an explicit variable list so that Apache mod_macro syntax

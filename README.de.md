@@ -155,6 +155,7 @@ nie in git eingecheckt.
 | `OIDC_SCOPE` | — | `openid email` | OAuth2-Scopes (muss `openid` enthalten) |
 | `OIDC_REMOTE_USER_CLAIM` | — | `email` | Claim, der als `REMOTE_USER` gesetzt wird |
 | `OIDC_REDIRECT_PATH` | — | `/protected` | OIDC-Callback-Pfad |
+| `OIDC_CALLBACK_HOST` | — | — | Zentraler OIDC-Rücksprung pro Domain, z. B. `auth` → `https://auth.<domain>/protected`. Leer: eine Redirect-URI je vhost. Siehe [Zentraler OIDC-Rücksprung](#zentraler-oidc-rücksprung) |
 | `OIDC_DEFAULT_LOGOUT_URL` | — | automatisch | Weiterleitungsziel nach dem Logout |
 | `OIDC_CRYPTO_PASSPHRASE` | — | automatisch | Schlüssel für die Session-Verschlüsselung; ohne Angabe automatisch erzeugt und täglich rotiert |
 | `OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH` | — | `client_secret_basic` | Authentifizierung am Token-Endpunkt |
@@ -549,6 +550,34 @@ Jeder OIDC-konforme Provider funktioniert (Authentik, Dex, Azure AD, Google, …
 `OIDC_PROVIDER_METADATA_URL` auf den Discovery-Endpunkt des Providers setzen und
 als Redirect-URI `https://*.example.com/<OIDC_REDIRECT_PATH>` eintragen.
 Die Keycloak-spezifischen Admin-Funktionen stehen dann nicht zur Verfügung.
+
+### Zentraler OIDC-Rücksprung
+
+Standardmäßig hat jeder OIDC-vhost seine eigene Redirect-URI `https://<site>.<domain>/protected`.
+Keycloak erlaubt keine Platzhalter für Subdomains, also braucht jeder neue vhost einen neuen
+Eintrag im Client. Der Entrypoint trägt sie bei Start/Reload ein; scheitert dieser Abgleich
+(z. B. fehlende Rechte nach einem Keycloak-Update), endet der Login der neuen Site mit
+„Ungültiger Parameter: redirect_uri“.
+
+Mit `OIDC_CALLBACK_HOST=auth` nutzen alle vhosts einer Domain einen Rücksprung,
+`https://auth.<domain>/protected` (vhost aus `Domain_Init`). Session- und State-Cookies gelten
+schon domainweit (`OIDCCookieDomain`), daher schließt der Callback-Host den Login ab und schickt
+den Browser zur ursprünglichen Adresse zurück. Im IdP-Client stehen dann nur noch
+`https://auth.<domain>/protected` und `https://admin.<domain>/protected` (der Admin-vhost behält
+seinen eigenen Rücksprung wegen des getrennten Session-Cookies; ebenso der generierte Schutz der
+`iam`-Admin-Konsole). Neue vhosts brauchen keine Änderung im IdP.
+
+- `/protected` der übrigen vhosts (Logout-Links, Seite „falsches Konto“) wird auf den
+  Callback-Host umgeleitet; Logout-/Weiterleitungsziele sind auf die Domain begrenzt
+  (`OIDCRedirectURLsAllowed`).
+- Andere Pfade auf dem Callback-Host leiten auf `toc.<domain>` weiter.
+- DNS und TLS-Zertifikat müssen `auth.<domain>` abdecken (Wildcard genügt).
+- Alte Redirect-URIs je vhost bleiben eingetragen; nach erfolgreicher Umstellung im IdP entfernen.
+- **Neue Domain:** `Domain_Init` legt den Callback-vhost an; der Client der Domain braucht genau
+  `https://auth.<domain>/protected` und `https://admin.<domain>/protected`, einmalig. Die
+  Admin-Oberfläche („Keycloak-Client anlegen“) legt den Client direkt mit diesen Einträgen an;
+  ohne eigenen Client trägt der Entrypoint sie im Standard-Client ein. Neue vhosts der Domain
+  brauchen nichts.
 
 ---
 

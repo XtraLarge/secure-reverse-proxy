@@ -101,6 +101,35 @@ MacroIgnoreEmptyArgs
 
   </VirtualHost>
 
+  # CALLBACK vhost (only with OIDC_CALLBACK_HOST): the single OIDC redirect URI of the
+  # domain. Serves nothing else — every other path goes to the TOC.
+  <IfDefine OIDC_CENTRAL_CALLBACK>
+  <VirtualHost *:80>
+    ServerName ${OIDC_CALLBACK_HOST}.$(DOMAINNAME)
+    USE LOGGING http-default $(DOMAINNAME)
+    USE DEFAULTS
+    USE REWRITE2URL "https://${OIDC_CALLBACK_HOST}.$(DOMAINNAME)${HTTPS_PORT_SUFFIX}"
+  </VirtualHost>
+
+  <VirtualHost *:443>
+    ServerName ${OIDC_CALLBACK_HOST}.$(DOMAINNAME)
+    USE LOGGING callback $(DOMAINNAME)
+    USE DEFAULTS
+    USE SSL $(DOMAINNAME)
+    USE SECURITY_HEADERS
+    USE OIDCBASE ${OIDC_CALLBACK_HOST} $(DOMAINNAME)
+    RewriteEngine On
+    RewriteCond %{REQUEST_URI} !^(${OIDC_REDIRECT_PATH}|/\.well-known/acme-challenge/)
+    RewriteRule ^ https://toc.$(DOMAINNAME)${HTTPS_PORT_SUFFIX}/ [R=302,L]
+    # Like the logout vhost: only valid-user, no internal-network bypass — otherwise
+    # Apache authorizes internal clients by IP and mod_auth_openidc never sees the callback.
+    <Location ${OIDC_REDIRECT_PATH}>
+      AuthType openid-connect
+      Require valid-user
+    </Location>
+  </VirtualHost>
+  </IfDefine>
+
   # ── Infrastruktur-VHosts, fest im Frame gekapselt ──────────────────────────
   # Admin- und GeoLock-Verwaltungsoberflaeche gehoeren zum Grundsystem und
   # werden hier IM Frame eingebunden, damit sie durch Bearbeiten des Domain-
@@ -197,6 +226,9 @@ MacroIgnoreEmptyArgs
     USE CLIENTOIDC_CLAIM_STRICT admin $(DOMAINNAME) '$(ADMINUSER)'
     OIDCCookie            admin.$(DOMAINNAME)-Auth-Session
     OIDCStateCookiePrefix admin.$(DOMAINNAME)-Auth-State-
+    # Own callback even with OIDC_CALLBACK_HOST: the admin session uses its own cookie
+    # names, the central callback host would not find the admin state cookie.
+    OIDCRedirectURI       https://admin.$(DOMAINNAME)${HTTPS_PORT_SUFFIX}${OIDC_REDIRECT_PATH}
     OIDCUnAutzAction      auth
     OIDCAuthRequestParams prompt=login
     OIDCDefaultLoggedOutURL https://toc.$(DOMAINNAME)${HTTPS_PORT_SUFFIX}/

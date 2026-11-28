@@ -53,7 +53,28 @@
   OIDCRemoteUserClaim             ${OIDC_REMOTE_USER_CLAIM}
   OIDCScope                       "${OIDC_SCOPE}"
 
-  OIDCRedirectURI                 https://$(SITENAME).$(DOMAINNAME)${HTTPS_PORT_SUFFIX}${OIDC_REDIRECT_PATH}
+  # Redirect URI (OIDC callback).
+  #  - default: one per vhost, https://<site>.<domain>/protected — every vhost needs its
+  #    own entry in the IdP client (registered by the entrypoint on start/reload).
+  #  - OIDC_CALLBACK_HOST set (Define OIDC_CENTRAL_CALLBACK): one callback per domain,
+  #    https://<callback-host>.<domain>/protected (vhost from Domain_Init). The session and
+  #    state cookies are domain-wide (OIDCCookieDomain below), so the callback host can
+  #    finish the login and send the browser back to the original URL. New vhosts then
+  #    need no IdP change at all. /protected on the other vhosts (logout links, the
+  #    "wrong account" page) is redirected to the callback host.
+  #    Exception: admin.<domain> keeps its own callback (separate session cookie, see Admin_VHost).
+  <IfDefine !OIDC_CENTRAL_CALLBACK>
+    OIDCRedirectURI               https://$(SITENAME).$(DOMAINNAME)${HTTPS_PORT_SUFFIX}${OIDC_REDIRECT_PATH}
+  </IfDefine>
+  <IfDefine OIDC_CENTRAL_CALLBACK>
+    OIDCRedirectURI               https://${OIDC_CALLBACK_HOST}.$(DOMAINNAME)${HTTPS_PORT_SUFFIX}${OIDC_REDIRECT_PATH}
+    # Logout/redirect targets: only hosts of this domain (the callback host differs from
+    # the vhost the user came from, so the default same-host check would reject them).
+    OIDCRedirectURLsAllowed       ^https://([A-Za-z0-9-]+\.)*$(DOMAINNAME)(:[0-9]+)?(/|$)
+    RewriteEngine On
+    RewriteCond %{SERVER_NAME} !^(${OIDC_CALLBACK_HOST}|admin)\.
+    RewriteRule ^${OIDC_REDIRECT_PATH}$ https://${OIDC_CALLBACK_HOST}.$(DOMAINNAME)${HTTPS_PORT_SUFFIX}${OIDC_REDIRECT_PATH} [R=302,L]
+  </IfDefine>
   # Passphrase written at startup + rotated daily — see /etc/apache2/conf-runtime/oidc-passphrase.conf
   <IfDefine !ADMIN_CONFIGTEST>
     Include /etc/apache2/conf-runtime/oidc-passphrase.conf

@@ -11,6 +11,22 @@ local SITES_DIR = "/etc/apache2/sites/"
 local ADDON_DIR = "/etc/apache2/AddOn/"
 local OIDC_DIR  = "/etc/apache2/config/oidc-clients/"
 local HTTPS_PORT_SUFFIX = os.getenv("HTTPS_PORT_SUFFIX") or ""
+-- Central OIDC callback host (OIDC_CALLBACK_HOST, e.g. "auth"); empty = one redirect URI per vhost.
+local OIDC_CALLBACK_HOST = os.getenv("OIDC_CALLBACK_HOST") or ""
+
+-- Redirect URIs a domain's IdP client needs in central-callback mode:
+-- the callback host, admin.<domain> (own session cookie) and, for the cookie domain,
+-- iam.<domain> (generated admin-console protection, also own cookie).
+local function central_redirect_uris(domain)
+  local uris = {
+    "https://" .. OIDC_CALLBACK_HOST .. "." .. domain .. HTTPS_PORT_SUFFIX .. "/protected",
+    "https://admin." .. domain .. HTTPS_PORT_SUFFIX .. "/protected",
+  }
+  if domain == (os.getenv("OIDC_COOKIE_DOMAIN") or "") then
+    table.insert(uris, "https://iam." .. domain .. HTTPS_PORT_SUFFIX .. "/protected")
+  end
+  return uris
+end
 
 local _lfs   = (function() local ok, m = pcall(require, 'lfs');   return ok and m end)()
 local _posix = (function() local ok, m = pcall(require, 'posix'); return ok and m end)()  -- lua-posix needs Lua 5.4 build; nil on bookworm
@@ -2363,11 +2379,16 @@ kc_sync_redirects = function(domain, token)
   if not uuid then return false, "Client proxy-" .. domain .. " nicht gefunden" end
 
   local uris = {}
-  for _, n in ipairs({ "toc", "logout", "admin" }) do
-    table.insert(uris, "https://" .. n .. "." .. domain .. HTTPS_PORT_SUFFIX .. "/protected")
-  end
-  for _, name in ipairs(_collect_oidc_names(domain)) do
-    table.insert(uris, "https://" .. name .. "." .. domain .. HTTPS_PORT_SUFFIX .. "/protected")
+  if OIDC_CALLBACK_HOST ~= "" then
+    -- Central callback: never write the per-vhost list (it would drop the callback host).
+    uris = central_redirect_uris(domain)
+  else
+    for _, n in ipairs({ "toc", "logout", "admin" }) do
+      table.insert(uris, "https://" .. n .. "." .. domain .. HTTPS_PORT_SUFFIX .. "/protected")
+    end
+    for _, name in ipairs(_collect_oidc_names(domain)) do
+      table.insert(uris, "https://" .. name .. "." .. domain .. HTTPS_PORT_SUFFIX .. "/protected")
+    end
   end
 
   local status, rbody = kc_api_write("PUT", "/clients/" .. uuid,
@@ -2433,7 +2454,10 @@ kc_create_group = function(name, token)
   local cmd2 = string.format('curl -s -k -H @%s "%s/groups?max=200" 2>/dev/null', tmp2, base)
   local p2 = io.popen(cmd2); local out2 = p2:read("*a"); p2:close()
   os.remove(tmp2)
-  local esc = name:gsub("%-","%%%-"):gsub("%.","%%%%.")
+  -- Escape all Lua pattern magic characters ("%%%0" = literal % + the match).
+  -- The old gsub("%-","%%%-") raised "invalid use of '%' in replacement string"
+  -- for every name with "-" (group names always: <domain>-admins/-users).
+  local esc = (name:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"))
   for block in out2:gmatch("%b{}") do
     if block:find('"name"%s*:%s*"' .. esc .. '"') then
       local gid = block:match('"id"%s*:%s*"([^"]+)"')
@@ -2494,7 +2518,10 @@ local function kc_create_client(domain, token)
     standardFlowEnabled    = true,
     directAccessGrantsEnabled = false,
     serviceAccountsEnabled = false,
-    redirectUris           = { "https://*." .. domain .. HTTPS_PORT_SUFFIX .. "/protected" },
+    -- Central callback: the client works right away with exactly these entries.
+    -- Otherwise the entrypoint adds the per-vhost URIs on the reload below.
+    redirectUris           = (OIDC_CALLBACK_HOST ~= "") and central_redirect_uris(domain)
+                             or { "https://*." .. domain .. HTTPS_PORT_SUFFIX .. "/protected" },
     webOrigins             = { "https://*." .. domain .. HTTPS_PORT_SUFFIX },
     attributes             = { ["post.logout.redirect.uris"] = "https://logout." .. domain .. HTTPS_PORT_SUFFIX .. "/*"
                                .. (TOC_DOMAIN ~= "" and ("##https://admin." .. TOC_DOMAIN .. HTTPS_PORT_SUFFIX .. "/*") or "") },
