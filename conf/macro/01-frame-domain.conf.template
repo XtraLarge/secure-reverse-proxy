@@ -231,6 +231,9 @@ MacroIgnoreEmptyArgs
     OIDCRedirectURI       https://admin.$(DOMAINNAME)${HTTPS_PORT_SUFFIX}${OIDC_REDIRECT_PATH}
     OIDCUnAutzAction      auth
     OIDCAuthRequestParams prompt=login
+    # Scope of the admin session (OIDC_ADMIN_SCOPE, default = OIDC_SCOPE). With "kc-admin-api"
+    # (optional client scope in Keycloak) the admin's own token works for the Admin REST API.
+    OIDCScope             "${OIDC_ADMIN_SCOPE}"
     OIDCDefaultLoggedOutURL https://toc.$(DOMAINNAME)${HTTPS_PORT_SUFFIX}/
     DocumentRoot /var/www/html
     AddHandler lua-script .lua

@@ -685,9 +685,37 @@ local function do_geolock_site(r, post, show)
   show(r, "OK: GeoLock f\xC3\xBCr " .. name .. "." .. domain .. " = " .. mode .. " \xE2\x80\x94 Konfiguration noch anwenden!")
 end
 
+-- Redirect URIs missing in Keycloak, found by the entrypoint (KEYCLOAK_REDIRECT_SYNC=check).
+-- One line per entry: "<client-id> <redirect-uri>".
+local KC_MISSING_FILE = "/run/apache-proxy/kc-redirects-missing.txt"
+local function kc_missing_read()
+  local list = {}
+  local f = io.open(KC_MISSING_FILE, "r")
+  if not f then return list end
+  for line in f:lines() do
+    local cid, uri = line:match("^(%S+)%s+(https://%S+)$")
+    if cid then table.insert(list, { cid = cid, uri = uri }) end
+  end
+  f:close()
+  return list
+end
+
 local function show_list(r, msg)
   r:puts(page_head("Übersicht"))
   if msg then r:puts(msg_html(msg)) end
+  local kc_missing = kc_missing_read()
+  if #kc_missing > 0 then
+    r:puts('<div class="card" style="border-color:#ffee66">')
+    r:puts('<b>\xE2\x9A\xA0\xEF\xB8\x8F In Keycloak fehlen Redirect-URIs</b> '
+      .. '<span style="color:#aaa;font-size:.9em">(Login dieser Sites endet sonst mit '
+      .. '\xE2\x80\x9EUng\xC3\xBCltiger Parameter: redirect_uri\xE2\x80\x9C)</span><ul>')
+    for _, m in ipairs(kc_missing) do
+      r:puts('<li><code>' .. h(m.uri) .. '</code> im Client <code>' .. h(m.cid) .. '</code></li>')
+    end
+    r:puts('</ul><form method="POST" action="/?action=kc_redirects_confirm" style="margin:0">'
+      .. '<button class="btn b-apply" type="submit">In Keycloak eintragen (mit meinem Login)</button>'
+      .. '</form></div>')
+  end
 
   r:puts('<div class="main">')
   r:puts('<div class="applybar">')
@@ -2285,6 +2313,14 @@ kc_token = function(r)
   if KC_ADMIN_URL == "" then
     return nil, "KEYCLOAK_ADMIN_URL nicht gesetzt"
   end
+  -- Preferred: the logged-in admin's own access token (the admin vhost always requires a
+  -- login). Keycloak then checks the admin's own roles and logs who changed what; the
+  -- proxy needs no stored Keycloak credentials. Keycloak >= 26.x accepts the token for the
+  -- Admin REST API only with its audience: request scope "kc-admin-api" for the admin
+  -- session (OIDC_ADMIN_SCOPE) and assign it to the client as optional scope.
+  local own = r and r.subprocess_env and r.subprocess_env["OIDC_access_token"] or ""
+  if own ~= "" then return own, nil end
+  -- Fallback (legacy): service account prepared by entrypoint.sh
   local f = io.open(KC_TOKEN_REQ, "r")
   if not f then
     return nil, "Kein Keycloak-Zugang konfiguriert (KEYCLOAK_API_CLIENT_ID/_SECRET)"
@@ -3212,6 +3248,64 @@ local function do_htpasswd_delete(r, post)
   else      show_htpasswd(r, "OK: Benutzer '" .. h(username) .. "' gel\xC3\xB6scht") end
 end
 
+-- Confirm missing redirect URIs: add them with the admin's own token, then re-check them
+-- through the public auth endpoint and rewrite the list (only still-missing entries stay).
+local function kc_public_auth_ok(cid, uri)
+  local realm = KC_ADMIN_URL:gsub("/admin/realms/", "/realms/", 1)
+  local url = realm .. "/protocol/openid-connect/auth?response_type=code&scope=openid&client_id="
+    .. cid:gsub("[^%w%-%._~]", function(c) return string.format("%%%02X", c:byte()) end)
+    .. "&redirect_uri=" .. uri:gsub("[^%w%-%._~]", function(c) return string.format("%%%02X", c:byte()) end)
+  local p = io.popen('curl -s -k --max-time 10 -o /dev/null -w "%{http_code}" "' .. url .. '" 2>/dev/null')
+  local code = p:read("*a"); p:close()
+  return code == "200"
+end
+
+local function do_kc_redirects_confirm(r)
+  local tok, err = kc_token(r)
+  if not tok then return show_list(r, "ERR Keycloak-Token: " .. (err or "")) end
+  local by_client, order = {}, {}
+  for _, m in ipairs(kc_missing_read()) do
+    if not by_client[m.cid] then by_client[m.cid] = {}; table.insert(order, m.cid) end
+    table.insert(by_client[m.cid], m.uri)
+  end
+  if #order == 0 then return show_list(r, "OK Keine fehlenden Redirect-URIs") end
+  local msgs, failed = {}, false
+  for _, cid in ipairs(order) do
+    local st, body = kc_api_write("GET", "/clients?clientId=" .. cid .. "&search=false", nil, tok)
+    local uuid = st == 200 and body:match('"id"%s*:%s*"([^"]+)"')
+    if not uuid then
+      failed = true
+      table.insert(msgs, cid .. ": Client nicht lesbar (HTTP " .. tostring(st) .. ")")
+    else
+      local st2, cbody = kc_api_write("GET", "/clients/" .. uuid, nil, tok)
+      local uris, seen = {}, {}
+      local arr = st2 == 200 and cbody:match('"redirectUris"%s*:%s*%[(.-)%]') or ""
+      for u in arr:gmatch('"([^"]+)"') do if not seen[u] then seen[u] = true; table.insert(uris, u) end end
+      for _, u in ipairs(by_client[cid]) do if not seen[u] then seen[u] = true; table.insert(uris, u) end end
+      local st3, rb = kc_api_write("PUT", "/clients/" .. uuid, json_enc({ redirectUris = uris }), tok)
+      if st3 == 204 then
+        table.insert(msgs, cid .. ": " .. #by_client[cid] .. " eingetragen")
+      else
+        failed = true
+        table.insert(msgs, cid .. ": HTTP " .. tostring(st3) .. " " .. (kc_errmsg(rb) or ""))
+      end
+    end
+  end
+  -- Re-check and rewrite the list (dir /run/apache-proxy is root:www-data 0770).
+  local still = {}
+  for _, cid in ipairs(order) do
+    for _, u in ipairs(by_client[cid]) do
+      if not kc_public_auth_ok(cid, u) then table.insert(still, cid .. " " .. u) end
+    end
+  end
+  local tmp = KC_MISSING_FILE .. ".tmp"
+  local f = io.open(tmp, "w")
+  if f then f:write(table.concat(still, "\n") .. (#still > 0 and "\n" or "")); f:close(); os.rename(tmp, KC_MISSING_FILE) end
+  local prefix = (failed or #still > 0) and "ERR " or "OK "
+  show_list(r, prefix .. table.concat(msgs, "; ")
+    .. (#still > 0 and (" \xE2\x80\x94 noch fehlend: " .. #still) or ""))
+end
+
 -- ── Request dispatcher ────────────────────────────────────────────────────────
 
 -- Defence in depth for state-changing requests (anything but GET/HEAD):
@@ -3342,6 +3436,9 @@ function handle(r)
 
   elseif action == "domain_create" and r.method == "POST" then
     do_domain_create(r, post)
+
+  elseif action == "kc_redirects_confirm" and r.method == "POST" then
+    do_kc_redirects_confirm(r)
 
   elseif action == "kc_create" and r.method == "POST" then
     local domain = trim(get["domain"] or "")

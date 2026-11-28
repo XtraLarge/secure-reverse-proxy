@@ -31,7 +31,14 @@
 --                         Empty (default) = show all realm roles.
 --
 
-local KC_URL    = os.getenv("KEYCLOAK_ADMIN_URL") or ""
+-- Admin REST API base. KEYCLOAK_ADMIN_URL may be given as realm URL
+-- (https://host/realms/REALM) or as admin URL (https://host/admin/realms/REALM);
+-- the API always needs the /admin/realms/ form (realm form gave HTTP 404 on every call).
+local KC_URL    = (function()
+  local u = os.getenv("KEYCLOAK_ADMIN_URL") or ""
+  if u == "" or u:find("/admin/realms/", 1, true) then return u end
+  return (u:gsub("/realms/", "/admin/realms/", 1))
+end)()
 local KC_PREFIX = os.getenv("KEYCLOAK_ROLE_PREFIX") or ""
 local KC_LOGOUT_URL = (function()
   local meta = os.getenv("OIDC_PROVIDER_METADATA_URL") or ""
