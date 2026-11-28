@@ -859,6 +859,12 @@ local function reject_foreign_write(r, user)
 end
 
 function handle(r)
+  -- Domain of THIS request (admin.<domain>): with several domains the startup guess
+  -- (OIDC_COOKIE_DOMAIN / first sites/*.conf) pointed TOC/logout links at the wrong domain.
+  do
+    local d = (r.hostname or ""):lower():match("^admin%.([%w%.%-]+)$")
+    if d and d:find(".", 1, true) then TOC_DOMAIN = d end
+  end
   r.content_type = "text/html; charset=utf-8"
   REMOTE_USER = r.user or ""
   if reject_foreign_write(r, REMOTE_USER) then return apache2.OK end
