@@ -2454,7 +2454,10 @@ kc_create_group = function(name, token)
   local cmd2 = string.format('curl -s -k -H @%s "%s/groups?max=200" 2>/dev/null', tmp2, base)
   local p2 = io.popen(cmd2); local out2 = p2:read("*a"); p2:close()
   os.remove(tmp2)
-  local esc = name:gsub("%-","%%%-"):gsub("%.","%%%%.")
+  -- Escape all Lua pattern magic characters ("%%%0" = literal % + the match).
+  -- The old gsub("%-","%%%-") raised "invalid use of '%' in replacement string"
+  -- for every name with "-" (group names always: <domain>-admins/-users).
+  local esc = (name:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"))
   for block in out2:gmatch("%b{}") do
     if block:find('"name"%s*:%s*"' .. esc .. '"') then
       local gid = block:match('"id"%s*:%s*"([^"]+)"')
