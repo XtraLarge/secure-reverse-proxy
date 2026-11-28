@@ -1052,6 +1052,94 @@ docker volume rm "$LG_VOL" >/dev/null 2>&1 || true
 docker run --rm --entrypoint sh -v "$LG_DIR:/x" "$IMAGE" -c 'rm -rf /x/* /x/.[!.]*' >/dev/null 2>&1 || true
 rm -rf "$LG_DIR" 2>/dev/null || true
 
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP: central OIDC callback (OIDC_CALLBACK_HOST)
+# ══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo "[45] OIDC_CALLBACK_HOST: invalid or colliding values are rejected"
+run_cb() { docker run --rm "${BASE_ARGS[@]}" -e OIDC_CALLBACK_HOST="$1" "$IMAGE" true 2>&1; }
+if run_cb admin | grep -q "collides with a built-in vhost" && run_cb 'Auth!' | grep -q "not a valid host label"; then
+    pass "[45] OIDC_CALLBACK_HOST=admin and 'Auth!' rejected"
+else
+    fail "[45] invalid OIDC_CALLBACK_HOST accepted"
+fi
+
+# curl <cid> <host> <path>  ->  "<status> <location>" from inside the container
+cb_req() { docker exec "$1" curl -sk -o /dev/null --max-time 5 -w '%{http_code} %{redirect_url}' \
+    --resolve "$2:443:127.0.0.1" "https://$2$3" 2>/dev/null || true; }
+cb_wait() { for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do sleep 1
+    docker exec "$1" curl -sf --max-time 1 http://localhost/ -o /dev/null 2>/dev/null && return 0; done; return 1; }
+
+CB_CID="$(docker run -d "${BASE_ARGS[@]}" -e OIDC_CALLBACK_HOST=auth "$IMAGE")"
+if cb_wait "$CB_CID"; then
+    echo ""
+    echo "[45b] central mode: callback vhost exists, Define set"
+    if docker exec "$CB_CID" apache2ctl -S 2>/dev/null | grep -q "auth.test.example.com" \
+       && docker exec "$CB_CID" grep -q "Define OIDC_CENTRAL_CALLBACK" /etc/apache2/conf-runtime/oidc-callback.conf; then
+        pass "[45b] auth.test.example.com defined, OIDC_CENTRAL_CALLBACK set"
+    else
+        fail "[45b] callback vhost or Define missing"
+    fi
+
+    echo ""
+    echo "[45c] central mode: /protected of a site goes to the callback host (query kept)"
+    R="$(cb_req "$CB_CID" panel.test.example.com '/protected?logout=https%3A%2F%2Ftoc.test.example.com%2F')"
+    if [ "$R" = "302 https://auth.test.example.com/protected?logout=https%3A%2F%2Ftoc.test.example.com%2F" ]; then
+        pass "[45c] panel/protected -> auth/protected"
+    else
+        fail "[45c] unexpected answer: $R"
+    fi
+
+    echo ""
+    echo "[45d] central mode: callback host serves only /protected, rest -> TOC"
+    R="$(cb_req "$CB_CID" auth.test.example.com /irgendwas)"
+    if [ "$R" = "302 https://toc.test.example.com/" ]; then
+        pass "[45d] auth/irgendwas -> toc"
+    else
+        fail "[45d] unexpected answer: $R"
+    fi
+
+    echo ""
+    echo "[45e] central mode: admin keeps its own callback (no redirect to the callback host)"
+    R="$(cb_req "$CB_CID" admin.test.example.com /protected)"
+    case "$R" in
+        *auth.test.example.com*) fail "[45e] admin/protected redirected: $R" ;;
+        *) pass "[45e] admin/protected not redirected ($R)" ;;
+    esac
+
+    echo ""
+    echo "[45f] central mode: admin UI configtest as www-data still OK"
+    if docker exec -u www-data "$CB_CID" timeout 60 apache2ctl -t -D ADMIN_CONFIGTEST 2>&1 | grep -q "Syntax OK"; then
+        pass "[45f] configtest as www-data: Syntax OK"
+    else
+        fail "[45f] configtest as www-data failed"
+        docker exec -u www-data "$CB_CID" apache2ctl -t -D ADMIN_CONFIGTEST 2>&1 | tail -5 || true
+    fi
+else
+    fail "[45b-f] container with OIDC_CALLBACK_HOST=auth did not come up"
+    docker logs "$CB_CID" 2>&1 | tail -15 || true
+fi
+docker rm -f "$CB_CID" >/dev/null 2>&1 || true
+
+echo ""
+echo "[45g] default mode (no OIDC_CALLBACK_HOST): unchanged per-vhost callback"
+CB_CID="$(docker run -d "${BASE_ARGS[@]}" "$IMAGE")"
+if cb_wait "$CB_CID"; then
+    R="$(cb_req "$CB_CID" panel.test.example.com /protected)"
+    if ! docker exec "$CB_CID" apache2ctl -S 2>/dev/null | grep -q "auth.test.example.com" \
+       && ! docker exec "$CB_CID" grep -q "OIDC_CENTRAL_CALLBACK" /etc/apache2/conf-runtime/oidc-callback.conf \
+       && [ "${R#*auth.test.example.com}" = "$R" ]; then
+        pass "[45g] no callback vhost, panel/protected not redirected ($R)"
+    else
+        fail "[45g] default mode changed: $R"
+    fi
+else
+    fail "[45g] container in default mode did not come up"
+    docker logs "$CB_CID" 2>&1 | tail -15 || true
+fi
+docker rm -f "$CB_CID" >/dev/null 2>&1 || true
+
 echo ""
 echo "============================================"
 echo "Results: $PASS passed, $FAIL failed"

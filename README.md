@@ -154,6 +154,7 @@ Copy `.env.example` to `.env` and fill in your values.
 | `OIDC_SCOPE` | — | `openid email` | OAuth2 scopes (must include `openid`) |
 | `OIDC_REMOTE_USER_CLAIM` | — | `email` | Claim mapped to `REMOTE_USER` |
 | `OIDC_REDIRECT_PATH` | — | `/protected` | OIDC callback path |
+| `OIDC_CALLBACK_HOST` | — | — | Central OIDC callback host per domain, e.g. `auth` → `https://auth.<domain>/protected`. Empty: one redirect URI per vhost. See [Central OIDC callback](#central-oidc-callback) |
 | `OIDC_DEFAULT_LOGOUT_URL` | — | auto | Post-logout redirect URL |
 | `OIDC_CRYPTO_PASSPHRASE` | — | auto-generated | Session encryption key; auto-generated and rotated daily if not set |
 | `OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH` | — | `client_secret_basic` | Token endpoint auth method |
@@ -559,6 +560,29 @@ Any OIDC-compliant provider works (Authentik, Dex, Azure AD, Google, …).
 Set `OIDC_PROVIDER_METADATA_URL` to the provider's discovery endpoint and
 configure the redirect URI as `https://*.example.com/<OIDC_REDIRECT_PATH>`.
 The Keycloak-specific admin functions are not available then.
+
+### Central OIDC callback
+
+By default every OIDC vhost uses its own redirect URI `https://<site>.<domain>/protected`.
+Keycloak does not accept wildcards for subdomains, so every new vhost needs a new entry
+in the client — the entrypoint adds them on start/reload, but if that sync fails
+(e.g. missing permissions after a Keycloak upgrade) the login of the new site fails with
+"Invalid parameter: redirect_uri".
+
+With `OIDC_CALLBACK_HOST=auth` all vhosts of a domain use one callback,
+`https://auth.<domain>/protected` (vhost created by `Domain_Init`). Session and state cookies
+are already domain-wide (`OIDCCookieDomain`), so the callback host finishes the login and
+returns the browser to the original URL. Then the IdP client needs only
+`https://auth.<domain>/protected` plus `https://admin.<domain>/protected` (the admin vhost
+keeps its own callback because it uses a separate session cookie; the generated `iam`
+admin-console protection does the same). New vhosts need no IdP change.
+
+- `/protected` on the other vhosts (logout links, the "wrong account" page) is redirected
+  to the callback host; logout/redirect targets are limited to the domain
+  (`OIDCRedirectURLsAllowed`).
+- Other paths on the callback host redirect to `toc.<domain>`.
+- DNS and TLS certificate must cover `auth.<domain>` (a wildcard does).
+- Old per-vhost redirect URIs stay registered; remove them in the IdP once everything works.
 
 ---
 
