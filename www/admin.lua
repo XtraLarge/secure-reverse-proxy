@@ -693,7 +693,8 @@ local function kc_missing_read()
   local f = io.open(KC_MISSING_FILE, "r")
   if not f then return list end
   for line in f:lines() do
-    local cid, uri = line:match("^(%S+)%s+(https://%S+)$")
+    -- Strict format: both values end up in Keycloak API paths and curl command lines.
+    local cid, uri = line:match("^([%w%-%._]+)%s+(https://[%w%-%._:/]+)$")
     if cid then table.insert(list, { cid = cid, uri = uri }) end
   end
   f:close()
