@@ -583,6 +583,10 @@ admin-console protection does the same). New vhosts need no IdP change.
 - Other paths on the callback host redirect to `toc.<domain>`.
 - DNS and TLS certificate must cover `auth.<domain>` (a wildcard does).
 - Old per-vhost redirect URIs stay registered; remove them in the IdP once everything works.
+- **New domain:** `Domain_Init` creates the callback vhost; the domain's client needs exactly
+  `https://auth.<domain>/protected` and `https://admin.<domain>/protected`, once. The admin UI
+  ("create Keycloak client") creates the client with exactly these entries; without a dedicated
+  client the entrypoint adds them to the default client. New vhosts of the domain need nothing.
 
 ---
 

@@ -573,6 +573,11 @@ seinen eigenen Rücksprung wegen des getrennten Session-Cookies; ebenso der gene
 - Andere Pfade auf dem Callback-Host leiten auf `toc.<domain>` weiter.
 - DNS und TLS-Zertifikat müssen `auth.<domain>` abdecken (Wildcard genügt).
 - Alte Redirect-URIs je vhost bleiben eingetragen; nach erfolgreicher Umstellung im IdP entfernen.
+- **Neue Domain:** `Domain_Init` legt den Callback-vhost an; der Client der Domain braucht genau
+  `https://auth.<domain>/protected` und `https://admin.<domain>/protected`, einmalig. Die
+  Admin-Oberfläche („Keycloak-Client anlegen“) legt den Client direkt mit diesen Einträgen an;
+  ohne eigenen Client trägt der Entrypoint sie im Standard-Client ein. Neue vhosts der Domain
+  brauchen nichts.
 
 ---
 
