@@ -52,6 +52,16 @@ export OIDC_CLIENT_ID="${OIDC_CLIENT_ID:-Proxy}"
 export OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH="${OIDC_PROVIDER_TOKEN_ENDPOINT_AUTH:-client_secret_basic}"
 export OIDC_REMOTE_USER_CLAIM="${OIDC_REMOTE_USER_CLAIM:-email}"
 export OIDC_SCOPE="${OIDC_SCOPE:-openid email}"
+# Scope of the admin.<domain> session; add "kc-admin-api" so the admin's own token works for
+# the Keycloak Admin REST API (Keycloak >= 26.x). The scope must be an optional client scope.
+export OIDC_ADMIN_SCOPE="${OIDC_ADMIN_SCOPE:-${OIDC_SCOPE}}"
+# Redirect-URI sync with Keycloak on start/reload:
+#   write  (default) register missing URIs with the service account (KEYCLOAK_API_CLIENT_*)
+#   check  only check them through the public auth endpoint (no credentials needed); missing
+#          URIs are listed in the admin UI and confirmed there with the admin's own login.
+export KEYCLOAK_REDIRECT_SYNC="${KEYCLOAK_REDIRECT_SYNC:-write}"
+[[ "${KEYCLOAK_REDIRECT_SYNC}" == "write" || "${KEYCLOAK_REDIRECT_SYNC}" == "check" ]] \
+    || die "KEYCLOAK_REDIRECT_SYNC='${KEYCLOAK_REDIRECT_SYNC}' must be 'write' or 'check'"
 export OIDC_REDIRECT_PATH="${OIDC_REDIRECT_PATH:-/protected}"
 # Optional central OIDC callback host per domain (e.g. "auth" -> https://auth.<domain>/protected).
 # Empty = one redirect URI per vhost (previous behaviour). See 40-secure-oidc.conf OIDCBASE.
@@ -150,7 +160,8 @@ fi
 # all https://<vhost>${OIDC_REDIRECT_PATH} URIs are registered in Keycloak.
 # Idempotent and non-fatal.  Requires KEYCLOAK_ADMIN_USER + KEYCLOAK_ADMIN_PASS.
 _kc_register_redirect_uris() {
-    if [[ -z "${KEYCLOAK_API_CLIENT_ID:-}" || -z "${KEYCLOAK_API_CLIENT_SECRET:-}" ]]; then
+    if [[ "${KEYCLOAK_REDIRECT_SYNC}" != "check" ]] \
+       && [[ -z "${KEYCLOAK_API_CLIENT_ID:-}" || -z "${KEYCLOAK_API_CLIENT_SECRET:-}" ]]; then
         [[ -z "${KEYCLOAK_ADMIN_USER:-}" || -z "${KEYCLOAK_ADMIN_PASS:-}" ]] && return 0
     fi
     [[ -z "${KEYCLOAK_ADMIN_URL:-}" ]] && return 0
@@ -159,6 +170,7 @@ _kc_register_redirect_uris() {
     _KC_REDIRECT_PATH="${OIDC_REDIRECT_PATH}" \
     _KC_HTTPS_PORT_SUFFIX="${HTTPS_PORT_SUFFIX}" \
     _KC_DEFAULT_CLIENT="${OIDC_CLIENT_ID}" \
+    _KC_SYNC_MODE="${KEYCLOAK_REDIRECT_SYNC}" \
     _KC_CALLBACK_HOST="${OIDC_CALLBACK_HOST}" \
     _KC_COOKIE_DOMAIN="${OIDC_COOKIE_DOMAIN}" \
     _KC_ADMIN_USER="${KEYCLOAK_ADMIN_USER}" \
@@ -272,13 +284,16 @@ api_id  = os.environ.get('_KC_API_CLIENT_ID', '')
 api_sec = os.environ.get('_KC_API_CLIENT_SECRET', '')
 if api_id and api_sec:
     form = {'grant_type': 'client_credentials', 'client_id': api_id, 'client_secret': api_sec}
-else:
+elif os.environ.get("_KC_SYNC_MODE") != "check":
     print("[entrypoint] Keycloak: WARNING using KEYCLOAK_ADMIN_USER/PASS (password grant) — "
           "configure a service account via KEYCLOAK_API_CLIENT_ID/_SECRET", flush=True)
     form = {'grant_type': 'password', 'client_id': 'admin-cli',
             'username': adm_user, 'password': adm_pass}
-tok = http(token_url, data=urllib.parse.urlencode(form).encode(),
-           headers={'Content-Type': 'application/x-www-form-urlencoded'})
+if os.environ.get('_KC_SYNC_MODE') == 'check':
+    tok = {'access_token': 'unused-in-check-mode'}   # check mode needs no credentials
+else:
+    tok = http(token_url, data=urllib.parse.urlencode(form).encode(),
+               headers={'Content-Type': 'application/x-www-form-urlencoded'})
 if not tok or not tok.get('access_token'):
     print("[entrypoint] Keycloak: admin login failed — skipping redirect URI sync", flush=True)
     raise SystemExit(0)
@@ -309,6 +324,42 @@ for sn in servernames:
             matched = cid
             break
     client_uris.setdefault(matched, set()).add(uri)
+
+# ── Check mode: no credentials, only report what is missing ──────────────────
+if os.environ.get('_KC_SYNC_MODE') == 'check':
+    missing_file = '/run/apache-proxy/kc-redirects-missing.txt'
+    auth_url = f"{host}{realm_path}/protocol/openid-connect/auth"
+    missing, unknown = [], 0
+    for client_id, needed in sorted(client_uris.items()):
+        for uri in sorted(needed):
+            q = urllib.parse.urlencode({'response_type': 'code', 'scope': 'openid',
+                                        'client_id': client_id, 'redirect_uri': uri})
+            try:
+                with urllib.request.urlopen(f"{auth_url}?{q}", context=ssl_ctx, timeout=10) as r:
+                    code = r.status
+            except urllib.error.HTTPError as e:
+                code = e.code
+            except Exception:
+                code = 0
+            if code == 400:
+                missing.append(f"{client_id} {uri}")
+            elif code != 200:
+                unknown += 1
+    os.makedirs('/run/apache-proxy', exist_ok=True)
+    tmp = missing_file + '.tmp'
+    with open(tmp, 'w') as f:
+        f.write(''.join(m + '\n' for m in missing))
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, missing_file)
+    total = sum(len(v) for v in client_uris.values())
+    if missing:
+        print(f"[entrypoint] Keycloak: {len(missing)} of {total} redirect URI(s) MISSING — confirm them "
+              f"in the admin UI (admin.<domain>): {', '.join(m.split(' ', 1)[1] for m in missing)}", flush=True)
+    else:
+        print(f"[entrypoint] Keycloak: all {total} redirect URI(s) registered (check mode)", flush=True)
+    if unknown:
+        print(f"[entrypoint] Keycloak: {unknown} redirect URI(s) not checkable (IdP unreachable?)", flush=True)
+    raise SystemExit(0)
 
 # ── Update each Keycloak client ───────────────────────────────────────────────
 for client_id, needed in client_uris.items():
@@ -557,6 +608,7 @@ SUBST_VARS='${OIDC_PROVIDER_METADATA_URL}'\
 '${OIDC_CLIENT_ID}'\
 '${OIDC_REMOTE_USER_CLAIM}'\
 '${OIDC_SCOPE}'\
+'${OIDC_ADMIN_SCOPE}'\
 '${OIDC_REDIRECT_PATH}'\
 '${HTTPS_PORT_SUFFIX}'\
 '${OIDC_DEFAULT_LOGOUT_URL}'\

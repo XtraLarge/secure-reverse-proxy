@@ -1140,6 +1140,68 @@ else
 fi
 docker rm -f "$CB_CID" >/dev/null 2>&1 || true
 
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP: Keycloak changes confirmed by the admin (KEYCLOAK_REDIRECT_SYNC, OIDC_ADMIN_SCOPE)
+# ══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo "[46] KEYCLOAK_REDIRECT_SYNC: invalid value rejected"
+if docker run --rm "${BASE_ARGS[@]}" -e KEYCLOAK_REDIRECT_SYNC=yes "$IMAGE" true 2>&1 | grep -q "must be 'write' or 'check'"; then
+    pass "[46] KEYCLOAK_REDIRECT_SYNC=yes rejected"
+else
+    fail "[46] invalid KEYCLOAK_REDIRECT_SYNC accepted"
+fi
+
+echo ""
+echo "[46b] check mode: starts without credentials, writes the (empty) missing list, IdP unreachable is reported"
+KC_CID="$(docker run -d "${BASE_ARGS[@]}" -e KEYCLOAK_REDIRECT_SYNC=check \
+    -e OIDC_ADMIN_SCOPE="openid email kc-admin-api" "$IMAGE")"
+if cb_wait "$KC_CID"; then
+    L="$(docker logs "$KC_CID" 2>&1)"
+    if docker exec "$KC_CID" test -f /run/apache-proxy/kc-redirects-missing.txt \
+       && grep -q "not checkable" <<<"$L" && ! grep -q "admin login failed" <<<"$L" \
+       && ! grep -q "WARNING using KEYCLOAK_ADMIN_USER" <<<"$L"; then
+        pass "[46b] check mode without credentials, list file present"
+    else
+        fail "[46b] check mode behaviour unexpected"
+        grep -i keycloak <<<"$L" | tail -5 || true
+    fi
+
+    echo ""
+    echo "[46c] OIDC_ADMIN_SCOPE is used for the admin vhost only"
+    if docker exec "$KC_CID" grep -Eq 'OIDCScope +"openid email kc-admin-api"' /etc/apache2/macro/01-frame-domain.conf \
+       && docker exec "$KC_CID" grep -Eq 'OIDCScope +"openid email"$' /etc/apache2/macro/40-secure-oidc.conf; then
+        pass "[46c] admin scope substituted, default scope unchanged"
+    else
+        fail "[46c] scope substitution unexpected"
+    fi
+
+    echo ""
+    echo "[46d] admin UI lists missing redirect URIs from the check file"
+    docker exec "$KC_CID" sh -c 'printf "proxy-test.example.com https://new.test.example.com/protected\n" > /run/apache-proxy/kc-redirects-missing.txt; chmod 644 /run/apache-proxy/kc-redirects-missing.txt'
+    if docker exec -u www-data "$KC_CID" lua5.4 -e '
+        local f = io.open("/run/apache-proxy/kc-redirects-missing.txt"); local n = 0
+        for line in f:lines() do if line:match("^(%S+)%s+(https://%S+)$") then n = n + 1 end end
+        os.exit(n == 1 and 0 or 1)' 2>/dev/null; then
+        pass "[46d] missing list readable by www-data and in the expected format"
+    else
+        fail "[46d] missing list not readable/parsable for www-data"
+    fi
+else
+    fail "[46b-d] container in check mode did not come up"
+    docker logs "$KC_CID" 2>&1 | tail -15 || true
+fi
+docker rm -f "$KC_CID" >/dev/null 2>&1 || true
+
+echo ""
+echo "[46e] admin-kc.lua builds the Admin REST API URL from a realm URL"
+if docker run --rm "${BASE_ARGS[@]}" --entrypoint sh "$IMAGE" -c \
+   'grep -q "gsub(\"/realms/\", \"/admin/realms/\", 1)" /var/www/html/admin-kc.lua' 2>/dev/null; then
+    pass "[46e] admin-kc.lua normalises KEYCLOAK_ADMIN_URL"
+else
+    fail "[46e] admin-kc.lua does not normalise KEYCLOAK_ADMIN_URL"
+fi
+
 echo ""
 echo "============================================"
 echo "Results: $PASS passed, $FAIL failed"

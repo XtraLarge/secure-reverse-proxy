@@ -153,6 +153,7 @@ nie in git eingecheckt.
 | `OIDC_CLIENT_SECRET` | ✓ | — | Client-Secret |
 | `OIDC_COOKIE_DOMAIN` | ✓ | — | Basisdomain für Session-Cookies, z. B. `example.com` |
 | `OIDC_SCOPE` | — | `openid email` | OAuth2-Scopes (muss `openid` enthalten) |
+| `OIDC_ADMIN_SCOPE` | — | `OIDC_SCOPE` | Scopes nur der `admin.<domain>`-Sitzung, z. B. `openid email profile kc-admin-api`. Siehe [Keycloak-Änderungen durch den Admin](#keycloak-änderungen-durch-den-admin) |
 | `OIDC_REMOTE_USER_CLAIM` | — | `email` | Claim, der als `REMOTE_USER` gesetzt wird |
 | `OIDC_REDIRECT_PATH` | — | `/protected` | OIDC-Callback-Pfad |
 | `OIDC_CALLBACK_HOST` | — | — | Zentraler OIDC-Rücksprung pro Domain, z. B. `auth` → `https://auth.<domain>/protected`. Leer: eine Redirect-URI je vhost. Siehe [Zentraler OIDC-Rücksprung](#zentraler-oidc-rücksprung) |
@@ -206,6 +207,7 @@ nie in git eingecheckt.
 | `KEYCLOAK_REALM` | — | `master` | Realm, in dem Proxy-Clients und Benutzer liegen |
 | `KEYCLOAK_ROLE_PREFIX` | — | — | Nur Rollen mit diesem Namenspräfix anzeigen/verwalten (z. B. `proxy-`). Leer = alle Rollen. |
 | `KEYCLOAK_API_CLIENT_ID` | — | — | Vertraulicher Client mit Service Account (Client Credentials) für die Admin-Oberfläche und den Abgleich der Redirect-URIs. Nur die nötigen `realm-management`-Rollen vergeben (im Realm `master`: Client `master-realm`): `view-users`, `query-users`, `manage-users`, `query-groups`, `view-clients`, `query-clients`, `manage-clients`, `view-realm`. |
+| `KEYCLOAK_REDIRECT_SYNC` | — | `write` | `write`: der Entrypoint trägt fehlende Redirect-URIs mit dem Service Account ein. `check`: er prüft sie nur (ohne Zugangsdaten); fehlende zeigt die Admin-Oberfläche an, eingetragen werden sie dort mit dem eigenen Login des Admins |
 | `KEYCLOAK_API_CLIENT_SECRET` | — | — | Secret dieses Clients (oder `KEYCLOAK_API_CLIENT_SECRET_FILE`) |
 | `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASS` | — | — | Altlast: Admin-Passwort über `admin-cli`. Wird nur genutzt, wenn kein Service Account eingerichtet ist — besser den Service Account verwenden. |
 
@@ -578,6 +580,29 @@ seinen eigenen Rücksprung wegen des getrennten Session-Cookies; ebenso der gene
   Admin-Oberfläche („Keycloak-Client anlegen“) legt den Client direkt mit diesen Einträgen an;
   ohne eigenen Client trägt der Entrypoint sie im Standard-Client ein. Neue vhosts der Domain
   brauchen nichts.
+
+### Keycloak-Änderungen durch den Admin
+
+Die Admin-Oberfläche ruft die Admin-REST-API von Keycloak mit dem **Token des angemeldeten
+Admins** auf (der Admin-vhost verlangt immer einen Login). Keycloak prüft die Rollen des
+Admins selbst, und seine Admin-Events zeigen, wer was geändert hat; der Proxy braucht keine
+gespeicherten Keycloak-Zugangsdaten. Der Service Account (`KEYCLOAK_API_CLIENT_*`) ist nur
+noch Rückfall.
+
+Keycloak 26.x nimmt ein Token für die Admin-REST-API nur mit passender Audience an:
+
+1. In Keycloak den Client-Scope `kc-admin-api` (mit dem Audience-Mapper für die Admin-API)
+   als **optionalen** Client-Scope an die Domain-Clients (`proxy-<domain>`) hängen.
+2. `OIDC_ADMIN_SCOPE="openid email profile kc-admin-api"` setzen (nur die Admin-Sitzung
+   fordert ihn an; normale Logins bleiben unverändert). Clients, die die Admin-Oberfläche
+   anlegt, bekommen die zusätzlichen Scopes aus `OIDC_ADMIN_SCOPE` automatisch als optionale
+   Scopes.
+
+Mit `KEYCLOAK_REDIRECT_SYNC=check` schreibt der Entrypoint gar nicht mehr in Keycloak: Beim
+Start/Reload prüft er jede nötige Redirect-URI über den öffentlichen Auth-Endpunkt und
+listet fehlende im Log und auf der Übersichtsseite der Admin-Oberfläche. Der Knopf
+„In Keycloak eintragen (mit meinem Login)“ trägt sie mit dem Token des Admins ein und prüft
+sie danach erneut. Den Service Account kann man dann abschalten.
 
 ---
 

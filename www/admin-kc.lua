@@ -31,7 +31,14 @@
 --                         Empty (default) = show all realm roles.
 --
 
-local KC_URL    = os.getenv("KEYCLOAK_ADMIN_URL") or ""
+-- Admin REST API base. KEYCLOAK_ADMIN_URL may be given as realm URL
+-- (https://host/realms/REALM) or as admin URL (https://host/admin/realms/REALM);
+-- the API always needs the /admin/realms/ form (realm form gave HTTP 404 on every call).
+local KC_URL    = (function()
+  local u = os.getenv("KEYCLOAK_ADMIN_URL") or ""
+  if u == "" or u:find("/admin/realms/", 1, true) then return u end
+  return (u:gsub("/realms/", "/admin/realms/", 1))
+end)()
 local KC_PREFIX = os.getenv("KEYCLOAK_ROLE_PREFIX") or ""
 local KC_LOGOUT_URL = (function()
   local meta = os.getenv("OIDC_PROVIDER_METADATA_URL") or ""
@@ -422,7 +429,13 @@ local function show_user_list(r, token, msg)
     r:puts('</div></body></html>')
     return apache2.OK
   elseif status ~= 200 and status ~= 0 then
-    r:puts('<div class="msg err">Keycloak-API-Fehler (HTTP ' .. tostring(status) .. ')</div>')
+    local hint = ""
+    if status == 401 then
+      hint = " – Token abgelaufen oder ohne Audience (OIDC_ADMIN_SCOPE mit kc-admin-api?); bitte neu anmelden"
+    elseif status == 403 then
+      hint = " – deinem Keycloak-Konto fehlen Admin-Rollen (z. B. view-users, manage-users)"
+    end
+    r:puts('<div class="msg err">Keycloak-API-Fehler (HTTP ' .. tostring(status) .. ')' .. hint .. '</div>')
     r:puts('</div></body></html>')
     return apache2.OK
   elseif status == 0 then
